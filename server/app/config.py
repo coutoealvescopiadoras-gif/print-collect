@@ -9,6 +9,20 @@ class Settings(BaseSettings):
     api_key: str = "agent-dev-key"
     cors_origins: str = "http://localhost:5173"
     auto_create_tables: bool = True
+    
+    # Email configuration
+    mail_username: Optional[str] = None
+    mail_password: Optional[str] = None
+    mail_from: Optional[str] = None
+    mail_port: int = 587
+    mail_server: str = "smtp.gmail.com"
+    mail_starttls: bool = True
+    mail_ssl_tls: bool = False
+    mail_use_credentials: bool = True
+    mail_validate_certs: bool = True
+    
+    # Email notifications
+    alert_email_recipients: Optional[str] = None  # Comma-separated list
 
     @property
     def is_postgres(self) -> bool:
