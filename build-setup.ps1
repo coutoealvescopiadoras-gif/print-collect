@@ -1,3 +1,4 @@
+
 $ErrorActionPreference = "Stop"
 
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
@@ -6,7 +7,6 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $AgentRoot = Split-Path -Parent $ScriptDir
-$ProjectRoot = Split-Path -Parent $AgentRoot
 $BuildRoot = Join-Path $AgentRoot "build\windows"
 $DistRoot = Join-Path $AgentRoot "dist\windows"
 $WorkRoot = Join-Path $BuildRoot "pyinstaller"
@@ -45,10 +45,15 @@ if (-not (Test-Path $PythonExe)) {
 & $PythonExe -m pip install -r (Join-Path $AgentRoot "requirements.txt")
 & $PythonExe -m pip install pyinstaller
 
-$Version = (& $PythonExe -c "from pathlib import Path; import re; text = Path(r'$AgentRoot\pyproject.toml').read_text(encoding='utf-8'); print(re.search(r'version\s*=\s*\"([^\"]+)\"', text).group(1))").Trim()
-if (-not $Version) {
+$PyprojectPath = Join-Path $AgentRoot "pyproject.toml"
+$PyprojectText = Get-Content $PyprojectPath -Raw
+$VersionMatch = [regex]::Match($PyprojectText, 'version\s*=\s*"([^"]+)"')
+
+if (-not $VersionMatch.Success) {
     throw "Nao foi possivel determinar a versao do agente."
 }
+
+$Version = $VersionMatch.Groups[1].Value.Trim()
 
 Write-Host "Gerando executavel PyInstaller v$Version..." -ForegroundColor Cyan
 & $PythonExe -m PyInstaller `
