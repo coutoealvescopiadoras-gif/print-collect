@@ -1,0 +1,219 @@
+@echo off
+setlocal
+cd /d "%~dp0"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build-setup.ps1"
+echo.
+pause
+$ErrorActionPreference = "Stop"
+
+if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
+    throw "Este script deve ser executado no Windows."@echo off
+setlocal@echo off
+setlocal@echo off
+setlocal
+schtasks /Delete /F /TN "Print Collect Agent"
+
+cd /d "%~dp0"
+"%~dp0PrintCollectAgent.exe" --config "%~dp0config.yaml" --test
+echo.
+pause
+
+cd /d "%~dp0"
+"%~dp0PrintCollectAgent.exe" --config "%~dp0config.yaml" --once
+echo.
+pause
+
+}
+
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$AgentRoot = Split-Path -Parent $ScriptDirfrom pathlib import Path#ifndef MyAppVersion@echo off
+setlocal
+cd /d "%~dp0"
+schtasks /Create /F /TN "Print Collect Agent" /SC ONSTART /RU SYSTEM /RL HIGHEST /TR "\"%~dp0PrintCollectAgent.exe\" --config \"%~dp0config.yaml\""
+
+  #define MyAppVersion "0.2.0"
+#endif@echo off
+setlocal
+cd /d "%~dp0"
+notepad "%~dp0config.yaml"
+
+
+#define MyAppName "Print Collect Agent"
+#define MyAppPublisher "Print Collect"
+#define MyAppExeName "PrintCollectAgent.exe"
+#define MyAppTaskName "Print Collect Agent"
+
+[Setup]
+AppId={{8D1A4508-4C10-4654-85E1-3A4D7DB23F5A}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+DefaultDirName={autopf}\PrintCollect
+DefaultGroupName={#MyAppName}
+DisableDirPage=yes
+DisableProgramGroupPage=yes
+PrivilegesRequired=admin
+Compression=lzma
+SolidCompression=yes
+ArchitecturesInstallIn64BitMode=x64compatible
+WizardStyle=modern
+OutputDir=..\dist\windows
+OutputBaseFilename=PrintCollectSetup
+UninstallDisplayIcon={app}\{#MyAppExeName}
+
+[Files]
+Source: "..\dist\windows\PrintCollectAgent.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\config.example.yaml"; DestDir: "{app}"; DestName: "config.example.yaml"; Flags: ignoreversion
+Source: ".\runtime\*.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{src}\config.yaml"; DestDir: "{app}"; DestName: "config.yaml"; Flags: external ignoreversion onlyifdoesntexist; Check: HasExternalConfig
+
+[Icons]
+Name: "{autoprograms}\Print Collect Agent\Testar conexao"; Filename: "{app}\test-agent.bat"
+Name: "{autoprograms}\Print Collect Agent\Executar coleta unica"; Filename: "{app}\run-once.bat"
+Name: "{autoprograms}\Print Collect Agent\Editar configuracao"; Filename: "{app}\open-config.bat"
+Name: "{autoprograms}\Print Collect Agent\Abrir pasta"; Filename: "{app}"
+
+[Run]
+Filename: "{app}\register-startup-task.bat"; Flags: runhidden waituntilterminated; StatusMsg: "Configurando inicializacao automatica..."
+Filename: "notepad.exe"; Parameters: """{app}\config.yaml"""; Flags: postinstall nowait skipifsilent; Description: "Abrir config.yaml ao concluir"
+
+[UninstallRun]
+Filename: "{app}\unregister-startup-task.bat"; Flags: runhidden skipifdoesntexist
+
+[Code]
+function HasExternalConfig: Boolean;
+begin
+  Result := FileExists(ExpandConstant('{src}\config.yaml'));
+end;
+
+
+from PyInstaller.utils.hooks import collect_submodules
+
+
+project_root = Path(SPECPATH).resolve().parents[1]
+agent_root = project_root / "agent"
+entry_script = agent_root / "print_collect" / "__main__.py"
+
+hiddenimports = sorted(
+    set(
+        collect_submodules("pysnmp")
+        + collect_submodules("pyasn1")
+        + collect_submodules("requests")
+    )
+)
+
+a = Analysis(
+    [str(entry_script)],
+    pathex=[str(agent_root)],
+    binaries=[],
+    datas=[],
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+    optimize=0,
+)
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.datas,
+    [],
+    name="PrintCollectAgent",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=True,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+)
+
+$ProjectRoot = Split-Path -Parent $AgentRoot
+$BuildRoot = Join-Path $AgentRoot "build\windows"
+$DistRoot = Join-Path $AgentRoot "dist\windows"
+$WorkRoot = Join-Path $BuildRoot "pyinstaller"
+$SpecPath = Join-Path $ScriptDir "PrintCollectAgent.spec"
+$IssPath = Join-Path $ScriptDir "PrintCollectSetup.iss"
+$VenvPath = Join-Path $BuildRoot ".venv"
+
+New-Item -ItemType Directory -Force -Path $BuildRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $DistRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $WorkRoot | Out-Null
+
+if (-not (Test-Path $VenvPath)) {
+    $PythonBootstrap = @(
+        (Get-Command py -ErrorAction SilentlyContinue),
+        (Get-Command python -ErrorAction SilentlyContinue)
+    ) | Where-Object { $_ } | Select-Object -First 1
+
+    if (-not $PythonBootstrap) {
+        throw "Python 3 nao encontrado. Instale Python 3.10+ e tente novamente."
+    }
+
+    if ($PythonBootstrap.Name -eq "py") {
+        & py -3 -m venv $VenvPath
+    }
+    else {
+        & python -m venv $VenvPath
+    }
+}
+
+$PythonExe = Join-Path $VenvPath "Scripts\python.exe"
+if (-not (Test-Path $PythonExe)) {
+    throw "Nao foi possivel localizar o Python da venv de build."
+}
+
+& $PythonExe -m pip install --upgrade pip setuptools wheel
+& $PythonExe -m pip install -r (Join-Path $AgentRoot "requirements.txt")
+& $PythonExe -m pip install pyinstaller
+
+$Version = (& $PythonExe -c "from pathlib import Path; import re; text = Path(r'$AgentRoot\pyproject.toml').read_text(encoding='utf-8'); print(re.search(r'version\\s*=\\s*\"([^\"]+)\"', text).group(1))").Trim()
+if (-not $Version) {
+    throw "Nao foi possivel determinar a versao do agente."
+}
+
+Write-Host "Gerando executavel PyInstaller v$Version..." -ForegroundColor Cyan
+& $PythonExe -m PyInstaller `
+    --noconfirm `
+    --clean `
+    --distpath $DistRoot `
+    --workpath $WorkRoot `
+    $SpecPath
+
+$AgentExePath = Join-Path $DistRoot "PrintCollectAgent.exe"
+if (-not (Test-Path $AgentExePath)) {
+    throw "O executavel do agente nao foi gerado em $AgentExePath."
+}
+
+$InnoCompiler = @(
+    $env:INNO_SETUP_COMPILER,
+    "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+    "C:\Program Files\Inno Setup 6\ISCC.exe"
+) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+
+if (-not $InnoCompiler) {
+    throw "ISCC.exe nao encontrado. Instale o Inno Setup 6 ou defina INNO_SETUP_COMPILER."
+}
+
+Write-Host "Gerando instalador Inno Setup..." -ForegroundColor Cyan
+& $InnoCompiler "/DMyAppVersion=$Version" $IssPath
+
+$SetupPath = Join-Path $DistRoot "PrintCollectSetup.exe"
+if (-not (Test-Path $SetupPath)) {
+    throw "O instalador nao foi gerado em $SetupPath."
+}
+
+Write-Host ""
+Write-Host "Build concluido com sucesso." -ForegroundColor Green
+Write-Host "Executavel: $AgentExePath"
+Write-Host "Instalador:  $SetupPath"
