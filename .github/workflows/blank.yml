@@ -1,0 +1,51 @@
+.github/workflows/build-windows-agent.ymlname: Build Windows Agent Installer
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "agent/**"
+      - ".github/workflows/build-windows-agent.yml"
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup --no-progress -y
+
+      - name: Build standalone installer
+        shell: powershell
+        run: .\agent\windows\build-setup.ps1
+
+      - name: Read agent version
+        id: version
+        shell: powershell
+        run: |
+          $text = Get-Content .\agent\pyproject.toml -Raw
+          if ($text -match 'version\s*=\s*"([^"]+)"') {
+            "version=$($matches[1])" >> $env:GITHUB_OUTPUT
+          }
+          else {
+            throw "Nao foi possivel determinar a versao do agente."
+          }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: print-collect-windows-agent-${{ steps.version.outputs.version }}
+          path: |
+            agent/dist/windows/PrintCollectAgent.exe
+            agent/dist/windows/PrintCollectSetup.exe
+          if-no-files-found: error
+          retention-days: 14
