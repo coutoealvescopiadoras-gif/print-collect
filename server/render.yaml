@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: print-collect-api
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: API_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false
+      - key: AUTO_CREATE_TABLES
+        value: true

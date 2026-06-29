@@ -1,10 +1,10 @@
-# Deploy do Print Collect (Vercel + Railway)
+# Deploy do Print Collect (Vercel + Render)
 
-Este guia explica como fazer deploy da API e do painel web na internet usando Vercel e Railway (gratuita!).
+Este guia explica como fazer deploy da API e do painel web na internet usando Vercel e Render (100% GRATUITO, sem cartão necessário!).
 
 ## Pré-requisitos
 ✅ Conta no GitHub (para hospedar o código)
-✅ Conta no Railway (gratuita para a API)
+✅ Conta no Render (gratuita para a API)
 ✅ Conta no Vercel (gratuita para o painel)
 
 ---
@@ -21,23 +21,29 @@ Este guia explica como fazer deploy da API e do painel web na internet usando Ve
 
 ---
 
-## Passo 2: Deploy da API no Railway
+## Passo 2: Deploy da API no Render (Gratuito!)
 
-1. Acesse https://railway.app e faça login com o GitHub
-2. Clique em **"New Project"** > **"Deploy from repo"**
+1. Acesse https://render.com e faça login com o GitHub
+2. Clique em **"New +"** > **"Web Service"**
 3. Selecione o seu repositório do Print Collect
 4. Configure o projeto:
-   - **Root directory**: `server`
-5. Vá para **Settings > Variables** e adicione todas as variáveis do arquivo `server/.env`:
+   - **Name**: `print-collect-api`
+   - **Region: `São Paulo` (ou mais próximo)
+   - **Branch**: `main`
+   - **Root Directory**: `server`
+   - **Runtime**: `Python 3`
+   - **Build Command**: `pip install -r requirements.txt
+   - **Start Command**: `gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app`
+   - **Plan**: **Free**
+5. Vá para a seção **Environment** e adicione as variáveis do arquivo `server/.env` (uma por uma):
    - `DATABASE_URL`: sua URL do Supabase
    - `DIRECT_URL`: sua URL direta do Supabase
-   - `SECRET_KEY`: uma chave secreta segura (gere uma usando `openssl rand -hex 32`)
-   - `API_KEY`: uma chave para os agentes (pode ser a mesma que está no .env)
+   - `SECRET_KEY`: gere uma usando `openssl rand -hex 32` (ou use uma chave segura)
+   - `API_KEY`: uma chave para os agentes
    - `CORS_ORIGINS`: a URL do seu painel Vercel (depois que criar, volte aqui e atualize)
    - `AUTO_CREATE_TABLES`: `true`
-   - (E as configurações de e-mail, se quiser usar)
-6. Clique em **"Deploy"** e aguarde o deploy finalizar
-7. Copie a URL da API gerada pelo Railway (ex: `https://print-collect-api.up.railway.app`)
+6. Clique em **"Create Web Service"** e aguarde o deploy finalizar (~2 minutos
+7. Copie a URL da API gerada pelo Render (ex: `https://print-collect-api.onrender.com`)
 
 ---
 
@@ -51,26 +57,27 @@ Este guia explica como fazer deploy da API e do painel web na internet usando Ve
    - **Root Directory**: `web`
 5. Vá para **Environment Variables** e adicione:
    - **Name**: `VITE_API_URL`
-   - **Value**: a URL da sua API no Railway (ex: `https://print-collect-api.up.railway.app`)
+   - **Value**: a URL da sua API no Render (ex: `https://print-collect-api.onrender.com`)
 6. Clique em **"Deploy"** e aguarde o deploy finalizar!
 
 ---
 
-## Passo 4: Atualizar CORS no Railway
+## Passo 4: Atualizar CORS no Render
 
-1. No Railway, volte para **Settings > Variables**
-2. Edite a variável `CORS_ORIGINS` para a URL do seu painel Vercel:
+1. No Render, clique no seu serviço (`print-collect-api`)
+2. Vá para **Environment**
+3. Edite a variável `CORS_ORIGINS` para a URL do seu painel Vercel:
    ```
    https://seu-projeto.vercel.app
    ```
-3. O Railway fará um redeploy automaticamente — aguarde finalizar
+4. Clique em **"Save Changes"** → aguarde o redeploy (~1 minuto)
 
 ---
 
 ## Pronto! 🎉
 
 Agora você tem:
-- **API**: rodando no Railway (ex: `https://print-collect-api.up.railway.app`)
+- **API**: rodando no Render (ex: `https://print-collect-api.onrender.com`)
 - **Painel web**: rodando no Vercel (ex: `https://print-collect.vercel.app`)
 
 Você pode acessar o painel, fazer login com `admin` / `admin123` e começar a usar o sistema!
@@ -79,4 +86,10 @@ Você pode acessar o painel, fazer login com `admin` / `admin123` e começar a u
 
 ## Instalar agente no cliente
 
-Para cada cliente, siga as instruções no arquivo `agent/README.md`, mas use a URL da sua API no Railway no arquivo `config.yaml` em vez de `http://localhost:8000`.
+Para cada cliente, siga as instruções no arquivo `agent/README.md`, mas use a URL da sua API no Render no arquivo `config.yaml` em vez de `http://localhost:8000`.
+
+---
+
+## Observação sobre o Render Gratuito
+
+O plano gratuito do Render "dorme" após 15 minutos de inatividade. Quando um cliente acessar pela primeira vez, pode levar ~30 segundos para "acordar". Depois disso, funciona perfeitamente!
