@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "print-collect-agent"
+version = "0.2.0"
+description = "Coletor local de impressoras alugadas via SNMP"
+requires-python = ">=3.10"
+dependencies = [
+    "pysnmp>=7.1",
+    "pyyaml>=6.0",
+    "requests>=2.32",
+]
+
+[project.scripts]
+print-collect = "print_collect.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["print_collect*"]

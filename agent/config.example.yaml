@@ -1,0 +1,33 @@
+# Print Collect — Coletor local (instalar no PC/servidor do cliente)
+# Copie para config.yaml e preencha os valores
+
+# URL da API central (onde está conectada ao Supabase)
+server_url: "http://localhost:8000"
+
+# Token do agente — crie em: Painel > Agentes > Novo agente
+agent_token: "agent-dev-key"
+
+# Versão (informativo)
+agent_version: "0.2.0"
+
+# Intervalo entre coletas automáticas (minutos)
+interval_minutes: 15
+
+# Log em arquivo (opcional — útil para diagnóstico)
+# log_file: "/var/log/print-collect/agent.log"
+
+# SNMP — rede local do cliente
+snmp:
+  community: "public"
+  timeout: 2
+
+  # Sub-redes para varredura automática (formato CIDR)
+  subnets:
+    - "192.168.1.0/24"
+
+  # IPs fixos (além da varredura, se souber os endereços)
+  ips: []
+  # Exemplo:
+  # ips:
+  #   - "192.168.1.100"
+  #   - "192.168.1.101"

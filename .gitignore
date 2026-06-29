@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.env
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Database
+*.db
+*.sqlite3
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Agent config with secrets
+agent/config.yaml
+
+# Server env with Supabase credentials
+server/.env
