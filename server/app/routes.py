@@ -1,4 +1,5 @@
 import secrets
+import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import Agent, Alert, Client, Location, Printer, Reading, User, get_db
+from app.email import send_alert_email
 from app.schemas import (
     AgentCreate,
     AgentOut,
@@ -289,18 +291,29 @@ def _sync_alerts(db: Session, printer: Printer, alert_messages: list[str]) -> No
     for message in alert_messages:
         if message not in existing:
             severity = "critical" if "vazio" in message.lower() or "empty" in message.lower() else "warning"
-            db.add(
-                Alert(
-                    printer_id=printer.id,
-                    alert_type="supply" if "toner" in message.lower() else "device",
-                    message=message,
-                    severity=severity,
-                )
+            alert = Alert(
+                printer_id=printer.id,
+                alert_type="supply" if "toner" in message.lower() else "device",
+                message=message,
+                severity=severity,
             )
+            db.add(alert)
+            db.flush()
+            
+            # Send email alert in background
+            printer_name = printer.model or printer.ip_address or "Impressora"
+            try:
+                asyncio.create_task(send_alert_email(
+                    printer_name=printer_name,
+                    alert_type=alert.alert_type,
+                    alert_message=alert.message
+                ))
+            except Exception as e:
+                print(f"Error sending alert email: {e}")
 
 
 @router.post("/agent/report")
-def agent_report(
+async def agent_report(
     payload: AgentReport,
     x_agent_token: str = Header(...),
     db: Session = Depends(get_db),
