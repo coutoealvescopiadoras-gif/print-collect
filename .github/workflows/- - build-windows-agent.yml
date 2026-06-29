@@ -1,4 +1,4 @@
-.github/workflows/build-windows-agent.ymlname: Build Windows Agent Installer
+name: Build Windows Agent Installer
 
 on:
   workflow_dispatch:
