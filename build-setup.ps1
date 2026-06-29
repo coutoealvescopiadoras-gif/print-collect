@@ -45,7 +45,7 @@ if (-not (Test-Path $PythonExe)) {
 & $PythonExe -m pip install -r (Join-Path $AgentRoot "requirements.txt")
 & $PythonExe -m pip install pyinstaller
 
-$Version = (& $PythonExe -c "from pathlib import Path; import re; text = Path(r'$AgentRoot\pyproject.toml').read_text(encoding='utf-8'); print(re.search(r'version\\s*=\\s*\"([^\"]+)\"', text).group(1))").Trim()
+$Version = (& $PythonExe -c "from pathlib import Path; import re; text = Path(r'$AgentRoot\pyproject.toml').read_text(encoding='utf-8'); print(re.search(r'version\s*=\s*\"([^\"]+)\"', text).group(1))").Trim()
 if (-not $Version) {
     throw "Nao foi possivel determinar a versao do agente."
 }
