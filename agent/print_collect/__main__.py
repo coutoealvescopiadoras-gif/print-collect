@@ -9,6 +9,26 @@ from pathlib import Path
 from print_collect.collector import run_daemon, run_once
 
 
+def resolve_config_path(config_value: str) -> Path:
+    path = Path(config_value)
+    if path.is_absolute():
+        return path
+
+    candidates = [Path.cwd() / path]
+
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).resolve().parent / path)
+    else:
+        # Em desenvolvimento, o config.yaml costuma ficar na raiz de `agent/`.
+        candidates.append(Path(__file__).resolve().parents[1] / path)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    return candidates[0]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Print Collect — coletor local de impressoras (SNMP → Supabase via API)",
@@ -29,7 +49,7 @@ def main() -> None:
         help="Testa conexão com o servidor e encerra",
     )
     args = parser.parse_args()
-    config_path = Path(args.config)
+    config_path = resolve_config_path(args.config)
 
     if args.test:
         from print_collect.config import load_config
