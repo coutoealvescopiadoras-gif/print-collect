@@ -9,7 +9,8 @@ entry_script = agent_root / "print_collect" / "__main__.py"
 
 hiddenimports = sorted(
     set(
-        collect_submodules("pysnmp")
+        collect_submodules("print_collect")
+        + collect_submodules("pysnmp")
         + collect_submodules("pyasn1")
         + collect_submodules("requests")
     )
