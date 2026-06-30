@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_submodules
@@ -7,9 +8,19 @@ project_root = Path(SPECPATH).resolve().parents[1]
 agent_root = project_root / "agent"
 entry_script = agent_root / "print_collect" / "__main__.py"
 
+if str(agent_root) not in sys.path:
+    sys.path.insert(0, str(agent_root))
+
 hiddenimports = sorted(
     set(
-        collect_submodules("print_collect")
+        [
+            "print_collect",
+            "print_collect.collector",
+            "print_collect.config",
+            "print_collect.sender",
+            "print_collect.snmp",
+        ]
+        + collect_submodules("print_collect")
         + collect_submodules("pysnmp")
         + collect_submodules("pyasn1")
         + collect_submodules("requests")
