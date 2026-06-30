@@ -41,7 +41,7 @@ if (-not (Test-Path $PythonExe)) {
 }
 
 & $PythonExe -m pip install --upgrade pip setuptools wheel
-& $PythonExe -m pip install -r (Join-Path $AgentRoot "requirements.txt")
+& $PythonExe -m pip install -e $AgentRoot
 & $PythonExe -m pip install pyinstaller
 
 $PyprojectPath = Join-Path $AgentRoot "pyproject.toml"
@@ -53,6 +53,14 @@ if (-not $VersionMatch.Success) {
 }
 
 $Version = $VersionMatch.Groups[1].Value.Trim()
+
+if (-not (Test-Path $SpecPath)) {
+    throw "Spec file nao encontrado em $SpecPath"
+}
+
+if (-not (Test-Path $IssPath)) {
+    throw "Arquivo do Inno Setup nao encontrado em $IssPath"
+}
 
 Write-Host "Gerando executavel PyInstaller v$Version..." -ForegroundColor Cyan
 & $PythonExe -m PyInstaller `
