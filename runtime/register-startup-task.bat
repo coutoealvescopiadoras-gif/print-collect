@@ -1,4 +1,8 @@
 @echo off
 setlocal
-cd /d "%~dp0"
-schtasks /Create /F /TN "Print Collect Agent" /SC ONSTART /RU SYSTEM /RL HIGHEST /TR "\"%~dp0PrintCollectAgent.exe\" --config \"%~dp0config.yaml\""
+
+set "APP_DIR=%~dp0"
+schtasks /Create /F /SC ONLOGON /RL HIGHEST /TN "PrintCollectAgent" /TR "\"%APP_DIR%PrintCollectAgent.exe\""
+
+endlocal
+exit /b 0
