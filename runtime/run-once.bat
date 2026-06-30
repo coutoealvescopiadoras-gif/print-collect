@@ -1,6 +1,2 @@
 @echo off
-setlocal
-cd /d "%~dp0"
-"%~dp0PrintCollectAgent.exe" --config "%~dp0config.yaml" --once
-echo.
-pause
+notepad "%~dp0config.yaml"
