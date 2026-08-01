@@ -298,11 +298,17 @@ def cmd_pair(args: argparse.Namespace) -> int:
     if not server_url.startswith("http"):
         server_url = "https://" + server_url
 
-    # Código do Cliente (padrão)
+    # Código de vínculo: ACEITA AMBOS (🎫 Código Cliente Fixo OU 🔗 Pareamento Temporário)
     code = (args.code or "").strip() or os.environ.get("PAIRING_CODE", "").strip()
     if not code:
         try:
-            code = input("CÓDIGO DO CLIENTE (8 caracteres, fixo, não expira — da coluna 'Código Cliente' no painel): ").strip()
+            code = input(
+                "🎫 CÓDIGO DO CLIENTE (RECOMENDADO): 8 caracteres, fixo, NÃO EXPIRA — use o mesmo código em\n"
+                "   TODAS as filiais ou reinstalações do MESMO cliente (coluna '🎫 Código Cliente' no painel).\n"
+                "OU\n"
+                "🔗 CÓDIGO DE PAREAMENTO (TEMPORÁRIO): 8 caracteres, expira em 24h, uso único (botão 🔗 Pareamento\n"
+                "   na aba Clientes do painel, serve para um agente específico).\n"
+                "Digite QUALQUER um dos dois códigos abaixo: ").strip()
         except (EOFError, KeyboardInterrupt):
             return 2
 
@@ -351,8 +357,10 @@ def cmd_pair(args: argparse.Namespace) -> int:
 
 
 def cmd_wizard(args: argparse.Namespace) -> int:
-    """Wizard interativo de first run. Pergunta server_url, CÓDIGO DO CLIENTE, community,
-    faz pareamento, scan, envia primeira leitura, e pergunta se quer instalar startup."""
+    """Wizard interativo de first run. Pergunta server_url, CÓDIGO DE VÍNCULO
+    (aceita 🎫 Código Cliente Fixo OU 🔗 Código de Pareamento Temporário),
+    community, faz pareamento, scan, envia primeira leitura, e pergunta se
+    quer instalar startup."""
 
     print("=" * 62)
     print("   PRINT COLLECT — WIZARD DE INSTALAÇÃO")
@@ -376,14 +384,17 @@ def cmd_wizard(args: argparse.Namespace) -> int:
         server_url = "https://" + server_url
     print(f"     → URL do servidor: {server_url}")
 
-    # CÓDIGO DO CLIENTE
+    # CÓDIGO DE VÍNCULO: ACEITA AMBOS (🎫 Código Cliente Fixo OU 🔗 Pareamento Temporário)
     code = (args.code or "").strip() or os.environ.get("PAIRING_CODE", "").strip()
     if not code:
         try:
             code = input(
-                "\n2/5) Informe o CÓDIGO DO CLIENTE (8 caracteres, da coluna '🎫 Código Cliente'\n"
-                "     na aba Clientes do painel). Este código é único e NÃO EXPIRA — use o\n"
-                "     mesmo código em TODAS as filiais ou reintalações do mesmo cliente:\n"
+                "\n2/5) Informe o CÓDIGO DE VÍNCULO para este agente — ACEITAMOS 2 TIPOS DE CÓDIGO:\n"
+                "     🎫 OPÇÃO 1 (RECOMENDADO): CÓDIGO DO CLIENTE (coluna '🎫 Código Cliente' na aba Clientes)\n"
+                "         · 8 caracteres · NÃO EXPIRA · mesmo código em matriz e TODAS as filiais do mesmo cliente\n"
+                "     🔗 OPÇÃO 2: CÓDIGO DE PAREAMENTO (gerado no botão 🔗 Pareamento na aba Clientes)\n"
+                "         · 8 caracteres · expira em 24h · uso único (serve para UM agente específico)\n"
+                "     Digite QUALQUER um dos dois códigos abaixo:\n"
                 "> ").strip()
         except (EOFError, KeyboardInterrupt):
             return 2
