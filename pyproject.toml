@@ -1,2 +1,4 @@
 [tool.vercel]
-entrypoint = "server.app.main:app"
+# Entrypoint antigo (funcionava perfeitamente antes da Vercel CLI 58):
+# wrapper Mangum em api/collect_api.py que ja faz sys.path.insert() corretamente.
+entrypoint = "api.collect_api:handler"
