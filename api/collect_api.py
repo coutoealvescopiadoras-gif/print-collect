@@ -16,24 +16,35 @@ _DEBUG_OUTPUT.append(f"[DEBUG] cwd={os.getcwd()}")
 _DEBUG_OUTPUT.append(f"[DEBUG] python_version={sys.version}")
 
 def _make_error_app(message: str):
-    """Cria uma app minima ASGI que retorna o erro detalhado em /health."""
-    from mangum import Mangum
-    from fastapi import FastAPI
-    from fastapi.responses import PlainTextResponse
-    debug_app = FastAPI(title="Debug Runtime PrintCollect")
+    """Cria uma app minima ASGI que retorna o erro detalhado em /health.
+    Nao importa Mangum aqui: o handler ASGI minimo eh retornado diretamente.
+    """
+    import json as _json
 
-    @debug_app.get("/health")
-    @debug_app.get("/")
-    @debug_app.get("/{rest:path}")
-    async def show_error(rest: str = ""):
-        body = "\n".join(_DEBUG_OUTPUT) + "\n\n" + message
-        return PlainTextResponse(body, status_code=500)
+    async def app(scope, receive, send):
+        body_text = "\n".join(_DEBUG_OUTPUT) + "\n\n" + message
+        body_bytes = body_text.encode("utf-8", errors="replace")
+        headers = [
+            (b"content-type", b"text/plain; charset=utf-8"),
+            (b"content-length", str(len(body_bytes)).encode("ascii")),
+        ]
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 500,
+                "headers": headers,
+            }
+        )
+        await send({"type": "http.response.body", "body": body_bytes})
 
-    return Mangum(debug_app, lifespan="off", api_gateway_base_path="/")
+    return app
 
+
+_MANGUM_OK = False
 try:
     _DEBUG_OUTPUT.append("[DEBUG] importing Mangum...")
     from mangum import Mangum  # noqa: F401
+    _MANGUM_OK = True
     _DEBUG_OUTPUT.append("[DEBUG] importing create_app from app.main...")
     from app.main import create_app
     _DEBUG_OUTPUT.append("[DEBUG] create_app() invoking...")
@@ -46,6 +57,9 @@ try:
     )
 except Exception as _e:
     _tb = traceback.format_exc()
-    _err = f"=== APP FAILED TO INITIALIZE ===\nException: {type(_e).__name__}: {_e}\n\nTraceback:\n{_tb}\n"
+    _err = (
+        f"=== APP FAILED TO INITIALIZE (MANGUM_OK={_MANGUM_OK}) ===\n"
+        f"Exception: {type(_e).__name__}: {_e}\n\nTraceback:\n{_tb}\n"
+    )
     _DEBUG_OUTPUT.append(_err)
     handler = _make_error_app(_err)
