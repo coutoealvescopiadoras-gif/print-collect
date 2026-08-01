@@ -25,6 +25,8 @@
     { "source": "/dashboard/:path*", "destination": "/index.html" },
     { "source": "/clientes", "destination": "/index.html" },
     { "source": "/clientes/:path*", "destination": "/index.html" },
+    { "source": "/instalador", "destination": "/index.html" },
+    { "source": "/instalador/:path*", "destination": "/index.html" },
     { "source": "/impressoras", "destination": "/index.html" },
     { "source": "/impressoras/:path*", "destination": "/index.html" },
     { "source": "/agentes", "destination": "/index.html" },

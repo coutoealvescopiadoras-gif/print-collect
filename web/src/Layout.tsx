@@ -55,6 +55,7 @@ export default function Layout() {
           <NavLink to="/" end>Dashboard</NavLink>
           {isSuperadmin && <NavLink to="/revendedores">Revendedores</NavLink>}
           {canManageResources && <NavLink to="/clientes">Clientes</NavLink>}
+          <NavLink to="/instalador">📦 Instalador</NavLink>
           <NavLink to="/impressoras">Impressoras</NavLink>
           <NavLink to="/alertas">Alertas</NavLink>
           {canManageResources && <NavLink to="/agentes">Agentes</NavLink>}
