@@ -48,6 +48,7 @@ class Client(Base):
     contact_phone = Column(String(50), nullable=True)
     address = Column(Text, nullable=True)
     active = Column(Boolean, default=True)
+    client_code = Column(String(16), unique=True, nullable=True, index=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     partner = relationship("Partner", back_populates="clients")
@@ -268,6 +269,26 @@ def _ensure_agent_pairing_columns(target_engine) -> None:
             connection.execute(text(statement))
 
 
+def _ensure_client_code_column(target_engine) -> None:
+    inspector = inspect(target_engine)
+    table_names = set(inspector.get_table_names())
+    if "clients" not in table_names:
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("clients")}
+    statements: list[str] = []
+    if "client_code" not in existing_columns:
+        statements.append("ALTER TABLE clients ADD COLUMN client_code VARCHAR(16) NULL")
+    if not statements:
+        return
+    with target_engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+        try:
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_clients_client_code ON clients(client_code) WHERE client_code IS NOT NULL"))
+        except Exception:
+            pass
+
+
 def init_db() -> None:
     if settings.auto_create_tables:
         target = _get_migration_engine() if settings.is_postgres else engine
@@ -275,6 +296,7 @@ def init_db() -> None:
         _ensure_user_multitenancy_columns(target)
         _ensure_partner_multitenancy_columns(target)
         _ensure_agent_pairing_columns(target)
+        _ensure_client_code_column(target)
 
 
 def get_db():

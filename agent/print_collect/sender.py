@@ -89,7 +89,7 @@ class ApiSender:
 
 
 class PairingClient:
-    """Cliente para o endpoint PUBLICO de pareamento por código curto."""
+    """Cliente para os endpoints PUBLICOS de pareamento (por código curto ou código do cliente)."""
 
     def __init__(self, server_url: str, timeout: int = 20):
         self.server_url = server_url.rstrip("/")
@@ -117,4 +117,50 @@ class PairingClient:
             raise RuntimeError(f"Falha no pareamento ({response.status_code}): {detail}")
         response.raise_for_status()
         return response.json()
+
+    def exchange_client_code(self, client_code: str, hostname: Optional[str] = None, version: Optional[str] = None) -> dict:
+        """Tenta o endpoint novo de CÓDIGO DO CLIENTE (fixo, não expira).
+        Retorna dicionario com agent_token, client_id, client_name, etc."""
+        url = f"{self.server_url}/api/agents/client-code/exchange"
+        payload = {
+            "client_code": client_code.strip().upper(),
+        }
+        if hostname:
+            payload["hostname"] = hostname
+        if version:
+            payload["version"] = version
+        response = requests.post(
+            url, json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=self.timeout,
+        )
+        if 400 <= response.status_code < 500:
+            try:
+                detail = response.json().get("detail", response.text)
+            except Exception:
+                detail = response.text
+            raise RuntimeError(f"Falha no codigo do cliente ({response.status_code}): {detail}")
+        response.raise_for_status()
+        return response.json()
+
+    def exchange_smart(self, code: str, hostname: Optional[str] = None, version: Optional[str] = None) -> tuple[str, dict]:
+        """Tenta PRIMEIRO o endpoint novo de Código do Cliente.
+        Se falhar com 404, cai no endpoint antigo de pareamento (TTL).
+        Retorna: (nome_rota_usada, payload_resultado)."""
+        cleaned = (code or "").strip().upper()
+        if not cleaned:
+            raise ValueError("Código não informado")
+        # 1) Tenta CÓDIGO DO CLIENTE (novo)
+        try:
+            return ("client_code", self.exchange_client_code(cleaned, hostname=hostname, version=version))
+        except Exception as exc:
+            msg = str(exc).lower()
+            # Se der "codigo do cliente nao encontrado" (404) ou qualquer erro 4xx — tenta modo antigo
+            if "nao encontrado" in msg or "not found" in msg or "404" in msg or "invalido" in msg:
+                pass  # cai pra baixo
+            else:
+                # Erro 500 / rede / etc: relança direto
+                raise
+        # 2) Fallback: endpoint antigo de código de pareamento TTL
+        return ("pairing", self.exchange(cleaned, hostname=hostname, version=version))
 

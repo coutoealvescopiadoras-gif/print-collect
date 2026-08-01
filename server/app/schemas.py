@@ -31,6 +31,7 @@ class ClientUpdate(BaseModel):
 class ClientOut(ClientBase):
     id: int
     partner_id: Optional[int] = None
+    client_code: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -192,6 +193,21 @@ class AgentPairingResponse(BaseModel):
     agent_id: int
     client_id: int
     client_name: str
+    server_url: Optional[str] = None
+
+
+class AgentClientCodeExchangeRequest(BaseModel):
+    client_code: str
+    hostname: Optional[str] = None
+    version: Optional[str] = None
+
+
+class AgentClientCodeExchangeResponse(BaseModel):
+    agent_token: str
+    agent_id: int
+    client_id: int
+    client_name: str
+    client_code: str
     server_url: Optional[str] = None
 
 

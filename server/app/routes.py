@@ -26,6 +26,8 @@ from app.schemas import (
     AgentPairingCodeOut,
     AgentPairingRequest,
     AgentPairingResponse,
+    AgentClientCodeExchangeRequest,
+    AgentClientCodeExchangeResponse,
     AgentReport,
     AlertOut,
     PartnerBillingStats,
@@ -653,7 +655,9 @@ def list_clients(db: Session = Depends(get_db), current_user: User = Depends(get
         query = query.filter(Client.partner_id == _required_partner_id(current_user))
     elif not _is_superadmin(current_user):
         query = query.filter(Client.id == _required_client_id(current_user))
-    return query.order_by(Client.name).all()
+    clients = query.order_by(Client.name).all()
+    _ensure_client_codes_for_all(db)
+    return clients
 
 
 @router.post("/clients", response_model=ClientOut, status_code=201)
@@ -663,6 +667,7 @@ def create_client(payload: ClientCreate, db: Session = Depends(get_db), current_
     data = payload.model_dump()
     if _is_partner_admin(current_user):
         data["partner_id"] = _required_partner_id(current_user)
+    data["client_code"] = _generate_client_code(db)
     client = Client(**data)
     db.add(client)
     db.commit()
@@ -824,6 +829,29 @@ def _generate_pairing_code(db: Session, length: int = 8) -> str:
     raise HTTPException(status_code=500, detail="Nao foi possivel gerar um codigo de pareamento unico.")
 
 
+def _generate_client_code(db: Session, length: int = 8) -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    for _ in range(30):
+        code = "".join(secrets.choice(alphabet) for _ in range(length))
+        existing = db.query(Client).filter(Client.client_code == code).first()
+        if not existing:
+            return code
+    raise HTTPException(status_code=500, detail="Nao foi possivel gerar um codigo unico de cliente.")
+
+
+def _ensure_client_codes_for_all(db: Session) -> None:
+    """Preenche client_code nulo para clientes ja existentes no banco."""
+    try:
+        missing = db.query(Client).filter(Client.client_code.is_(None)).all()
+        for c in missing:
+            if not c.client_code:
+                c.client_code = _generate_client_code(db)
+        db.commit()
+    except Exception:
+        db.rollback()
+        pass
+
+
 @router.post("/agents/pairing/generate", response_model=AgentPairingCodeOut)
 def generate_pairing_code(
     payload: AgentPairingGenerateRequest,
@@ -912,6 +940,88 @@ def exchange_pairing_code(
         agent_id=agent.id,
         client_id=agent.client_id,
         client_name=client_name,
+        server_url=str(request.base_url).rstrip("/"),
+    )
+
+
+@router.post("/agents/client-code/exchange", response_model=AgentClientCodeExchangeResponse)
+def exchange_client_code(
+    payload: AgentClientCodeExchangeRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Endpoint PUBLICO (sem login). O agente instalado na rede do cliente envia o
+    CODIGO DO CLIENTE (8 digitos, fixo, nao expira) e recebe um agent_token novo ou
+    existente. Esse endpoint pode ser chamado multiplas vezes (reinstalações,
+    filiais diferentes etc.) — sempre retorna um agent_token válido para o cliente.
+    Nao pode ser chamado por usuario web — apenas pelo agente."""
+    code = (payload.client_code or "").strip().upper()
+    if not code:
+        raise HTTPException(status_code=400, detail="Codigo do cliente invalido")
+
+    # Garante que clientes existentes tenham codigo
+    _ensure_client_codes_for_all(db)
+
+    client = db.query(Client).filter(Client.client_code == code).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Codigo do cliente nao encontrado")
+    if not client.active:
+        raise HTTPException(status_code=410, detail="Cliente esta inativo")
+
+    # Tenta encontrar um agente existente ativo para este cliente+hostname, se existir reutiliza
+    hostname = (payload.hostname or "")[:200] or None
+    version = (payload.version or "")[:50] or None
+    remote_ip = None
+    try:
+        if hasattr(request, "client") and request.client:
+            remote_ip = str(request.client.host)[:45]
+    except Exception:
+        remote_ip = None
+
+    existing = None
+    if hostname:
+        existing = (
+            db.query(Agent)
+            .filter(Agent.client_id == client.id, Agent.hostname == hostname)
+            .order_by(Agent.id.desc())
+            .first()
+        )
+    if existing is None:
+        # Cria um agente NOVO para este cliente (suporta multiplas filiais / maquinas)
+        sanitized_hostname = hostname[:150] if hostname else ""
+        agent_name = f"Agente {client.name}" + (f" ({sanitized_hostname})" if sanitized_hostname else "")
+        new_agent = Agent(
+            client_id=client.id,
+            name=agent_name[:200] or f"Agente cliente {client.id}",
+            api_token=secrets.token_urlsafe(32),
+            active=True,
+            hostname=hostname,
+            remote_ip=remote_ip,
+            paired_at=_now(),
+            version=version,
+        )
+        db.add(new_agent)
+        db.commit()
+        db.refresh(new_agent)
+        agent = new_agent
+    else:
+        # Reutiliza — atualiza heartbeat e versao
+        existing.active = True
+        existing.paired_at = _now()
+        existing.hostname = hostname
+        existing.version = version or existing.version
+        if remote_ip:
+            existing.remote_ip = remote_ip
+        db.commit()
+        db.refresh(existing)
+        agent = existing
+
+    return AgentClientCodeExchangeResponse(
+        agent_token=agent.api_token,
+        agent_id=agent.id,
+        client_id=client.id,
+        client_name=client.name,
+        client_code=code,
         server_url=str(request.base_url).rstrip("/"),
     )
 

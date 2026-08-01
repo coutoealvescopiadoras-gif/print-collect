@@ -136,23 +136,28 @@ export default function Clientes() {
 
   const INSTALLER_DOWNLOAD_URL = "https://www.printcollect.com.br/PrintCollectSetup.exe";
 
-  const buildPairingMessage = () => {
+  const buildPairingMessage = (client?: Client) => {
+    const theClient = client || activePairingClient;
     const publicServerUrl = pairingResult?.server_url || getPublicApiUrl() || "https://www.printcollect.com.br";
-    const code = pairingResult?.pairing_code ?? "<CODIGO-AQUI>";
+    const code = pairingResult?.pairing_code ?? "<CODIGO-PAREAMENTO>";
+    const clientCode = theClient?.client_code || "<CODIGO-DO-CLIENTE>";
     return [
       "Olá, tudo bem?",
       "",
       "Estamos configurando o monitoramento automático das suas impressoras! 🖨️",
       "",
-      "Siga esses 3 passos no computador principal da empresa:",
+      "Siga esses 3 passos no computador principal da empresa (ou na filial):",
       "",
       `1️⃣ BAIXE o instalador no link oficial abaixo e dê DUPLA CLIQUE para instalar:`,
       `   🔗 ${INSTALLER_DOWNLOAD_URL}`,
-      "2️⃣ Ao terminar a instalação, abrirá automaticamente um \"Wizard de Pareamento\".",
-      "3️⃣ Quando perguntar, informe:",
-      `     • URL do servidor: ${publicServerUrl}`,
-      `     • Código de pareamento: ${code}`,
+      "2️⃣ Ao terminar a instalação, abrirá automaticamente um \"Wizard de Instalação\".",
+      "3️⃣ Quando perguntar, informe SEU CÓDIGO DO CLIENTE (não expira, sempre o mesmo):",
+      `     • Código do Cliente: 🎫 ${clientCode}`,
       "     • Comunidade SNMP: public (só aperte Enter)",
+      "",
+      "💡 Dica: Instalou na matriz, e agora quer instalar também em outras 2 filiais da mesma empresa?",
+      "       Basta rodar o instalador em cada filial e usar o MESMO CÓDIGO DO CLIENTE acima!",
+      "       Todas as impressoras de todas as filiais ficarão cadastradas automaticamente na sua empresa.",
       "",
       "Pronto! 😊 Em menos de 2 minutos o sistema encontra sozinho todas as impressoras da sua rede e começa a monitorar nível de toner, contadores e alertas.",
       "Qualquer dúvida é só chamar a gente!",
@@ -232,6 +237,7 @@ export default function Clientes() {
             <thead>
               <tr>
                 <th>Nome</th>
+                <th style={{ width: 165 }}>🎫 Código Cliente</th>
                 <th>CNPJ</th>
                 <th>Contato</th>
                 <th>E-mail</th>
@@ -260,6 +266,41 @@ export default function Clientes() {
                         >
                           {expandedClientId === c.id ? "▼ " : "▶ "}{c.name}
                         </button>
+                      </div>
+                    </td>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", flexWrap: "wrap" }}>
+                        <span
+                          style={{
+                            fontFamily: "'Courier New', ui-monospace, monospace",
+                            fontWeight: 800,
+                            fontSize: 14,
+                            letterSpacing: 1.2,
+                            padding: "0.15rem 0.45rem",
+                            borderRadius: 6,
+                            background: "rgba(16,185,129,0.12)",
+                            color: "rgb(16,185,129)",
+                            border: "1px solid rgba(16,185,129,0.25)",
+                          }}
+                          title="Código único do cliente (não expira)"
+                        >
+                          {c.client_code || "—"}
+                        </span>
+                        {c.client_code && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            style={{
+                              padding: "0.1rem 0.35rem",
+                              fontSize: 12,
+                              minWidth: "auto",
+                            }}
+                            onClick={() => copyText(c.client_code!)}
+                            title="Copiar código do cliente"
+                          >
+                            📋
+                          </button>
+                        )}
                       </div>
                     </td>
                     <td>{c.cnpj || "—"}</td>
@@ -294,10 +335,42 @@ export default function Clientes() {
                   </tr>
                   {expandedClientId === c.id && (
                     <tr key={`details-${c.id}`}>
-                      <td colSpan={6} style={{ background: "var(--surface-hover)" }}>
+                      <td colSpan={7} style={{ background: "var(--surface-hover)" }}>
                         <div style={{ padding: "1rem 0" }}>
-                          <div style={{ fontWeight: 600, marginBottom: "0.75rem" }}>
-                            Impressoras mapeadas para {c.name}
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap", marginBottom: "0.75rem" }}>
+                            <div style={{ fontWeight: 600 }}>
+                              Impressoras mapeadas para <strong>{c.name}</strong>
+                            </div>
+                            {c.client_code && (
+                              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: 13 }}>
+                                <span style={{ color: "var(--text-muted)" }}>🎫 Código:</span>
+                                <span
+                                  style={{
+                                    fontFamily: "'Courier New', ui-monospace, monospace",
+                                    fontWeight: 800,
+                                    color: "rgb(16,185,129)",
+                                  }}
+                                >
+                                  {c.client_code}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary"
+                                  style={{ fontSize: 12, padding: "0.2rem 0.5rem" }}
+                                  onClick={() => copyText(c.client_code!)}
+                                >
+                                  📋 Copiar código
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary"
+                                  style={{ fontSize: 12, padding: "0.2rem 0.5rem" }}
+                                  onClick={() => copyText(buildPairingMessage(c))}
+                                >
+                                  📩 Copiar mensagem completa
+                                </button>
+                              </div>
+                            )}
                           </div>
                           {loadingPrintersClientId === c.id ? (
                             <div className="loading" style={{ padding: "0.5rem 0", textAlign: "left" }}>

@@ -8,6 +8,7 @@ export interface Client {
   contact_phone: string | null;
   address: string | null;
   active: boolean;
+  client_code?: string | null;
   created_at: string;
 }
 

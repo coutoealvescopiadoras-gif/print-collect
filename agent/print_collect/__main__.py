@@ -241,24 +241,28 @@ def _pair_and_save(server_url: str, code: str, config_path: Path,
     if not server_url:
         raise ValueError("server_url nao informado")
     if not code:
-        raise ValueError("codigo de pareamento nao informado")
+        raise ValueError("codigo do cliente nao informado")
 
     print(f"[1/4] Contatando servidor: {server_url}")
     pairing = PairingClient(server_url.rstrip("/"))
     hostname = platform.node() or None
     version = "0.3.0"
-    print(f"[2/4] Trocando codigo de pareamento: {code.upper()} (hostname: {hostname})")
-    result = pairing.exchange(code=code, hostname=hostname, version=version)
+    print(f"[2/4] Validando CÓDIGO DO CLIENTE: {code.upper()} (hostname: {hostname})")
+    mode, result = pairing.exchange_smart(code=code, hostname=hostname, version=version)
 
     agent_token = result.get("agent_token") or ""
     client_id = result.get("client_id")
     client_name = result.get("client_name") or f"Cliente #{client_id}"
     returned_url = (result.get("server_url") or server_url).rstrip("/")
+    client_code = result.get("client_code")
 
     if not agent_token:
         raise RuntimeError("Resposta do servidor nao contem agent_token.")
 
-    print(f"[3/4] Pareamento OK: vinculado a '{client_name}' (client_id={client_id})")
+    if mode == "client_code":
+        print(f"[3/4] CÓDIGO DO CLIENTE OK: vinculado a '{client_name}' (client_id={client_id})")
+    else:
+        print(f"[3/4] Pareamento por código TTL OK: vinculado a '{client_name}' (client_id={client_id})")
 
     cfg = AgentConfig(
         server_url=returned_url,
@@ -274,6 +278,8 @@ def _pair_and_save(server_url: str, code: str, config_path: Path,
     )
     save_config(config_path, cfg)
     print(f"[4/4] Configuracao salva em: {config_path}")
+    if client_code:
+        print(f"      Dica: o Código do Cliente é '{client_code}' e nunca expira.")
     return cfg
 
 
@@ -283,7 +289,7 @@ def cmd_pair(args: argparse.Namespace) -> int:
     server_url = (args.server_url or "").strip() or os.environ.get("SERVER_URL", "").strip()
     if not server_url:
         try:
-            server_url = input("URL do servidor (ex.: http://meu-servidor.com): ").strip()
+            server_url = input("URL do servidor (ex.: https://www.printcollect.com.br): ").strip()
         except (EOFError, KeyboardInterrupt):
             return 2
     if not server_url:
@@ -292,11 +298,11 @@ def cmd_pair(args: argparse.Namespace) -> int:
     if not server_url.startswith("http"):
         server_url = "https://" + server_url
 
-    # Pairing code
+    # Código do Cliente (padrão)
     code = (args.code or "").strip() or os.environ.get("PAIRING_CODE", "").strip()
     if not code:
         try:
-            code = input("Codigo de pareamento (8 caracteres, fornecido no painel): ").strip()
+            code = input("CÓDIGO DO CLIENTE (8 caracteres, fixo, não expira — da coluna 'Código Cliente' no painel): ").strip()
         except (EOFError, KeyboardInterrupt):
             return 2
 
@@ -345,11 +351,11 @@ def cmd_pair(args: argparse.Namespace) -> int:
 
 
 def cmd_wizard(args: argparse.Namespace) -> int:
-    """Wizard interativo de first run. Pergunta server_url, code, community,
+    """Wizard interativo de first run. Pergunta server_url, CÓDIGO DO CLIENTE, community,
     faz pareamento, scan, envia primeira leitura, e pergunta se quer instalar startup."""
 
     print("=" * 62)
-    print("   PRINT COLLECT — WIZARD DE PRIMEIRA EXECUCAO")
+    print("   PRINT COLLECT — WIZARD DE INSTALAÇÃO")
     print("=" * 62)
     print()
 
@@ -359,20 +365,26 @@ def cmd_wizard(args: argparse.Namespace) -> int:
     server_url = (args.server_url or "").strip() or os.environ.get("SERVER_URL", "").strip()
     if not server_url:
         try:
-            server_url = input("1/5) URL do seu servidor Print Collect (ex.: http://192.168.0.10:8000):\n> ").strip()
+            server_url = input(
+                "1/5) URL do seu servidor Print Collect (padrão: https://www.printcollect.com.br):\n"
+                "> ").strip()
         except (EOFError, KeyboardInterrupt):
             return 2
     if not server_url:
-        print("[ERRO] URL obrigatoria.")
-        return 1
+        server_url = "https://www.printcollect.com.br"
     if not server_url.startswith("http"):
         server_url = "https://" + server_url
+    print(f"     → URL do servidor: {server_url}")
 
-    # Code
+    # CÓDIGO DO CLIENTE
     code = (args.code or "").strip() or os.environ.get("PAIRING_CODE", "").strip()
     if not code:
         try:
-            code = input("\n2/5) Informe o codigo de pareamento (8 caracteres, do painel):\n> ").strip()
+            code = input(
+                "\n2/5) Informe o CÓDIGO DO CLIENTE (8 caracteres, da coluna '🎫 Código Cliente'\n"
+                "     na aba Clientes do painel). Este código é único e NÃO EXPIRA — use o\n"
+                "     mesmo código em TODAS as filiais ou reintalações do mesmo cliente:\n"
+                "> ").strip()
         except (EOFError, KeyboardInterrupt):
             return 2
 
