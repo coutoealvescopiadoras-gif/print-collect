@@ -1,14 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "vite",
   "installCommand": "cd web && npm install",
   "buildCommand": "cd web && npm run build",
   "outputDirectory": "web/dist",
-  "functions": {
-    "api/collect_api": {
-      "maxDuration": 60
-    }
-  },
   "cleanUrls": true,
   "trailingSlash": false,
   "rewrites": [
