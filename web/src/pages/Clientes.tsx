@@ -134,8 +134,10 @@ export default function Clientes() {
     setTimeout(() => setPairingCopied(false), 2000);
   };
 
+  const INSTALLER_DOWNLOAD_URL = "https://www.printcollect.com.br/PrintCollectSetup.exe";
+
   const buildPairingMessage = () => {
-    const publicServerUrl = pairingResult?.server_url || getPublicApiUrl() || "https://api.printcollect.com.br";
+    const publicServerUrl = pairingResult?.server_url || getPublicApiUrl() || "https://www.printcollect.com.br";
     const code = pairingResult?.pairing_code ?? "<CODIGO-AQUI>";
     return [
       "Olá, tudo bem?",
@@ -144,7 +146,8 @@ export default function Clientes() {
       "",
       "Siga esses 3 passos no computador principal da empresa:",
       "",
-      "1️⃣ BAIXE o instalador no link que vamos enviar (PrintCollectSetup.exe) e dê DUPLA CLIQUE para instalar.",
+      `1️⃣ BAIXE o instalador no link oficial abaixo e dê DUPLA CLIQUE para instalar:`,
+      `   🔗 ${INSTALLER_DOWNLOAD_URL}`,
       "2️⃣ Ao terminar a instalação, abrirá automaticamente um \"Wizard de Pareamento\".",
       "3️⃣ Quando perguntar, informe:",
       `     • URL do servidor: ${publicServerUrl}`,
@@ -461,7 +464,8 @@ Estamos configurando o monitoramento automático das suas impressoras! 🖨️
 
 Siga esses 3 passos no computador principal da empresa:
 
-1️⃣ BAIXE o instalador no link que vamos enviar (PrintCollectSetup.exe) e dê DUPLA CLIQUE para instalar.
+1️⃣ BAIXE o instalador no link oficial abaixo e dê DUPLA CLIQUE para instalar:
+   🔗 ${INSTALLER_DOWNLOAD_URL}
 2️⃣ Ao terminar a instalação, abrirá automaticamente um "Wizard de Pareamento".
 3️⃣ Quando perguntar, informe:
      • URL do servidor: ${pairingInlineServerUrl()}
