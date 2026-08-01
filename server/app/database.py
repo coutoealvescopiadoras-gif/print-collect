@@ -177,12 +177,29 @@ class User(Base):
 
 _engine_kwargs: dict = {"pool_pre_ping": True}
 
+def _fix_postgres_driver(url: str) -> str:
+    """Forca o uso do driver psycopg 3 (postgresql+psycopg://) que temos no
+    requirements.txt, evitando que o SQLAlchemy use o dialeto padrao psycopg 2
+    (postgresql://  sem driver) que causa ModuleNotFoundError: No module named
+    'psycopg2' em runtime (pois usamos psycopg[binary]==3.x).
+    """
+    if url.startswith("postgresql+psycopg:"):
+        return url
+    if url.startswith("postgresql+psycopg2:"):
+        return "postgresql+psycopg:" + url[len("postgresql+psycopg2:"):]
+    if url.startswith("postgresql:"):
+        return "postgresql+psycopg:" + url[len("postgresql:"):]
+    return url
+
+_db_url = _fix_postgres_driver(settings.database_url)
+_mig_url = _fix_postgres_driver(settings.migration_url)
+
 if settings.database_url.startswith("sqlite"):
     _engine_kwargs["connect_args"] = {"check_same_thread": False}
 elif True:
     _engine_kwargs["poolclass"] = NullPool
 
-engine = create_engine(settings.database_url, **_engine_kwargs)
+engine = create_engine(_db_url, **_engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 _migration_engine = None
@@ -191,7 +208,7 @@ _migration_engine = None
 def _get_migration_engine():
     global _migration_engine
     if _migration_engine is None:
-        _migration_engine = create_engine(settings.migration_url, pool_pre_ping=True)
+        _migration_engine = create_engine(_mig_url, pool_pre_ping=True)
     return _migration_engine
 
 
