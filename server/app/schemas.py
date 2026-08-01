@@ -30,9 +30,43 @@ class ClientUpdate(BaseModel):
 
 class ClientOut(ClientBase):
     id: int
+    partner_id: Optional[int] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class PartnerBase(BaseModel):
+    name: str
+    logo_url: Optional[str] = None
+    active: bool = True
+
+
+class PartnerCreate(PartnerBase):
+    pass
+
+
+class PartnerUpdate(BaseModel):
+    name: Optional[str] = None
+    logo_url: Optional[str] = None
+    active: Optional[bool] = None
+
+
+class PartnerOut(PartnerBase):
+    id: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PartnerBillingStats(BaseModel):
+    partner_id: int
+    partner_name: str
+    total_clients: int
+    total_printers: int
+    billable_printers: int
+    online_printers: int
+    offline_printers: int
 
 
 class LocationBase(BaseModel):
@@ -121,8 +155,44 @@ class AgentOut(BaseModel):
     version: Optional[str] = None
     active: bool
     created_at: datetime
+    hostname: Optional[str] = None
+    remote_ip: Optional[str] = None
+    pairing_code: Optional[str] = None
+    pairing_expires_at: Optional[datetime] = None
+    paired_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+
+class AgentPairingGenerateRequest(BaseModel):
+    client_id: int
+    name: Optional[str] = None
+    ttl_minutes: int = 1440
+
+
+class AgentPairingCodeOut(BaseModel):
+    agent_id: int
+    client_id: int
+    name: str
+    pairing_code: str
+    pairing_expires_at: datetime
+    server_url: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class AgentPairingRequest(BaseModel):
+    pairing_code: str
+    hostname: Optional[str] = None
+    version: Optional[str] = None
+
+
+class AgentPairingResponse(BaseModel):
+    agent_token: str
+    agent_id: int
+    client_id: int
+    client_name: str
+    server_url: Optional[str] = None
 
 
 class PrinterReading(BaseModel):
@@ -157,16 +227,31 @@ class DashboardStats(BaseModel):
 
 
 class UserBase(BaseModel):
-    username: str
     email: str
 
 
 class UserCreate(UserBase):
     password: str
+    role: str = "client_viewer"
+    client_id: Optional[int] = None
+    partner_id: Optional[int] = None
+    username: Optional[str] = None
+
+
+class UserUpdate(BaseModel):
+    email: Optional[str] = None
+    password: Optional[str] = None
+    role: Optional[str] = None
+    client_id: Optional[int] = None
+    partner_id: Optional[int] = None
+    active: Optional[bool] = None
 
 
 class UserOut(UserBase):
     id: int
+    role: str
+    client_id: Optional[int] = None
+    partner_id: Optional[int] = None
     active: bool
     created_at: datetime
 
@@ -185,3 +270,8 @@ class TokenData(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class ChangeOwnPasswordRequest(BaseModel):
+    current_password: str
+    new_password: str

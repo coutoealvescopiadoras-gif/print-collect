@@ -1,4 +1,47 @@
-const BASE = import.meta.env.VITE_API_URL || "";
+function isLocalNetworkHost(hostname: string) {
+  if (hostname === "localhost" || hostname === "127.0.0.1") {
+    return true;
+  }
+
+  return (
+    /^10(?:\.\d{1,3}){3}$/.test(hostname) ||
+    /^192\.168(?:\.\d{1,3}){2}$/.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2}$/.test(hostname)
+  );
+}
+
+function resolveBaseUrl() {
+  const configuredBase = (import.meta.env.VITE_API_URL || "").trim();
+
+  if (!configuredBase && typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:8000`;
+  }
+
+  if (!configuredBase) {
+    return "";
+  }
+
+  if (typeof window === "undefined") {
+    return configuredBase;
+  }
+
+  try {
+    const url = new URL(configuredBase);
+    const isLocalApiHost = isLocalNetworkHost(url.hostname);
+    const isLocalPageHost = isLocalNetworkHost(window.location.hostname);
+
+    if (isLocalApiHost && isLocalPageHost) {
+      url.hostname = window.location.hostname;
+      return url.toString().replace(/\/$/, "");
+    }
+  } catch {
+    return configuredBase;
+  }
+
+  return configuredBase;
+}
+
+const BASE = resolveBaseUrl();
 
 let token: string | null = null;
 
@@ -25,9 +68,9 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  login: (username: string, password: string) => {
+  login: (email: string, password: string) => {
     const formData = new URLSearchParams();
-    formData.append("username", username);
+    formData.append("username", email);
     formData.append("password", password);
 
     return request<{ access_token: string; token_type: string }>("/api/token", {
@@ -37,6 +80,42 @@ export const api = {
     });
   },
   getMe: () => request<import("./types").User>("/api/users/me"),
+  changeOwnPassword: (currentPassword: string, newPassword: string) =>
+    request<{ status: string }>("/api/users/me/change-password", {
+      method: "POST",
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+      }),
+    }),
+  getUsers: () => request<import("./types").User[]>("/api/users"),
+  createUser: (data: {
+    username?: string;
+    email: string;
+    password: string;
+    role: "superadmin" | "partner_admin" | "client_manager" | "client_viewer";
+    client_id?: number | null;
+    partner_id?: number | null;
+  }) =>
+    request<import("./types").User>("/api/users", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateUser: (
+    userId: number,
+    data: Partial<{
+      email: string;
+      password: string;
+      role: "superadmin" | "partner_admin" | "client_manager" | "client_viewer";
+      client_id: number | null;
+      partner_id: number | null;
+      active: boolean;
+    }>,
+  ) =>
+    request<import("./types").User>(`/api/users/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
   getStats: () => request<import("./types").DashboardStats>("/api/dashboard/stats"),
   getClients: () => request<import("./types").Client[]>("/api/clients"),
   createClient: (data: Partial<import("./types").Client>) =>
@@ -44,6 +123,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  deleteClient: (clientId: number) =>
+    request<{ status: string }>(`/api/clients/${clientId}`, { method: "DELETE" }),
+  getLocations: (clientId: number) =>
+    request<import("./types").Location[]>(`/api/clients/${clientId}/locations`),
   getPrinters: (clientId?: number) =>
     request<import("./types").Printer[]>(
       clientId ? `/api/printers?client_id=${clientId}` : "/api/printers",
@@ -55,9 +138,51 @@ export const api = {
   resolveAlert: (id: number) =>
     request<import("./types").Alert>(`/api/alerts/${id}/resolve`, { method: "POST" }),
   getAgents: () => request<import("./types").Agent[]>("/api/agents"),
+  getPartners: () => request<import("./types").Partner[]>("/api/partners"),
+  getPartnerStats: () => request<import("./types").PartnerBillingStats[]>("/api/partners/stats"),
+  createPartner: (data: Partial<import("./types").Partner>) =>
+    request<import("./types").Partner>("/api/partners", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updatePartner: (
+    partnerId: number,
+    data: Partial<import("./types").Partner>,
+  ) =>
+    request<import("./types").Partner>(`/api/partners/${partnerId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
   createAgent: (clientId: number, name: string) =>
     request<import("./types").Agent>("/api/agents", {
       method: "POST",
       body: JSON.stringify({ client_id: clientId, name }),
     }),
+  generateAgentPairingCode: (payload: {
+    client_id: number;
+    name?: string;
+    ttl_minutes?: number;
+  }) =>
+    request<import("./types").AgentPairingCode>("/api/agents/pairing/generate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  deleteAgent: (agentId: number) =>
+    request<{ status: string }>(`/api/agents/${agentId}`, { method: "DELETE" }),
+  downloadAgentWindowsPackage: async (agentId: number) => {
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    const response = await fetch(`${BASE}/api/agents/${agentId}/windows-package`, {
+      headers,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || response.statusText);
+    }
+    const blob = await response.blob();
+    const contentDisposition = response.headers.get("Content-Disposition") || "";
+    return { blob, contentDisposition };
+  },
 };

@@ -7,7 +7,8 @@ class Settings(BaseSettings):
     direct_url: Optional[str] = None
     secret_key: str = "change-me-in-production"
     api_key: str = "agent-dev-key"
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    cors_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(:\d+)?$"
     auto_create_tables: bool = True
     
     # Email configuration

@@ -57,16 +57,16 @@ $env:INNO_SETUP_COMPILER = "C:\Caminho\Para\ISCC.exe"
 4. Reinicie o backend
 5. No painel, baixe o pacote do agente
 6. Entregue ao cliente o ZIP contendo:
-   - `1-CLIQUE-AQUI-PARA-INSTALAR.bat`
    - `PrintCollectSetup.exe`
    - `config.yaml` preenchido com URL e token
 
 ## Fluxo no cliente
 
 1. Extrair o ZIP
-2. Executar `1-CLIQUE-AQUI-PARA-INSTALAR.bat`
-3. Editar `C:\Program Files\PrintCollect\config.yaml` com a sub-rede ou IPs da rede
-4. Testar por `Testar conexao`
-5. Confirmar a coleta por `Executar coleta unica`
+2. Executar `PrintCollectSetup.exe`
+3. Clicar em `Proximo` ate concluir
+4. O instalador copia automaticamente o `config.yaml` do ZIP para `C:\Program Files\PrintCollect\config.yaml`
+5. O agente inicia sozinho ao concluir e tenta descobrir a sub-rede local quando `snmp.subnets` estiver vazio
+6. Editar `C:\Program Files\PrintCollect\config.yaml` apenas se quiser forcar IPs, sub-redes ou outra community SNMP
 
 O instalador cria uma tarefa agendada do Windows para iniciar o agente automaticamente ao ligar o computador.

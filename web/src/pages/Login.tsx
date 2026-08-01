@@ -3,7 +3,7 @@ import { useAuth } from "../context/AuthContext";
 import { LOGO_URL } from "../assets/placeholder-logo";
 
 export function Login() {
-  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -14,9 +14,9 @@ export function Login() {
     setError("");
     setLoading(true);
     try {
-      await login(username, password);
+      await login(email, password);
     } catch (err) {
-      setError("Usuário ou senha incorretos");
+      setError("E-mail ou senha incorretos");
     } finally {
       setLoading(false);
     }
@@ -62,11 +62,11 @@ export function Login() {
               color: "#94a3b8",
               marginBottom: "0.5rem",
               fontSize: "0.875rem",
-            }}>Usuário</label>
+            }}>E-mail</label>
             <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               required
               style={{
                 width: "100%",

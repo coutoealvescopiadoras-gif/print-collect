@@ -1,21 +1,23 @@
 from app.config import settings
-from app.database import User, SessionLocal
-from passlib.context import CryptContext
+from app.database import User, SessionLocal, init_db
+import bcrypt
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_password(plain_password: str) -> str:
+    plain = plain_password.encode("utf-8")[:72]
+    return bcrypt.hashpw(plain, bcrypt.gensalt()).decode("utf-8")
 
 
 def create_admin_user():
+    init_db()
     db = SessionLocal()
     try:
-        # Verifica se o usuário admin já existe
         existing_admin = db.query(User).filter(User.username == "admin").first()
         if existing_admin:
             print("Usuário admin já existe!")
             return
 
-        # Cria o usuário admin com senha admin123
-        hashed_password = pwd_context.hash("admin123")
+        hashed_password = hash_password("admin123")
         admin_user = User(
             username="admin",
             email="admin@printcollect.com.br",

@@ -10,6 +10,8 @@ from sqlalchemy import (
     String,
     Text,
     create_engine,
+    inspect,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 from sqlalchemy.pool import NullPool
@@ -21,10 +23,24 @@ class Base(DeclarativeBase):
     pass
 
 
+class Partner(Base):
+    __tablename__ = "partners"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False, unique=True)
+    logo_url = Column(String(500), nullable=True)
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    clients = relationship("Client", back_populates="partner")
+    users = relationship("User", back_populates="partner")
+
+
 class Client(Base):
     __tablename__ = "clients"
 
     id = Column(Integer, primary_key=True, index=True)
+    partner_id = Column(Integer, ForeignKey("partners.id"), nullable=True)
     name = Column(String(200), nullable=False)
     cnpj = Column(String(20), unique=True, nullable=True)
     contact_name = Column(String(200), nullable=True)
@@ -34,9 +50,11 @@ class Client(Base):
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
+    partner = relationship("Partner", back_populates="clients")
     locations = relationship("Location", back_populates="client", cascade="all, delete-orphan")
     printers = relationship("Printer", back_populates="client", cascade="all, delete-orphan")
     agents = relationship("Agent", back_populates="client", cascade="all, delete-orphan")
+    users = relationship("User", back_populates="client", cascade="all, delete-orphan")
 
 
 class Location(Base):
@@ -112,6 +130,11 @@ class Agent(Base):
     version = Column(String(50), nullable=True)
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    hostname = Column(String(200), nullable=True)
+    remote_ip = Column(String(45), nullable=True)
+    pairing_code = Column(String(16), unique=True, nullable=True)
+    pairing_expires_at = Column(DateTime, nullable=True)
+    paired_at = Column(DateTime, nullable=True)
 
     client = relationship("Client", back_populates="agents")
 
@@ -141,8 +164,14 @@ class User(Base):
     username = Column(String(100), unique=True, nullable=False)
     email = Column(String(200), unique=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
+    role = Column(String(50), nullable=False, default="superadmin")
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
+    partner_id = Column(Integer, ForeignKey("partners.id"), nullable=True)
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    client = relationship("Client", back_populates="users")
+    partner = relationship("Partner", back_populates="users")
 
 
 _engine_kwargs: dict = {"pool_pre_ping": True}
@@ -166,10 +195,87 @@ def _get_migration_engine():
     return _migration_engine
 
 
+def _ensure_user_multitenancy_columns(target_engine) -> None:
+    inspector = inspect(target_engine)
+    if "users" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    statements: list[str] = []
+
+    if "role" not in existing_columns:
+        statements.append("ALTER TABLE users ADD COLUMN role VARCHAR(50) DEFAULT 'superadmin'")
+    if "client_id" not in existing_columns:
+        statements.append("ALTER TABLE users ADD COLUMN client_id INTEGER NULL")
+
+    if not statements:
+        return
+
+    with target_engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+        connection.execute(text("UPDATE users SET role = 'superadmin' WHERE role IS NULL"))
+
+
+def _ensure_partner_multitenancy_columns(target_engine) -> None:
+    inspector = inspect(target_engine)
+    table_names = set(inspector.get_table_names())
+    statements: list[str] = []
+
+    if "partners" in table_names:
+        existing_columns = {column["name"] for column in inspector.get_columns("partners")}
+        if "logo_url" not in existing_columns:
+            statements.append("ALTER TABLE partners ADD COLUMN logo_url VARCHAR(500) NULL")
+
+    if "clients" in table_names:
+        existing_columns = {column["name"] for column in inspector.get_columns("clients")}
+        if "partner_id" not in existing_columns:
+            statements.append("ALTER TABLE clients ADD COLUMN partner_id INTEGER NULL")
+
+    if "users" in table_names:
+        existing_columns = {column["name"] for column in inspector.get_columns("users")}
+        if "partner_id" not in existing_columns:
+            statements.append("ALTER TABLE users ADD COLUMN partner_id INTEGER NULL")
+
+    if not statements:
+        return
+
+    with target_engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
+def _ensure_agent_pairing_columns(target_engine) -> None:
+    inspector = inspect(target_engine)
+    table_names = set(inspector.get_table_names())
+    if "agents" not in table_names:
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("agents")}
+    statements: list[str] = []
+    if "hostname" not in existing_columns:
+        statements.append("ALTER TABLE agents ADD COLUMN hostname VARCHAR(200) NULL")
+    if "remote_ip" not in existing_columns:
+        statements.append("ALTER TABLE agents ADD COLUMN remote_ip VARCHAR(45) NULL")
+    if "pairing_code" not in existing_columns:
+        statements.append("ALTER TABLE agents ADD COLUMN pairing_code VARCHAR(16) NULL")
+    if "pairing_expires_at" not in existing_columns:
+        statements.append("ALTER TABLE agents ADD COLUMN pairing_expires_at DATETIME NULL")
+    if "paired_at" not in existing_columns:
+        statements.append("ALTER TABLE agents ADD COLUMN paired_at DATETIME NULL")
+    if not statements:
+        return
+    with target_engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
 def init_db() -> None:
     if settings.auto_create_tables:
         target = _get_migration_engine() if settings.is_postgres else engine
         Base.metadata.create_all(bind=target)
+        _ensure_user_multitenancy_columns(target)
+        _ensure_partner_multitenancy_columns(target)
+        _ensure_agent_pairing_columns(target)
 
 
 def get_db():

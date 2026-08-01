@@ -1,30 +1,80 @@
 # Python
 __pycache__/
 *.py[cod]
+*.pyo
 .venv/
 venv/
+env/
+ENV/
 *.egg-info/
-.env
+build/
+dist/
+*.eggs/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Node
 node_modules/
-dist/
-.vite/
+web/dist/
+web/.vite/
+web/build/
 
-# Database
+# NÃO subir builds grandes do agente PyInstaller / Inno
+agent/build/
+agent/dist/
+agent/__pycache__/
+agent/*.egg-info/
+# (Se quiser disponibilizar .exe no GitHub Release, é melhor do que commitá-los)
+
+# NÃO subir arquivos temporarios agente de teste
+agent/__*.log
+agent/__*.txt
+agent/_*.py
+server/_*.py
+
+# Database (NÃO subir seus clientes / dados sensíveis!)
 *.db
 *.sqlite3
+database/
+*.sqlite
+server/*.db
+server/*.sqlite
+
+# Arquivos com segredos (SENHAS / TOKENS)
+.env
+.env.*
+server/.env
+web/.env
+agent/.env
+*.secret
+config.yaml
+server/app/routes.py.bak
+server/app/email.py.bak
 
 # IDE
 .idea/
 .vscode/
 *.swp
+*.swo
 
 # OS
 .DS_Store
+Thumbs.db
+*.lnk
+
+# Local logs
+logs/
+*.log
 
 # Agent config with secrets
 agent/config.yaml
 
 # Server env with Supabase credentials
 server/.env
+
+# Debug
+.dbg/
+debug-*.md
+

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Optional
 
 import requests
 
@@ -20,16 +21,17 @@ class ApiSender:
         self.retries = retries
         self._headers = {"X-Agent-Token": agent_token, "Content-Type": "application/json"}
 
-    def _post(self, path: str, payload: dict | None = None) -> dict:
+    def _post(self, path: str, payload: dict | None = None, headers: Optional[dict] = None) -> dict:
         url = f"{self.server_url}{path}"
         last_error: Exception | None = None
+        merged_headers = {**self._headers, **(headers or {})}
 
         for attempt in range(1, self.retries + 1):
             try:
                 response = requests.post(
                     url,
                     json=payload or {},
-                    headers=self._headers,
+                    headers=merged_headers,
                     timeout=self.timeout,
                 )
                 response.raise_for_status()
@@ -84,3 +86,35 @@ class ApiSender:
         except requests.RequestException as exc:
             logger.error("Servidor inacessível: %s", exc)
             return False
+
+
+class PairingClient:
+    """Cliente para o endpoint PUBLICO de pareamento por código curto."""
+
+    def __init__(self, server_url: str, timeout: int = 20):
+        self.server_url = server_url.rstrip("/")
+        self.timeout = timeout
+
+    def exchange(self, code: str, hostname: Optional[str] = None, version: Optional[str] = None) -> dict:
+        url = f"{self.server_url}/api/agents/pairing/exchange"
+        payload = {
+            "pairing_code": code.strip().upper(),
+        }
+        if hostname:
+            payload["hostname"] = hostname
+        if version:
+            payload["version"] = version
+        response = requests.post(
+            url, json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=self.timeout,
+        )
+        if 400 <= response.status_code < 500:
+            try:
+                detail = response.json().get("detail", response.text)
+            except Exception:
+                detail = response.text
+            raise RuntimeError(f"Falha no pareamento ({response.status_code}): {detail}")
+        response.raise_for_status()
+        return response.json()
+

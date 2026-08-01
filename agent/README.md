@@ -8,12 +8,40 @@ Programa Python que roda **no PC ou servidor do cliente**, na rede local onde es
 
 ## Requisitos no cliente
 
-- Python 3.10+
+### Fluxo recomendado
+
+- Windows com permissão de administrador para executar `PrintCollectSetup.exe`
 - Acesso de rede às impressoras (porta UDP 161 — SNMP)
 - SNMP habilitado nas impressoras (community `public` na maioria dos casos)
 - Saída HTTP/HTTPS para o servidor da API
 
+### Fluxo alternativo
+
+- Python 3.10+ somente quando usar o fallback `install.ps1`
+
 ## Instalação rápida
+
+### Windows standalone
+
+No painel, baixe o pacote do agente. O ZIP deve conter:
+
+- `PrintCollectSetup.exe`
+- `config.yaml`
+
+Passos:
+
+1. Extraia o ZIP em uma pasta local
+2. Execute `PrintCollectSetup.exe` como administrador
+3. Clique em `Proximo` ate concluir
+4. O instalador copia automaticamente o `config.yaml` do ZIP com a URL e o token do agente
+5. O agente inicia sozinho e tenta descobrir a sub-rede local quando `snmp.subnets` estiver vazio
+6. Edite `C:\Program Files\PrintCollect\config.yaml` apenas se quiser forcar IPs, sub-redes ou outra community SNMP
+
+O instalador cria uma tarefa agendada para iniciar o agente automaticamente quando o Windows ligar.
+
+Detalhes do build em `agent/windows/README.md`.
+
+### Desenvolvimento / fallback Python
 
 ```bash
 cd agent
@@ -63,7 +91,7 @@ sudo journalctl -u print-collect -f
 **Windows:**
 ```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1
-# Depois configure o Agendador de Tarefas para rodar print-collect.exe na inicialização
+# Fluxo alternativo que ainda exige Python 3.10+
 ```
 
 ## Fluxo de dados

@@ -59,7 +59,97 @@ npm run dev
 
 Acesse `http://localhost:5173`
 
+### 3.1 Alternar entre API local e publica
+
+Para apontar o frontend para a API local:
+
+```bash
+./scripts/use-local-api.sh
+```
+
+Para apontar o frontend para a API publica:
+
+```bash
+./scripts/use-public-api.sh
+```
+
+### 3.2 Subir tudo localmente com um comando
+
+```bash
+chmod +x ./scripts/*.sh
+./scripts/start-local.sh
+```
+
+Esse script:
+
+- inicia o backend em `http://localhost:8000`
+- inicia o frontend em `http://localhost:5173`
+- instala dependencias automaticamente se necessario
+
+Se voce quer que continue funcionando mesmo se fechar o Terminal:
+
+```bash
+zsh ./scripts/start-local-detached.sh
+```
+
+Para parar depois:
+
+```bash
+zsh ./scripts/stop-local.sh
+```
+
+Para ver o status e os erros rapidamente:
+
+```bash
+zsh ./scripts/status-local.sh
+```
+
+Se estiver tudo quebrado (Python/Node após atualização do macOS), dá para resetar o ambiente local:
+
+```bash
+zsh ./scripts/reset-local.sh --yes
+zsh ./scripts/start-local-detached.sh
+```
+
+### 3.3 Iniciar automaticamente ao ligar o Mac
+
+Para ativar a inicializacao automatica no login do macOS:
+
+```bash
+zsh ./scripts/install-macos-autostart.sh
+```
+
+Para desativar depois:
+
+```bash
+zsh ./scripts/uninstall-macos-autostart.sh
+```
+
+Os arquivos do `LaunchAgent` sao instalados em `~/Library/LaunchAgents`.
+Os logs locais ficam na pasta `logs/`.
+
 ### 4. Instalar coletor no cliente
+
+**Fluxo recomendado para Windows (sem depender de Python no cliente):**
+
+- Gere o `PrintCollectSetup.exe` em um Windows de preparação ou pelo GitHub Actions
+- Copie esse arquivo para `agent/dist/windows/PrintCollectSetup.exe` no projeto que roda o backend
+- Reinicie o backend
+- No painel, acesse **Agentes**
+- Baixe o pacote Windows do agente
+- Extraia o ZIP
+- Execute `1-CLIQUE-AQUI-PARA-INSTALAR.bat`
+- Edite `config.yaml` para informar a sub-rede ou os IPs da rede do cliente
+- Teste pelos atalhos instalados no menu Iniciar
+
+Se ainda nao houver `PrintCollectSetup.exe` configurado no backend, o sistema entrega um fallback com `install.ps1`.
+
+Para automatizar a geracao do instalador Windows sem usar o PC do cliente, veja:
+
+- `agent/windows/README.md`
+- `.github/workflows/build-windows-agent.yml`
+
+**Fluxo manual / desenvolvimento:**
 
 ```bash
 cd agent

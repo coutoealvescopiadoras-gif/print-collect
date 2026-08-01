@@ -21,11 +21,10 @@ snmp:
   community: "public"
   timeout: 2
 
-  # Sub-redes para varredura automática (formato CIDR)
-  subnets:
-    - "192.168.1.0/24"
+  # Deixe vazio para o agente tentar descobrir automaticamente a rede local
+  subnets: []
 
-  # IPs fixos (além da varredura, se souber os endereços)
+  # IPs fixos opcionais (use apenas se quiser forcar enderecos especificos)
   ips: []
   # Exemplo:
   # ips:

@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "0.2.0"
+  #define MyAppVersion "0.3.0"
 #endif
 
 #define MyAppName "Print Collect Agent"
@@ -14,8 +14,8 @@ AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\PrintCollect
 DefaultGroupName={#MyAppName}
-DisableDirPage=yes
-DisableProgramGroupPage=yes
+DisableDirPage=no
+DisableProgramGroupPage=no
 PrivilegesRequired=admin
 Compression=lzma
 SolidCompression=yes
@@ -26,26 +26,180 @@ OutputBaseFilename=PrintCollectSetup
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Files]
-Source: "..\dist\windows\PrintCollectAgent.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\PrintCollectAgent.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\config.example.yaml"; DestDir: "{app}"; DestName: "config.example.yaml"; Flags: ignoreversion
+Source: "..\config.example.yaml"; DestDir: "{app}"; DestName: "config.yaml"; Flags: ignoreversion onlyifdoesntexist; Check: not HasExternalConfig
 Source: ".\runtime\*.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{src}\config.yaml"; DestDir: "{app}"; DestName: "config.yaml"; Flags: external ignoreversion onlyifdoesntexist; Check: HasExternalConfig
 
 [Icons]
+Name: "{autoprograms}\Print Collect Agent\Wizard de pareamento"; Filename: "{cmd}"; Parameters: "/K """"{app}\PrintCollectAgent.exe"" wizard"""  ; IconFilename: "{app}\{#MyAppExeName}"
+Name: "{autoprograms}\Print Collect Agent\Procurar impressoras"; Filename: "{app}\list-printers.bat"
 Name: "{autoprograms}\Print Collect Agent\Testar conexao"; Filename: "{app}\test-agent.bat"
 Name: "{autoprograms}\Print Collect Agent\Executar coleta unica"; Filename: "{app}\run-once.bat"
 Name: "{autoprograms}\Print Collect Agent\Editar configuracao"; Filename: "{app}\open-config.bat"
+Name: "{autoprograms}\Print Collect Agent\Reinstalar inicializacao"; Filename: "{app}\register-startup-task.bat"
+Name: "{autoprograms}\Print Collect Agent\Desinstalar inicializacao"; Filename: "{app}\unregister-startup-task.bat"
 Name: "{autoprograms}\Print Collect Agent\Abrir pasta"; Filename: "{app}"
+Name: "{autodesktop}\Print Collect - Wizard"; Filename: "{cmd}"; Parameters: "/K """"{app}\PrintCollectAgent.exe"" wizard"""; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\register-startup-task.bat"; Flags: runhidden waituntilterminated; StatusMsg: "Configurando inicializacao automatica..."
-Filename: "notepad.exe"; Parameters: """{app}\config.yaml"""; Flags: postinstall nowait skipifsilent; Description: "Abrir config.yaml ao concluir"
+Filename: "{app}\PrintCollectAgent.exe"; \
+  Parameters: "wizard --config ""{app}\config.yaml"""; \
+  WorkingDir: "{app}"; \
+  Description: "Executar Wizard de Pareamento (vincular agente ao cliente — recomendado)"; \
+  Flags: nowait postinstall skipifsilent unchecked
+Filename: "{app}\PrintCollectAgent.exe"; \
+  Parameters: "networks pause"; \
+  WorkingDir: "{app}"; \
+  Description: "Diagnostico rapido: verificar sub-redes detectadas"; \
+  Flags: nowait postinstall skipifsilent unchecked
+Filename: "{app}\list-printers.bat"; \
+  Description: "Procurar impressoras na rede do cliente (primeira busca)"; \
+  Flags: nowait postinstall skipifsilent unchecked
+Filename: "{app}\register-startup-task-silent.bat"; \
+  Flags: runhidden waituntilterminated skipifdoesntexist; \
+  StatusMsg: "Configurando inicializacao automatica..."
+Filename: "{app}\open-config.bat"; Description: "Editar config.yaml manualmente"; Flags: nowait postinstall skipifsilent unchecked
+
+[Tasks]
+Name: "desktopicon"; Description: "Criar atalho Wizard na Area de Trabalho"; GroupDescription: "Atalhos adicionais:"; Flags: unchecked
 
 [UninstallRun]
 Filename: "{app}\unregister-startup-task.bat"; Flags: runhidden skipifdoesntexist
 
 [Code]
+var
+  BrandingPage: TWizardPage;
+  BrandingTitleLabel: TNewStaticText;
+  BrandingInfoLabel: TNewStaticText;
+  BrandingHintLabel: TNewStaticText;
+  BrandingLogoImage: TBitmapImage;
+
 function HasExternalConfig: Boolean;
 begin
   Result := FileExists(ExpandConstant('{src}\config.yaml'));
+end;
+
+function GetBrandingIniPath: string;
+begin
+  Result := ExpandConstant('{src}\branding.ini');
+end;
+
+function GetBrandingPartnerName: string;
+begin
+  if FileExists(GetBrandingIniPath()) then
+    Result := Trim(GetIniString('partner', 'name', '', GetBrandingIniPath()))
+  else
+    Result := '';
+end;
+
+function GetBrandingLogoPath: string;
+var
+  ConfiguredLogo: string;
+begin
+  Result := '';
+
+  if FileExists(GetBrandingIniPath()) then
+  begin
+    ConfiguredLogo := Trim(GetIniString('partner', 'logo_file', '', GetBrandingIniPath()));
+    if ConfiguredLogo <> '' then
+    begin
+      Result := ExpandConstant('{src}\') + ConfiguredLogo;
+      if FileExists(Result) then
+        exit;
+    end;
+  end;
+
+  Result := ExpandConstant('{src}\logo-revendedor.bmp');
+  if FileExists(Result) then
+    exit;
+
+  Result := '';
+end;
+
+function HasBrandingAssets: Boolean;
+begin
+  Result := (GetBrandingPartnerName() <> '') or (GetBrandingLogoPath() <> '');
+end;
+
+function IsBmpFile(const FilePath: string): Boolean;
+var
+  Lowered: string;
+begin
+  Lowered := Lowercase(FilePath);
+  Result := (Length(Lowered) >= 4) and (Copy(Lowered, Length(Lowered) - 3, 4) = '.bmp');
+end;
+
+procedure InitializeWizard;
+var
+  PartnerName: string;
+  LogoPath: string;
+  InfoText: string;
+begin
+  if not HasBrandingAssets() then
+    exit;
+
+  PartnerName := GetBrandingPartnerName();
+  LogoPath := GetBrandingLogoPath();
+
+  BrandingPage := CreateCustomPage(
+    wpWelcome,
+    'Apresentacao do revendedor',
+    'Este pacote foi preparado por um parceiro autorizado'
+  );
+
+  BrandingTitleLabel := TNewStaticText.Create(WizardForm);
+  BrandingTitleLabel.Parent := BrandingPage.Surface;
+  BrandingTitleLabel.Left := ScaleX(0);
+  BrandingTitleLabel.Top := ScaleY(0);
+  BrandingTitleLabel.Width := BrandingPage.SurfaceWidth;
+  BrandingTitleLabel.Height := ScaleY(24);
+  BrandingTitleLabel.Font.Style := [fsBold];
+
+  if PartnerName <> '' then
+    BrandingTitleLabel.Caption := 'Revendedor responsavel: ' + PartnerName
+  else
+    BrandingTitleLabel.Caption := 'Instalacao personalizada do seu revendedor';
+
+  BrandingInfoLabel := TNewStaticText.Create(WizardForm);
+  BrandingInfoLabel.Parent := BrandingPage.Surface;
+  BrandingInfoLabel.Left := ScaleX(0);
+  BrandingInfoLabel.Top := ScaleY(32);
+  BrandingInfoLabel.Width := BrandingPage.SurfaceWidth;
+  BrandingInfoLabel.Height := ScaleY(56);
+  BrandingInfoLabel.WordWrap := True;
+  BrandingInfoLabel.AutoSize := False;
+
+  InfoText :=
+    'O software continua com o nome Print Collect Agent. ' +
+    'A personalizacao exibida aqui e apenas visual/comercial e nao altera o funcionamento do agente.';
+  BrandingInfoLabel.Caption := InfoText;
+
+  BrandingHintLabel := TNewStaticText.Create(WizardForm);
+  BrandingHintLabel.Parent := BrandingPage.Surface;
+  BrandingHintLabel.Left := ScaleX(0);
+  BrandingHintLabel.Top := ScaleY(176);
+  BrandingHintLabel.Width := BrandingPage.SurfaceWidth;
+  BrandingHintLabel.Height := ScaleY(40);
+  BrandingHintLabel.WordWrap := True;
+  BrandingHintLabel.AutoSize := False;
+
+  if (LogoPath <> '') and IsBmpFile(LogoPath) then
+  begin
+    BrandingLogoImage := TBitmapImage.Create(WizardForm);
+    BrandingLogoImage.Parent := BrandingPage.Surface;
+    BrandingLogoImage.Left := ScaleX(0);
+    BrandingLogoImage.Top := ScaleY(92);
+    BrandingLogoImage.Width := ScaleX(260);
+    BrandingLogoImage.Height := ScaleY(72);
+    BrandingLogoImage.Stretch := True;
+    BrandingLogoImage.Center := True;
+    BrandingLogoImage.Bitmap.LoadFromFile(LogoPath);
+    BrandingHintLabel.Caption := 'A marca acima foi carregada a partir do arquivo logo-revendedor.bmp colocado ao lado do instalador.';
+  end
+  else
+  begin
+    BrandingHintLabel.Caption := 'Se o revendedor quiser mostrar a logo durante a instalacao, basta colocar um arquivo logo-revendedor.bmp na mesma pasta do PrintCollectSetup.exe.';
+  end;
 end;
