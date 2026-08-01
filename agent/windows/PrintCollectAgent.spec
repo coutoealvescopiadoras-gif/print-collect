@@ -12,17 +12,18 @@ entry_script = agent_root / "print_collect" / "__main__.py"
 if str(agent_root) not in sys.path:
     sys.path.insert(0, str(agent_root))
 
-# =============================================================================
-# TARGET_ARCH: Força arquitetura do executavel final do agente.
+# -----------------------------------------------------------------------------
+# TARGET_ARCH: OBRIGATORIO para builds 32 bits.
 # Para INSTALAR EM QUALQUER WINDOWS, DEVE-SE GERAR x86 (32 bits)!
 #   - Exe x86 (32 bits) roda em Windows 32 bits E Windows 64 bits (WOW64)
 #   - Exe x64 (64 bits) NAO roda em Windows 32 bits (erro "arquivo valido mas
 #     para outro tipo de computador")
-# Como forçar: Defina a variável de ambiente TARGET_ARCH=x86 ANTES de rodar
-# o PyInstaller, e rode o build com PYTHON 32 BITS (x86) instalado na máquina.
-# Ex: cmd: set TARGET_ARCH=x86 ; pyinstaller ...
-# Ex: powershell: $env:TARGET_ARCH='x86'; pyinstaller ...
-# =============================================================================
+# Como forcar:
+#   - Use o script build-setup-x86.ps1 (ele ja roda tudo com TARGET_ARCH=x86)
+#   - Ou, manualmente, rode o build com Python 32 bits instalado:
+#       CMD:      set TARGET_ARCH=x86 && pyinstaller ...
+#       PowerShell: $env:TARGET_ARCH='x86'; pyinstaller ...
+# -----------------------------------------------------------------------------
 _target_arch = os.environ.get("TARGET_ARCH", "").strip().lower()
 if not _target_arch:
     _target_arch = None  # None = mesma arquitetura do Python que esta rodando

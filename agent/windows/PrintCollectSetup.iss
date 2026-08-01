@@ -19,9 +19,9 @@ DisableProgramGroupPage=no
 PrivilegesRequired=admin
 Compression=lzma
 SolidCompression=yes
-; === REMOVIDO ArchitecturesInstallIn64BitMode=x64compatible ===
-; Agora o instalador ACEITA qualquer arquitetura (x86 32 bits ou x64 64 bits),
-; pois geramos o PrintCollectAgent.exe em 32 bits, que roda SEMPRE.
+; IMPORTANTE: Antes = ArchitecturesInstallIn64BitMode=x64compatible (forcava so 64 bits!)
+; Para INSTALAR EM QUALQUER WINDOWS (32 ou 64 bits), NAO forcar 64-bit mode:
+; geramos o PrintCollectAgent.exe em 32 bits, que roda sempre via WOW64.
 ArchitecturesInstallIn64BitMode=
 ArchitecturesAllowed=x64compatible arm64 x86compatible
 WizardStyle=modern

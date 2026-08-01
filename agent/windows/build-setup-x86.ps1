@@ -1,33 +1,32 @@
 # Build do instalador Windows x86 (32 BITS) do Print Collect Agent
 # =============================================================================
-# ESSE SCRIPT GERA UM EXE COMPATÍVEL COM QUALQUER WINDOWS!
+# ESTE SCRIPT GERA UM EXE COMPATIVEL COM QUALQUER WINDOWS!
 #   - Roda em Windows 10/11 32 BITS (x86)
-#   - Roda em Windows 10/11 64 BITS (x64) - via WOW64 (padrão, funciona sempre)
-#   - Roda em Windows ARM (via emulação x86)
+#   - Roda em Windows 10/11 64 BITS (x64) - via WOW64 (padrao, funciona sempre)
+#   - Roda em Windows ARM (via emulacao x86)
 #
-# REQUISITO OBRIGATÓRIO ANTES DE RODAR ESSE SCRIPT:
+# REQUISITO OBRIGATORIO ANTES DE RODAR ESTE SCRIPT:
 #   1) Baixe e INSTALE o Python 3.12 para 32 BITS (x86):
-#      https://www.python.org/downloads/release/python-3120/
-#      Na página, baixe "Windows installer (32-bit)" e instale.
-#      DURANTE A INSTALAÇÃO:
-#        ✅ Marque "Add python.exe to PATH"
-#        ✅ Clique em "Customize installation" → "Next"
-#        ✅ Marque "Install for all users" (instala em: C:\Program Files (x86)\Python312-32)
+#      Link direto: https://www.python.org/ftp/python/3.12.0/python-3.12.0.exe
+#      DURANTE A INSTALACAO:
+#        [X] Marque "Add python.exe to PATH"
+#        [X] Clique em "Customize installation" -> "Next"
+#        [X] Marque "Install for all users" (instala em: C:\Program Files (x86)\Python312-32)
 #
-#   2) Depois de instalar Python 32 bits, É SÓ DAR DUPLA CLIQUE NO ARQUIVO
+#   2) Depois de instalar Python 32 bits, E SO DAR DUPLA CLIQUE NO ARQUIVO
 #      build-setup-x86.bat (ao lado deste script) ou executar no PowerShell:
 #        cd agent\windows
 #        .\build-setup-x86.ps1
 #
-#   3) No final, o instalador estará em:
-#        agent\dist\windows\PrintCollectSetup.exe (pronto para enviar para os clientes!)
+#   3) No final, o instalador estara em:
+#        agent\dist\windows\PrintCollectSetup.exe (pronto para enviar!)
 # =============================================================================
 
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $AgentDir = Join-Path $ProjectRoot "agent"
-$VenvDir = Join-Path $AgentDir ".venv-x86"     # <-- VENV SEPARADA para x86 (NAO sobreescreve a .venv 64 bits!)
+$VenvDir = Join-Path $AgentDir ".venv-x86"
 $SpecFile = Join-Path $AgentDir "windows\PrintCollectAgent.spec"
 $IssFile = Join-Path $AgentDir "windows\PrintCollectSetup.iss"
 $DistDir = Join-Path $AgentDir "dist"
@@ -46,15 +45,14 @@ function Write-Warn { param($m) Write-Host "  WARN $m" -ForegroundColor Yellow }
 # PASSO 0: Forcar TARGET_ARCH = x86 E garantir que estamos com PYTHON x86
 # =============================================================================
 Write-Host "============================================================" -ForegroundColor Magenta
-Write-Host " PRINT COLLECT — BUILD DO AGENTE x86 (32 BITS — UNIVERSAL!)" -ForegroundColor Magenta
-Write-Host "    Esse exe roda em QUALQUER Windows!" -ForegroundColor Magenta
+Write-Host " PRINT COLLECT - BUILD DO AGENTE x86 (32 BITS - UNIVERSAL!)" -ForegroundColor Magenta
+Write-Host "    Este exe roda em QUALQUER Windows!" -ForegroundColor Magenta
 Write-Host "============================================================" -ForegroundColor Magenta
 
 $env:TARGET_ARCH = "x86"
 Write-Host ""
 Write-Warn "Variavel TARGET_ARCH definida como: $env:TARGET_ARCH"
 
-# Encontrar PYTHON 32 BITS
 function Find-PythonX86 {
     $candidates = @(
         "C:\Program Files (x86)\Python312-32\python.exe",
@@ -62,7 +60,6 @@ function Find-PythonX86 {
         "C:\Program Files (x86)\Python310-32\python.exe"
     )
     foreach ($c in $candidates) { if (Test-Path $c) { return $c } }
-    # Tentar via comando py -3.12-32
     $cmd = Get-Command "py.exe" -ErrorAction SilentlyContinue
     if ($cmd) {
         try {
@@ -84,20 +81,19 @@ if (-not $pythonX86) {
     Write-Host ""
     Write-Host "  Voce precisa instalar Python 3.10+ para 32 BITS primeiro:"
     Write-Host ""
-    Write-Host "  1) Acesse: https://www.python.org/downloads/release/python-3120/"
-    Write-Host "  2) Clique em: Windows installer (32-bit)"
-    Write-Host "  3) Durante a instalacao, MARQUE:"
-    Write-Host "       - ✅ Add python.exe to PATH"
-    Write-Host "       - ✅ Install for all users"
+    Write-Host "  LINK DIREITO (32 bits): https://www.python.org/ftp/python/3.12.0/python-3.12.0.exe"
+    Write-Host ""
+    Write-Host "  Durante a instalacao, MARQUE:"
+    Write-Host "       - [X] Add python.exe to PATH"
+    Write-Host "       - [X] Install for all users"
     Write-Host "  4) Depois de instalar, rode NOVAMENTE este script."
     Write-Host ""
     throw "Python 32 bits nao encontrado"
 }
 Write-OK "Python 32 bits encontrado em: $pythonX86"
-# Verificar arquitetura do Python
 $archCheck = & $pythonX86 -c "import struct; print(struct.calcsize('P') * 8)"
 if ($archCheck -ne "32") {
-    throw "O Python encontrado nao e 32 bits! (reportou arquitetura de $archCheck bits). Voce rodou o instalador de 64 bits sem querer."
+    throw "O Python encontrado NAO e 32 bits! (reportou arquitetura de $archCheck bits). Voce rodou o instalador de 64 bits sem querer."
 }
 Write-OK "Python verificado: 32 bits (x86)! Perfeito."
 
@@ -245,7 +241,11 @@ Write-Host "  Modificado : $($file.LastWriteTime)"
 Write-Host ""
 Write-Host "   PROXIMO PASSO (Julio):"
 Write-Host "   1) Copiar esse arquivo para a pasta web\public\ para subir no site oficial:"
-Write-Host "      Copy-Item '$($file.FullName)' '$(Join-Path $ProjectRoot "web\public\PrintCollectSetup.exe")' -Force"
-Write-Host "   2) Depois: git add web/public/PrintCollectSetup.exe; git commit; git push origin main"
-Write-Host "   3) Prontinho! Todos os seus clientes baixarao a versao compatível com qualquer Windows."
+$dest = Join-Path $ProjectRoot "web\public\PrintCollectSetup.exe"
+Write-Host "      Copy-Item '$($file.FullName)' '$dest' -Force"
+Write-Host "   2) Depois, na pasta raiz do projeto, rodar:"
+Write-Host "      git add web/public/PrintCollectSetup.exe"
+Write-Host "      git commit -m 'release(instalador): rebuild x86 32 bits' "
+Write-Host "      git push origin main"
+Write-Host "   3) Apos ~2 min deploy Vercel, todos os clientes baixarao a versao nova."
 Write-Host "============================================================" -ForegroundColor Green
