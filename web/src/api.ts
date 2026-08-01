@@ -46,11 +46,7 @@ function resolveBaseUrl() {
   const proto = window.location.protocol;
 
   if (host === "printcollect.com.br" || host === "www.printcollect.com.br") {
-    return "https://api.printcollect.com.br";
-  }
-
-  if (host.endsWith(".onrender.com")) {
-    return `${proto}//${host}`;
+    return "";
   }
 
   if (isVercelPreview(host) || host.endsWith(".vercel.app")) {
@@ -59,11 +55,15 @@ function resolveBaseUrl() {
     return "";
   }
 
+  if (host.endsWith(".onrender.com")) {
+    return `${proto}//${host}`;
+  }
+
   if (isLocalNetworkHost(host)) {
     return `${proto}//${host}:8000`;
   }
 
-  return `${proto}//${host}`;
+  return "";
 }
 
 const BASE = resolveBaseUrl();
@@ -78,8 +78,8 @@ export function getPublicApiUrl() {
   if (BASE) return BASE.replace(/\/$/, "");
   if (typeof window !== "undefined") {
     const host = window.location.hostname;
-    if (host === "printcollect.com.br" || host === "www.printcollect.com.br") {
-      return "https://api.printcollect.com.br";
+    if (host === "printcollect.com.br" || host === "www.printcollect.com.br" || host.endsWith(".vercel.app")) {
+      return `${window.location.protocol}//${host}`;
     }
     if (host.endsWith(".onrender.com")) {
       return `${window.location.protocol}//${host}`;

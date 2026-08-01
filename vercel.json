@@ -4,9 +4,18 @@
   "installCommand": "cd web && npm install",
   "buildCommand": "cd web && npm run build",
   "outputDirectory": "web/dist",
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 60
+    }
+  },
   "cleanUrls": true,
   "trailingSlash": false,
   "rewrites": [
-    { "source": "/((?!assets/|.*\\..*).*)", "destination": "/index.html" }
+    { "source": "/api/:path*", "destination": "/api/index" },
+    { "source": "/health", "destination": "/api/index" },
+    { "source": "/docs", "destination": "/api/index" },
+    { "source": "/openapi.json", "destination": "/api/index" },
+    { "source": "/((?!assets/|.*\\..*|api/|health|docs|openapi\\.json).*)", "destination": "/index.html" }
   ]
 }
