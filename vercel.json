@@ -5,7 +5,7 @@
   "buildCommand": "cd web && npm run build",
   "outputDirectory": "web/dist",
   "functions": {
-    "api/index.py": {
+    "api/index": {
       "maxDuration": 60
     }
   },
