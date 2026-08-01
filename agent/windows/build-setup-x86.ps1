@@ -1,0 +1,251 @@
+# Build do instalador Windows x86 (32 BITS) do Print Collect Agent
+# =============================================================================
+# ESSE SCRIPT GERA UM EXE COMPATÍVEL COM QUALQUER WINDOWS!
+#   - Roda em Windows 10/11 32 BITS (x86)
+#   - Roda em Windows 10/11 64 BITS (x64) - via WOW64 (padrão, funciona sempre)
+#   - Roda em Windows ARM (via emulação x86)
+#
+# REQUISITO OBRIGATÓRIO ANTES DE RODAR ESSE SCRIPT:
+#   1) Baixe e INSTALE o Python 3.12 para 32 BITS (x86):
+#      https://www.python.org/downloads/release/python-3120/
+#      Na página, baixe "Windows installer (32-bit)" e instale.
+#      DURANTE A INSTALAÇÃO:
+#        ✅ Marque "Add python.exe to PATH"
+#        ✅ Clique em "Customize installation" → "Next"
+#        ✅ Marque "Install for all users" (instala em: C:\Program Files (x86)\Python312-32)
+#
+#   2) Depois de instalar Python 32 bits, É SÓ DAR DUPLA CLIQUE NO ARQUIVO
+#      build-setup-x86.bat (ao lado deste script) ou executar no PowerShell:
+#        cd agent\windows
+#        .\build-setup-x86.ps1
+#
+#   3) No final, o instalador estará em:
+#        agent\dist\windows\PrintCollectSetup.exe (pronto para enviar para os clientes!)
+# =============================================================================
+
+$ErrorActionPreference = "Stop"
+
+$ProjectRoot = Split-Path -Parent $PSScriptRoot
+$AgentDir = Join-Path $ProjectRoot "agent"
+$VenvDir = Join-Path $AgentDir ".venv-x86"     # <-- VENV SEPARADA para x86 (NAO sobreescreve a .venv 64 bits!)
+$SpecFile = Join-Path $AgentDir "windows\PrintCollectAgent.spec"
+$IssFile = Join-Path $AgentDir "windows\PrintCollectSetup.iss"
+$DistDir = Join-Path $AgentDir "dist"
+$BuildDir = Join-Path $AgentDir "build"
+$ExeAgent = Join-Path $DistDir "PrintCollectAgent.exe"
+$RuntimeDir = Join-Path $AgentDir "windows\runtime"
+$WindowsDir = Join-Path $AgentDir "windows"
+$OutputSetupExe = Join-Path $DistDir "windows\PrintCollectSetup.exe"
+
+function Write-Step { param($n, $m) Write-Host ""; Write-Host "[$n] $m" -ForegroundColor Cyan }
+function Write-OK { param($m) Write-Host "  OK  $m" -ForegroundColor Green }
+function Write-Fail { param($m) Write-Host "  FAIL $m" -ForegroundColor Red }
+function Write-Warn { param($m) Write-Host "  WARN $m" -ForegroundColor Yellow }
+
+# =============================================================================
+# PASSO 0: Forcar TARGET_ARCH = x86 E garantir que estamos com PYTHON x86
+# =============================================================================
+Write-Host "============================================================" -ForegroundColor Magenta
+Write-Host " PRINT COLLECT — BUILD DO AGENTE x86 (32 BITS — UNIVERSAL!)" -ForegroundColor Magenta
+Write-Host "    Esse exe roda em QUALQUER Windows!" -ForegroundColor Magenta
+Write-Host "============================================================" -ForegroundColor Magenta
+
+$env:TARGET_ARCH = "x86"
+Write-Host ""
+Write-Warn "Variavel TARGET_ARCH definida como: $env:TARGET_ARCH"
+
+# Encontrar PYTHON 32 BITS
+function Find-PythonX86 {
+    $candidates = @(
+        "C:\Program Files (x86)\Python312-32\python.exe",
+        "C:\Program Files (x86)\Python311-32\python.exe",
+        "C:\Program Files (x86)\Python310-32\python.exe"
+    )
+    foreach ($c in $candidates) { if (Test-Path $c) { return $c } }
+    # Tentar via comando py -3.12-32
+    $cmd = Get-Command "py.exe" -ErrorAction SilentlyContinue
+    if ($cmd) {
+        try {
+            $test = & $cmd.Source -3.12-32 -c "import sys; sys.stdout.write(str(sys.maxsize > 2**32))" 2>$null
+            if ($LASTEXITCODE -eq 0 -and $test -eq "False") { return $cmd.Source }
+        } catch {}
+        try {
+            $test = & $cmd.Source -3-32 -c "import sys; sys.stdout.write(str(sys.maxsize > 2**32))" 2>$null
+            if ($LASTEXITCODE -eq 0 -and $test -eq "False") { return $cmd.Source }
+        } catch {}
+    }
+    return $null
+}
+
+$pythonX86 = Find-PythonX86
+if (-not $pythonX86) {
+    Write-Host ""
+    Write-Fail "PYTHON 32 BITS (x86) NAO ENCONTRADO!"
+    Write-Host ""
+    Write-Host "  Voce precisa instalar Python 3.10+ para 32 BITS primeiro:"
+    Write-Host ""
+    Write-Host "  1) Acesse: https://www.python.org/downloads/release/python-3120/"
+    Write-Host "  2) Clique em: Windows installer (32-bit)"
+    Write-Host "  3) Durante a instalacao, MARQUE:"
+    Write-Host "       - ✅ Add python.exe to PATH"
+    Write-Host "       - ✅ Install for all users"
+    Write-Host "  4) Depois de instalar, rode NOVAMENTE este script."
+    Write-Host ""
+    throw "Python 32 bits nao encontrado"
+}
+Write-OK "Python 32 bits encontrado em: $pythonX86"
+# Verificar arquitetura do Python
+$archCheck = & $pythonX86 -c "import struct; print(struct.calcsize('P') * 8)"
+if ($archCheck -ne "32") {
+    throw "O Python encontrado nao e 32 bits! (reportou arquitetura de $archCheck bits). Voce rodou o instalador de 64 bits sem querer."
+}
+Write-OK "Python verificado: 32 bits (x86)! Perfeito."
+
+# =============================================================================
+# PASSO 1: CRIAR .venv-x86 SEPARADO (sem tocar na .venv 64 bits)
+# =============================================================================
+Write-Step 1 "Verificando ambiente virtual x86 do agente em: $VenvDir"
+if (-not (Test-Path $VenvDir)) {
+    Write-Host "  Criando venv-x86 com: $pythonX86"
+    & $pythonX86 -m venv $VenvDir
+    if ($LASTEXITCODE -ne 0) { throw "Falha ao criar venv-x86" }
+    Write-OK ".venv-x86 criado"
+} else {
+    Write-OK ".venv-x86 ja existe"
+}
+
+$PythonVenv = Join-Path $VenvDir "Scripts\python.exe"
+if (-not (Test-Path $PythonVenv)) { throw "Python do venv-x86 nao encontrado: $PythonVenv" }
+$PipVenv = Join-Path $VenvDir "Scripts\pip.exe"
+$PyInstaller = Join-Path $VenvDir "Scripts\pyinstaller.exe"
+
+# =============================================================================
+# PASSO 2: Instalar dependencias do agente
+# =============================================================================
+Write-Step 2 "Instalando dependencias do agente no .venv-x86"
+& $PipVenv install --disable-pip-version-check -r (Join-Path $AgentDir "requirements.txt")
+if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar requirements.txt (x86)" }
+
+# =============================================================================
+# PASSO 3: Instalar PyInstaller
+# =============================================================================
+Write-Step 3 "Verificando PyInstaller no .venv-x86"
+if (-not (Test-Path $PyInstaller)) {
+    Write-Host "  Instalando PyInstaller..."
+    & $PipVenv install --disable-pip-version-check "pyinstaller>=6.0"
+    if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar PyInstaller (x86)" }
+}
+Write-OK "PyInstaller x86 pronto em: $PyInstaller"
+
+# =============================================================================
+# PASSO 4: Build PrintCollectAgent.exe x86
+# =============================================================================
+Write-Step 4 "Buildando PrintCollectAgent.exe x86 32 bits (isso pode levar varios minutos)"
+if (Test-Path $DistDir) { Remove-Item $DistDir -Recurse -Force -ErrorAction SilentlyContinue }
+if (Test-Path $BuildDir) { Remove-Item $BuildDir -Recurse -Force -ErrorAction SilentlyContinue }
+
+if (-not (Test-Path $SpecFile)) { throw "Spec file nao encontrado: $SpecFile" }
+
+Push-Location $AgentDir
+try {
+    & $PyInstaller --noconfirm --clean (Resolve-Path $SpecFile)
+    if ($LASTEXITCODE -ne 0) { throw "PyInstaller (x86) retornou erro $LASTEXITCODE" }
+} finally {
+    Pop-Location
+}
+
+if (-not (Test-Path $ExeAgent)) { throw "PrintCollectAgent.exe x86 nao gerado em $ExeAgent" }
+Write-OK "Agente x86 buildado: $ExeAgent"
+
+# =============================================================================
+# PASSO 5: Copiar runtime + exe para windows/dist
+# =============================================================================
+Write-Step 5 "Preparando arquivos do instalador (runtime + exe)"
+$RuntimeFiles = @(
+    (Join-Path $RuntimeDir "run-once.bat"),
+    (Join-Path $RuntimeDir "test-agent.bat"),
+    (Join-Path $RuntimeDir "open-config.bat"),
+    (Join-Path $RuntimeDir "list-printers.bat"),
+    (Join-Path $RuntimeDir "register-startup-task.bat"),
+    (Join-Path $RuntimeDir "register-startup-task-silent.bat"),
+    (Join-Path $RuntimeDir "unregister-startup-task.bat")
+)
+foreach ($file in $RuntimeFiles) {
+    if (-not (Test-Path $file)) { throw "Arquivo runtime faltando: $file" }
+    Copy-Item $file $DistDir -Force
+}
+Copy-Item $ExeAgent $WindowsDir -Force
+foreach ($file in $RuntimeFiles) {
+    Copy-Item $file $WindowsDir -Force
+}
+Write-OK "Arquivos copiados para $DistDir e $WindowsDir"
+
+# =============================================================================
+# PASSO 6: Inno Setup
+# =============================================================================
+Write-Step 6 "Localizando Inno Setup (ISCC.exe)"
+function Find-Iscc {
+    $candidates = @(
+        "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+        "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+        "${env:ProgramFiles(x86)}\Inno Setup 5\ISCC.exe",
+        "${env:ProgramFiles}\Inno Setup 5\ISCC.exe",
+        "${env:LOCALAPPDATA}\Programs\Inno Setup 6\ISCC.exe",
+        "${env:LOCALAPPDATA}\Programs\Inno Setup 5\ISCC.exe"
+    )
+    foreach ($c in $candidates) { if (Test-Path $c) { return $c } }
+    $cmd = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    return $null
+}
+
+$iscc = Find-Iscc
+if (-not $iscc) {
+    Write-Host "  Inno Setup nao encontrado. Tentando instalar via winget..."
+    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if ($winget) {
+        & $winget install --id JRSoftware.InnoSetup -e --silent --accept-package-agreements --accept-source-agreements
+        Start-Sleep -Seconds 2
+        $iscc = Find-Iscc
+    }
+}
+if (-not $iscc) { throw "Nao foi possivel encontrar/instalar Inno Setup. Instale manualmente: https://jrsoftware.org/isdl.php" }
+Write-OK "ISCC em: $iscc"
+
+# =============================================================================
+# PASSO 7: Gerar setup.exe
+# =============================================================================
+Write-Step 7 "Compilando instalador: $IssFile"
+if (-not (Test-Path $IssFile)) { throw "ISS nao encontrado: $IssFile" }
+
+& $iscc $IssFile
+if ($LASTEXITCODE -ne 0) { throw "ISCC retornou erro $LASTEXITCODE" }
+
+if (-not (Test-Path $OutputSetupExe)) {
+    $found = Get-ChildItem (Split-Path -Parent $IssFile) -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like "*Setup*" -or $_.Name -like "*setup*" } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if ($found) {
+        $OutputSetupExe = $found.FullName
+    } else {
+        throw "Instalador nao encontrado apos build ISCC"
+    }
+}
+
+Write-Host ""
+Write-Host "============================================================" -ForegroundColor Green
+Write-Host "  BUILD x86 (32 BITS) CONCLUIDO COM SUCESSO!" -ForegroundColor Green
+Write-Host "     -> RODA EM QUALQUER WINDOWS (32/64 bits, ARM!)" -ForegroundColor Green
+Write-Host "============================================================" -ForegroundColor Green
+$file = Get-Item $OutputSetupExe
+Write-Host "  Instalador : $($file.FullName)"
+Write-Host "  Tamanho    : $([math]::Round($file.Length / 1MB, 1)) MB"
+Write-Host "  Modificado : $($file.LastWriteTime)"
+Write-Host ""
+Write-Host "   PROXIMO PASSO (Julio):"
+Write-Host "   1) Copiar esse arquivo para a pasta web\public\ para subir no site oficial:"
+Write-Host "      Copy-Item '$($file.FullName)' '$(Join-Path $ProjectRoot "web\public\PrintCollectSetup.exe")' -Force"
+Write-Host "   2) Depois: git add web/public/PrintCollectSetup.exe; git commit; git push origin main"
+Write-Host "   3) Prontinho! Todos os seus clientes baixarao a versao compatível com qualquer Windows."
+Write-Host "============================================================" -ForegroundColor Green
