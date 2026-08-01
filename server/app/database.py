@@ -178,8 +178,7 @@ _engine_kwargs: dict = {"pool_pre_ping": True}
 
 if settings.database_url.startswith("sqlite"):
     _engine_kwargs["connect_args"] = {"check_same_thread": False}
-elif "pgbouncer=true" in settings.database_url or ":6543/" in settings.database_url:
-    # Transaction pooler do Supabase — evita prepared statements persistentes
+elif True:
     _engine_kwargs["poolclass"] = NullPool
 
 engine = create_engine(settings.database_url, **_engine_kwargs)

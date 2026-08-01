@@ -1,8 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.config import settings
-from app.database import Agent, Client, Location, Printer, init_db, SessionLocal
+from app.database import Agent, Client, Location, Printer, init_db, SessionLocal, engine
 from app.routes import router
 
 
@@ -61,6 +62,18 @@ def seed_demo_data() -> None:
         db.close()
 
 
+def _safe_init_db() -> None:
+    try:
+        init_db()
+        if not settings.is_postgres:
+            seed_demo_data()
+    except Exception as e:
+        import traceback
+        import sys
+        print("[WARN] init_db falhou (provavelmente rede intermitente no cold-start):", repr(e), file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Print Collect API",
@@ -82,16 +95,27 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     def on_startup():
-        init_db()
-        if not settings.is_postgres:
-            seed_demo_data()
+        _safe_init_db()
 
     @app.get("/health")
     def health():
-        return {
+        db_status = "unknown"
+        db_error = None
+        try:
+            _safe_init_db()
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            db_status = "postgresql" if settings.is_postgres else "sqlite"
+        except Exception as e:
+            db_status = "error"
+            db_error = str(e)[:200]
+        payload = {
             "status": "ok",
-            "database": "postgresql" if settings.is_postgres else "sqlite",
+            "database": db_status,
         }
+        if db_error:
+            payload["error"] = db_error
+        return payload
 
     return app
 

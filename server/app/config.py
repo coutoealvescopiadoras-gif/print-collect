@@ -3,6 +3,15 @@ from typing import Optional
 from pydantic_settings import BaseSettings
 
 
+def _add_postgres_ssl(url: str) -> str:
+    if not url.startswith("postgresql"):
+        return url
+    if "sslmode=" in url:
+        return url
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}sslmode=require"
+
+
 def _detect_database_url() -> str:
     candidates = [
         os.getenv("POSTGRES_URL"),
@@ -16,7 +25,7 @@ def _detect_database_url() -> str:
             c = c.strip()
             if c.startswith("postgres://"):
                 c = "postgresql://" + c[len("postgres://"):]
-            return c
+            return _add_postgres_ssl(c)
     return "sqlite:///./printcollect.db"
 
 
@@ -30,7 +39,7 @@ def _detect_direct_url() -> Optional[str]:
             c = c.strip()
             if c.startswith("postgres://"):
                 c = "postgresql://" + c[len("postgres://"):]
-            return c
+            return _add_postgres_ssl(c)
     return None
 
 
