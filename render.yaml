@@ -1,30 +1,40 @@
 services:
   - type: web
-    name: print-collect-api
+    name: printcollect-api
     env: python
-    plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app
+    plan: starter
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "gunicorn -w 4 -k uvicorn.workers.UvicornWorker --chdir server app.main:app"
+    rootDir: .
+    healthCheckPath: /health
+    autoDeploy: yes
     envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: print-collect-db
-          property: connectionString
-      - key: DIRECT_URL
-        fromDatabase:
-          name: print-collect-db
-          property: connectionString
+      - key: PYTHON_VERSION
+        value: 3.12.0
       - key: SECRET_KEY
         generateValue: true
       - key: API_KEY
         generateValue: true
-      - key: CORS_ORIGINS
-        sync: false
       - key: AUTO_CREATE_TABLES
         value: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: printcollect-db
+          property: connectionString
+      - key: DIRECT_URL
+        fromDatabase:
+          name: printcollect-db
+          property: connectionString
+      - key: CORS_ORIGINS
+        value: "https://printcollect.com.br,https://www.printcollect.com.br"
+      - key: CORS_ORIGIN_REGEX
+        value: "^https?://(printcollect\\.com\\.br|www\\.printcollect\\.com\\.br|[a-zA-Z0-9-]+\\.vercel\\.app|[a-zA-Z0-9-]+\\.onrender\\.com)(:\\d+)?$"
 
 databases:
-  - name: print-collect-db
-    databaseName: print_collect
-    user: print_collect
+  - name: printcollect-db
+    databaseName: printcollect
+    user: printcollect
     plan: free
+    ipAllowList:
+      - source: "0.0.0.0/0"
+        description: "Allow all (agents and dashboard)"

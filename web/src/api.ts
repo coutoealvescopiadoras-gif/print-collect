@@ -10,40 +10,85 @@ function isLocalNetworkHost(hostname: string) {
   );
 }
 
+function isVercelPreview(hostname: string) {
+  return /\.vercel\.app$/.test(hostname) || /-git-[a-f0-9]+-/.test(hostname);
+}
+
 function resolveBaseUrl() {
   const configuredBase = (import.meta.env.VITE_API_URL || "").trim();
 
-  if (!configuredBase && typeof window !== "undefined") {
-    return `${window.location.protocol}//${window.location.hostname}:8000`;
-  }
+  if (configuredBase) {
+    if (typeof window === "undefined") {
+      return configuredBase;
+    }
 
-  if (!configuredBase) {
-    return "";
+    try {
+      const url = new URL(configuredBase);
+      const isLocalApiHost = isLocalNetworkHost(url.hostname);
+      const isLocalPageHost = isLocalNetworkHost(window.location.hostname);
+
+      if (isLocalApiHost && isLocalPageHost) {
+        url.hostname = window.location.hostname;
+        return url.toString().replace(/\/$/, "");
+      }
+    } catch {
+      return configuredBase;
+    }
+
+    return configuredBase.replace(/\/$/, "");
   }
 
   if (typeof window === "undefined") {
-    return configuredBase;
+    return "";
   }
 
-  try {
-    const url = new URL(configuredBase);
-    const isLocalApiHost = isLocalNetworkHost(url.hostname);
-    const isLocalPageHost = isLocalNetworkHost(window.location.hostname);
+  const host = window.location.hostname;
+  const proto = window.location.protocol;
 
-    if (isLocalApiHost && isLocalPageHost) {
-      url.hostname = window.location.hostname;
-      return url.toString().replace(/\/$/, "");
-    }
-  } catch {
-    return configuredBase;
+  if (host === "printcollect.com.br" || host === "www.printcollect.com.br") {
+    return "https://api.printcollect.com.br";
   }
 
-  return configuredBase;
+  if (host.endsWith(".onrender.com")) {
+    return `${proto}//${host}`;
+  }
+
+  if (isVercelPreview(host) || host.endsWith(".vercel.app")) {
+    const fallback = (import.meta.env.VITE_API_URL_FALLBACK || "").trim();
+    if (fallback) return fallback.replace(/\/$/, "");
+    return "";
+  }
+
+  if (isLocalNetworkHost(host)) {
+    return `${proto}//${host}:8000`;
+  }
+
+  return `${proto}//${host}`;
 }
 
 const BASE = resolveBaseUrl();
 
 let token: string | null = null;
+
+export function getApiBaseUrl() {
+  return BASE;
+}
+
+export function getPublicApiUrl() {
+  if (BASE) return BASE.replace(/\/$/, "");
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host === "printcollect.com.br" || host === "www.printcollect.com.br") {
+      return "https://api.printcollect.com.br";
+    }
+    if (host.endsWith(".onrender.com")) {
+      return `${window.location.protocol}//${host}`;
+    }
+    const fb = (import.meta.env.VITE_API_URL_FALLBACK || "").trim();
+    if (fb) return fb.replace(/\/$/, "");
+  }
+  return "";
+}
 
 export function setAuthToken(newToken: string | null) {
   token = newToken;

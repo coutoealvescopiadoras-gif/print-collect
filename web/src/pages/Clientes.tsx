@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from "react";
-import { api } from "../api";
+import { api, getPublicApiUrl } from "../api";
 import type { AgentPairingCode, Client, Location, Printer } from "../types";
 import { useAuth } from "../context/AuthContext";
 
@@ -133,6 +133,31 @@ export default function Clientes() {
     setPairingCopied(true);
     setTimeout(() => setPairingCopied(false), 2000);
   };
+
+  const buildPairingMessage = () => {
+    const publicServerUrl = pairingResult?.server_url || getPublicApiUrl() || "https://api.printcollect.com.br";
+    const code = pairingResult?.pairing_code ?? "<CODIGO-AQUI>";
+    return [
+      "Olá, tudo bem?",
+      "",
+      "Estamos configurando o monitoramento automático das suas impressoras! 🖨️",
+      "",
+      "Siga esses 3 passos no computador principal da empresa:",
+      "",
+      "1️⃣ BAIXE o instalador no link que vamos enviar (PrintCollectSetup.exe) e dê DUPLA CLIQUE para instalar.",
+      "2️⃣ Ao terminar a instalação, abrirá automaticamente um \"Wizard de Pareamento\".",
+      "3️⃣ Quando perguntar, informe:",
+      `     • URL do servidor: ${publicServerUrl}`,
+      `     • Código de pareamento: ${code}`,
+      "     • Comunidade SNMP: public (só aperte Enter)",
+      "",
+      "Pronto! 😊 Em menos de 2 minutos o sistema encontra sozinho todas as impressoras da sua rede e começa a monitorar nível de toner, contadores e alertas.",
+      "Qualquer dúvida é só chamar a gente!",
+    ].join("\n");
+  };
+
+  const pairingInlineServerUrl = () =>
+    pairingResult?.server_url || getPublicApiUrl() || "https://api.printcollect.com.br";
 
   const activePairingClient = pairingClientId ? clients.find((c) => c.id === pairingClientId) : null;
 
@@ -439,7 +464,7 @@ Siga esses 3 passos no computador principal da empresa:
 1️⃣ BAIXE o instalador no link que vamos enviar (PrintCollectSetup.exe) e dê DUPLA CLIQUE para instalar.
 2️⃣ Ao terminar a instalação, abrirá automaticamente um "Wizard de Pareamento".
 3️⃣ Quando perguntar, informe:
-     • URL do servidor: ${pairingResult.server_url || window.location.origin}
+     • URL do servidor: ${pairingInlineServerUrl()}
      • Código de pareamento: ${pairingResult.pairing_code}
      • Comunidade SNMP: public (só aperte Enter)
 
@@ -451,9 +476,7 @@ Qualquer dúvida é só chamar a gente!`}
                       type="button"
                       className="btn btn-secondary"
                       onClick={() => {
-                        const message =
-`Olá, tudo bem?\n\nEstamos configurando o monitoramento automático das suas impressoras! 🖨️\n\nSiga esses 3 passos no computador principal da empresa:\n\n1️⃣ BAIXE o instalador (PrintCollectSetup.exe) e dê DUPLA CLIQUE para instalar.\n2️⃣ Ao terminar a instalação, abrirá automaticamente um "Wizard de Pareamento".\n3️⃣ Quando perguntar, informe:\n     • URL do servidor: ${pairingResult.server_url || window.location.origin}\n     • Código de pareamento: ${pairingResult.pairing_code}\n     • Comunidade SNMP: public (só aperte Enter)\n\nPronto! 😊 Em menos de 2 minutos o sistema encontra sozinho todas as impressoras da sua rede.\nQualquer dúvida é só chamar a gente!`;
-                        copyText(message);
+                        copyText(buildPairingMessage());
                       }}
                     >
                       📋 Copiar mensagem completa
