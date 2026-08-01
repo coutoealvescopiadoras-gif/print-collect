@@ -24,16 +24,23 @@
 
 $ErrorActionPreference = "Stop"
 
-$ProjectRoot = Split-Path -Parent $PSScriptRoot
-$AgentDir = Join-Path $ProjectRoot "agent"
+# =============================================================================
+# CAMINHOS CORRETOS (ajuste duro para nao depender de Split-Path -Parent errado):
+#   - Este script esta em: <RAIZ DO PROJETO>\agent\windows\build-setup-x86.ps1
+#   - Portanto: ProjectRoot = ..\.. (sobe 2 niveis a partir daqui)
+#   -         AgentDir   = ..    (sobe 1 nivel: agent\)
+# =============================================================================
+$WindowsDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$AgentDir   = Split-Path -Parent $WindowsDir          # = agent\
+$ProjectRoot = Split-Path -Parent $AgentDir            # = RAIZ do projeto (print-collect\)
+
 $VenvDir = Join-Path $AgentDir ".venv-x86"
-$SpecFile = Join-Path $AgentDir "windows\PrintCollectAgent.spec"
-$IssFile = Join-Path $AgentDir "windows\PrintCollectSetup.iss"
+$SpecFile = Join-Path $WindowsDir "PrintCollectAgent.spec"
+$IssFile = Join-Path $WindowsDir "PrintCollectSetup.iss"
 $DistDir = Join-Path $AgentDir "dist"
 $BuildDir = Join-Path $AgentDir "build"
 $ExeAgent = Join-Path $DistDir "PrintCollectAgent.exe"
-$RuntimeDir = Join-Path $AgentDir "windows\runtime"
-$WindowsDir = Join-Path $AgentDir "windows"
+$RuntimeDir = Join-Path $WindowsDir "runtime"
 $OutputSetupExe = Join-Path $DistDir "windows\PrintCollectSetup.exe"
 
 function Write-Step { param($n, $m) Write-Host ""; Write-Host "[$n] $m" -ForegroundColor Cyan }
