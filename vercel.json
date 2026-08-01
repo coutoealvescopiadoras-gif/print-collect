@@ -1,15 +1,18 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "mkdir -p python_libs && (uv pip install --system -r requirements.txt 2>&1 ; pip install --target python_libs -r requirements.txt 2>&1 ; pip install --break-system-packages -r requirements.txt 2>&1) && cd web && npm install",
+  "installCommand": "mkdir -p api/_libs && (pip install --target api/_libs -r requirements.txt 2>&1 ; pip install --break-system-packages -r requirements.txt 2>&1 ; uv pip install --system -r requirements.txt 2>&1 ; echo 'python-install-step-done') && cd web && npm install",
   "buildCommand": "cd web && npm run build",
   "outputDirectory": "web/dist",
   "cleanUrls": true,
   "trailingSlash": false,
+  "functions": {
+    "api/index.py": { "maxDuration": 60 }
+  },
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/api/collect_api" },
-    { "source": "/health", "destination": "/api/collect_api" },
-    { "source": "/docs", "destination": "/api/collect_api" },
-    { "source": "/openapi.json", "destination": "/api/collect_api" },
+    { "source": "/api/:path*", "destination": "/api/index" },
+    { "source": "/health", "destination": "/api/index" },
+    { "source": "/docs", "destination": "/api/index" },
+    { "source": "/openapi.json", "destination": "/api/index" },
     { "source": "/((?!assets/|.*\\..*|api/|health|docs|openapi\\.json).*)", "destination": "/index.html" }
   ]
 }
