@@ -1,9 +1,14 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": null,
-  "installCommand": "pip install --break-system-packages fastapi==0.115.6 ; pip install --target python_libs -r requirements.txt 2>&1 ; pip install --target api/_libs -r requirements.txt 2>&1 ; (uv pip install --system -r requirements.txt 2>&1 || true) ; echo DONE_PYTHON ; cd web && npm install",
+  "framework": "vite",
+  "installCommand": "cd web && npm install && cd .. && pip install --break-system-packages -r requirements.txt",
   "buildCommand": "cd web && npm run build",
   "outputDirectory": "web/dist",
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 60
+    }
+  },
   "cleanUrls": true,
   "trailingSlash": false,
   "rewrites": [
