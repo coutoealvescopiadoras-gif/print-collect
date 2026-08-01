@@ -138,8 +138,6 @@ export default function Clientes() {
 
   const buildPairingMessage = (client?: Client) => {
     const theClient = client || activePairingClient;
-    const publicServerUrl = pairingResult?.server_url || getPublicApiUrl() || "https://www.printcollect.com.br";
-    const code = pairingResult?.pairing_code ?? "<CODIGO-PAREAMENTO>";
     const clientCode = theClient?.client_code || "<CODIGO-DO-CLIENTE>";
     return [
       "Olá, tudo bem?",
