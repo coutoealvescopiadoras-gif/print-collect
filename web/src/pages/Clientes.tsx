@@ -173,6 +173,57 @@ export default function Clientes() {
         )}
       </div>
 
+      {/* Bloco Link de Download Oficial do Instalador */}
+      <div className="card" style={{ marginBottom: "1.25rem", padding: "1.1rem 1.25rem", background: "linear-gradient(135deg, rgba(16,185,129,0.08) 0%, rgba(32,128,240,0.08) 100%)", border: "1px solid rgba(16,185,129,0.25)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 340px", minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: "0.25rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              💾 <span>Link oficial do instalador Windows</span>
+            </div>
+            <div style={{ fontSize: 13.5, color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+              PrintCollectSetup.exe · 12,7 MB · Baixe e envie este link para os seus clientes.
+            </div>
+            <div style={{
+              display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap",
+              padding: "0.55rem 0.75rem", borderRadius: 8,
+              background: "var(--surface)", border: "1px solid var(--border)",
+            }}>
+              <a
+                href={INSTALLER_DOWNLOAD_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  fontFamily: "'Courier New', ui-monospace, monospace",
+                  fontSize: 13, color: "var(--primary)",
+                  textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis",
+                  whiteSpace: "nowrap", flex: "1 1 260px", minWidth: 0,
+                }}
+                title={INSTALLER_DOWNLOAD_URL}
+              >
+                {INSTALLER_DOWNLOAD_URL}
+              </a>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ padding: "0.35rem 0.75rem", fontSize: 13 }}
+                onClick={() => copyText(INSTALLER_DOWNLOAD_URL)}
+              >
+                📋 Copiar link
+              </button>
+              <a
+                href={INSTALLER_DOWNLOAD_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-primary"
+                style={{ padding: "0.35rem 0.75rem", fontSize: 13, textDecoration: "none", display: "inline-block" }}
+              >
+                ⬇️ Baixar agora
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="card">
         {clients.length === 0 ? (
           <div className="empty">Nenhum cliente cadastrado</div>
