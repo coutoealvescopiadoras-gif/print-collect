@@ -87,3 +87,13 @@ except Exception as _e:
     )
     _DEBUG_OUTPUT.append(_err)
     handler = _make_error_app(_err)
+
+
+# Alias obrigatorio para o VALIDADOR da Vercel CLI 58:
+#   Ela detecta framework FastAPI automaticamente quando encontra arquivos .py
+#   na pasta api/ e EXIGE um objeto top-level chamado 'app' no entrypoint.
+#   Nosso runtime REAL exporta 'handler' (Mangum wrapper). Basta criar um alias
+#   'app = handler' para a validacao de build passar sem erros. Em runtime,
+#   o entrypoint eh 'api.index:handler' (definido no pyproject.toml), entao
+#   este alias nunca eh usado em runtime.
+app = handler
