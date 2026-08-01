@@ -5,17 +5,17 @@
   "buildCommand": "cd web && npm run build",
   "outputDirectory": "web/dist",
   "functions": {
-    "api/index": {
+    "api/collect_api": {
       "maxDuration": 60
     }
   },
   "cleanUrls": true,
   "trailingSlash": false,
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/api/index" },
-    { "source": "/health", "destination": "/api/index" },
-    { "source": "/docs", "destination": "/api/index" },
-    { "source": "/openapi.json", "destination": "/api/index" },
+    { "source": "/api/:path*", "destination": "/api/collect_api" },
+    { "source": "/health", "destination": "/api/collect_api" },
+    { "source": "/docs", "destination": "/api/collect_api" },
+    { "source": "/openapi.json", "destination": "/api/collect_api" },
     { "source": "/((?!assets/|.*\\..*|api/|health|docs|openapi\\.json).*)", "destination": "/index.html" }
   ]
 }
