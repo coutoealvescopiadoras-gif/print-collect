@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "mkdir -p python_libs api/_libs ; (uv pip install --system -r requirements.txt 2>&1 ; pip install --target python_libs -r requirements.txt 2>&1 ; pip install --target api/_libs -r requirements.txt 2>&1 ; pip install --break-system-packages -r requirements.txt 2>&1 ; echo DONE_PYTHON) && cd web && npm install",
+  "framework": null,
+  "installCommand": "pip install --break-system-packages fastapi==0.115.6 ; pip install --target python_libs -r requirements.txt 2>&1 ; pip install --target api/_libs -r requirements.txt 2>&1 ; (uv pip install --system -r requirements.txt 2>&1 || true) ; echo DONE_PYTHON ; cd web && npm install",
   "buildCommand": "cd web && npm run build",
   "outputDirectory": "web/dist",
   "cleanUrls": true,

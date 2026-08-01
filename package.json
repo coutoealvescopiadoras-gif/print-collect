@@ -1,0 +1,14 @@
+{
+  "name": "print-collect",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Print Collect - Monitoramento de impressoras SNMP (Frontend React + Backend FastAPI em Serverless Functions)",
+  "scripts": {
+    "install-deps": "cd web && npm install",
+    "build-web": "cd web && npm run build",
+    "install-python": "pip install --target python_libs -r requirements.txt"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,8 +1,0 @@
-[tool.vercel]
-# Entrypoint EXATO do nosso wrapper Mangum:
-#   api/index.py (arquivo) -> exporta 'handler' = Mangum(app)
-# Esse handler tem TODO o necessario:
-#   - sys.path.insert(0, python_libs/) (encontra mangum/fastapi/psycopg em runtime)
-#   - sys.path.insert(0, server/) (encontra from app.* imports)
-#   - handler Mangum configurado corretamente (lifespan=off, base_path = /)
-entrypoint = "api.index:handler"
