@@ -5,13 +5,29 @@ import traceback
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERVER_DIR = os.path.join(ROOT, "server")
+PYTHON_LIBS_DIR = os.path.join(ROOT, "python_libs")
+
+# 1) Adicionar pasta local de pacotes (instalados via pip install --target python_libs
+#    no installCommand do vercel.json, copiados para /var/task/python_libs em runtime)
+if os.path.isdir(PYTHON_LIBS_DIR):
+    if PYTHON_LIBS_DIR not in sys.path:
+        sys.path.insert(0, PYTHON_LIBS_DIR)
+
+# 2) Adicionar server/ no PYTHONPATH para imports do app.* funcionarem
 if SERVER_DIR not in sys.path:
     sys.path.insert(0, SERVER_DIR)
 
 _DEBUG_OUTPUT = []
 _DEBUG_OUTPUT.append(f"[DEBUG] ROOT={ROOT}")
 _DEBUG_OUTPUT.append(f"[DEBUG] SERVER_DIR={SERVER_DIR} exists={os.path.isdir(SERVER_DIR)}")
-_DEBUG_OUTPUT.append(f"[DEBUG] sys.path prefix={sys.path[:5]}")
+_DEBUG_OUTPUT.append(f"[DEBUG] PYTHON_LIBS_DIR={PYTHON_LIBS_DIR} exists={os.path.isdir(PYTHON_LIBS_DIR)}")
+if os.path.isdir(PYTHON_LIBS_DIR):
+    try:
+        _pkgs = os.listdir(PYTHON_LIBS_DIR)[:15]
+    except Exception:
+        _pkgs = []
+    _DEBUG_OUTPUT.append(f"[DEBUG] python_libs contents (first 15): {_pkgs}")
+_DEBUG_OUTPUT.append(f"[DEBUG] sys.path prefix={sys.path[:7]}")
 _DEBUG_OUTPUT.append(f"[DEBUG] cwd={os.getcwd()}")
 _DEBUG_OUTPUT.append(f"[DEBUG] python_version={sys.version}")
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "installCommand": "(uv pip install --system -r requirements.txt 2>&1 || pip install --break-system-packages -r requirements.txt 2>&1) && cd web && npm install",
+  "installCommand": "mkdir -p python_libs && (uv pip install --system -r requirements.txt 2>&1 ; pip install --target python_libs -r requirements.txt 2>&1 ; pip install --break-system-packages -r requirements.txt 2>&1) && cd web && npm install",
   "buildCommand": "cd web && npm run build",
   "outputDirectory": "web/dist",
   "cleanUrls": true,
