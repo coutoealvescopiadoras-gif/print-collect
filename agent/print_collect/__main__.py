@@ -407,88 +407,103 @@ def cmd_pair(args: argparse.Namespace) -> int:
 
 
 def cmd_wizard(args: argparse.Namespace) -> int:
-    """Wizard interativo de first run. Pergunta server_url, CÓDIGO DE VÍNCULO
-    (aceita 🎫 Código Cliente Fixo OU 🔗 Código de Pareamento Temporário),
-    community, faz pareamento, scan, envia primeira leitura, e pergunta se
-    quer instalar startup."""
+    """Wizard SUPER SIMPLIFICADO — O QUE O CLIENTE SEMPRE QUIS!
+    1) Abre  2) Cola CODIGO DO CLIENTE  3) Enter  4) PRONTO!
+    Tudo o resto (URL servidor, comunidade, sub-redes, inicializacao automatica)
+    ja sai de fabrica! Nao precisa de mais nada!"""
 
     print("=" * 62)
     print("   PRINT COLLECT — WIZARD DE INSTALAÇÃO")
+    print("   SUPER SIMPLES: COLE O CÓDIGO E DÊ ENTER! PRONTO!")
     print("=" * 62)
     print()
 
+    # URL DO SERVIDOR SEMPRE PADRAO — NUNCA PERGUNTA!
+    # Julio tem razao: URL nunca muda, para que perguntar?
+    DEFAULT_SERVER_URL = "https://www.printcollect.com.br"
+
     config_path = resolve_config_path(args.config)
 
-    # Server URL
-    server_url = (args.server_url or "").strip() or os.environ.get("SERVER_URL", "").strip()
-    if not server_url:
-        try:
-            server_url = input(
-                "1/5) URL do seu servidor Print Collect (padrão: https://www.printcollect.com.br):\n"
-                "> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            return 2
-    if not server_url:
-        server_url = "https://www.printcollect.com.br"
-    if not server_url.startswith("http"):
-        server_url = "https://" + server_url
-    print(f"     → URL do servidor: {server_url}")
-
-    # CÓDIGO DE VÍNCULO: ACEITA AMBOS (🎫 Código Cliente Fixo OU 🔗 Pareamento Temporário)
+    # 1/4) UNICA PERGUNTA QUE EXISTE: CODIGO DO CLIENTE / PAREAMENTO!
     code = (args.code or "").strip() or os.environ.get("PAIRING_CODE", "").strip()
     if not code:
         try:
             code = input(
-                "\n2/5) Informe o CÓDIGO DE VÍNCULO para este agente — ACEITAMOS 2 TIPOS DE CÓDIGO:\n"
-                "     🎫 OPÇÃO 1 (RECOMENDADO): CÓDIGO DO CLIENTE (coluna '🎫 Código Cliente' na aba Clientes)\n"
-                "         · 8 caracteres · NÃO EXPIRA · mesmo código em matriz e TODAS as filiais do mesmo cliente\n"
-                "     🔗 OPÇÃO 2: CÓDIGO DE PAREAMENTO (gerado no botão 🔗 Pareamento na aba Clientes)\n"
-                "         · 8 caracteres · expira em 24h · uso único (serve para UM agente específico)\n"
-                "     Digite QUALQUER um dos dois códigos abaixo:\n"
+                "\n┌──────────────────────────────────────────────────────────┐\n"
+                "│  1/4) COLE AQUI SEU CÓDIGO (Código Cliente OU Pareamento):\n"
+                "└──────────────────────────────────────────────────────────┘\n"
+                "   🎫 Código Cliente: 8 caracteres · NUNCA expira · Fixo!\n"
+                "   🔗 Código Pareamento: 8 caracteres · 24h · Uso único.\n"
+                ">\n"
                 "> ").strip()
         except (EOFError, KeyboardInterrupt):
             return 2
+    if not code:
+        print("\n[ERRO] Você não digitou nenhum código! Tente novamente.")
+        try:
+            input("\nPressione ENTER para fechar...")
+        except Exception:
+            pass
+        return 2
 
-    # Community
+    # -------------------------------------------------------------------------
+    # TUDO O RESTO VAI AUTOMATICO! (Julio tem razao, por que perguntar??)
+    # -------------------------------------------------------------------------
+
+    # Server URL: SEMPRE o oficial (hardcoded) a menos que seja passado por args/env!
+    server_url = (args.server_url or "").strip() or os.environ.get("SERVER_URL", "").strip()
+    if not server_url:
+        server_url = DEFAULT_SERVER_URL
+    if not server_url.startswith("http"):
+        server_url = "https://" + server_url
+    print(f"\n[OK] Servidor: {server_url}")
+
+    # Comunidade SNMP: SEMPRE 'public' (padrão 99,9% dos casos!)
     community = (args.community or "public").strip()
-    try:
-        resposta = input(f"\n3/5) Comunidade SNMP (padrão: {community}). Enter para aceitar:\n> ").strip()
-        if resposta:
-            community = resposta or community
-    except (EOFError, KeyboardInterrupt):
-        pass
+    print(f"[OK] Comunidade SNMP: {community}")
 
-    # Sub-redes
+    # Sub-redes: DETECTA AUTOMATICAMENTE (não pergunta!)
     try:
         from print_collect.snmp import discover_local_subnets
         subnets = list(discover_local_subnets())
     except Exception:
         subnets = []
-    if not subnets:
-        try:
-            extra = input("\nSub-redes locais nao detectadas automaticamente. "
-                          "Informe CIDR (ex.: 192.168.1.0/24) ou Enter para pular:\n> ").strip()
-            if extra:
-                subnets.append(extra)
-        except (EOFError, KeyboardInterrupt):
-            pass
+    if subnets:
+        print(f"[OK] Sub-redes detectadas automaticamente: {subnets}")
+    else:
+        print("[AVISO] Não detectei sub-redes automaticamente. "
+              "Depois você pode ajustar em: C:\\ProgramData\\PrintCollect\\config.yaml")
+        subnets = []
 
-    # 4) Pair
+    # -------------------------------------------------------------------------
+    # 2/4) Parear — CONTATA O SERVIDOR E VINCULA O AGENTE
+    # -------------------------------------------------------------------------
+    print("\n2/4) Vinculando agente ao servidor e ao cliente...")
     try:
         config = _pair_and_save(server_url, code, config_path,
                                 community=community, subnets=subnets)
     except Exception as e:
         print(f"\n[ERRO] Pareamento falhou: {e}")
+        print("\nDicas:")
+        print("   · Verifique se o código está correto (8 caracteres, sem espaços!)")
+        print("   · Verifique se a internet do cliente está funcionando")
+        print("   · Verifique se o código expirou (se for código de pareamento 24h)")
+        try:
+            input("\nPressione ENTER para fechar...")
+        except Exception:
+            pass
         return 1
 
-    # Caminho REAL salvo (caso save_config tenha ajustado por fallback de permissao)
     actual_config_path = getattr(_pair_and_save, "_last_config_path", config_path)
     args.config = str(actual_config_path)
+    print("[OK] Agente pareado com sucesso!")
 
-    # 5) Scan + envio
+    # -------------------------------------------------------------------------
+    # 3/4) Buscar impressoras na REDE + enviar primeira leitura
+    # -------------------------------------------------------------------------
     printers: list = []
     try:
-        print("\n4/5) Buscando impressoras na rede (primeira coleta)...")
+        print("\n3/4) Buscando impressoras na rede (primeira coleta)...")
         class _ScanArgs:
             subnet = list(config.snmp.subnets) if config.snmp.subnets else None
             ip = None
@@ -503,34 +518,56 @@ def cmd_wizard(args: argparse.Namespace) -> int:
             from print_collect.sender import ApiSender
             sender = ApiSender(config.server_url, config.agent_token)
             sender.send_readings(printers, config.agent_version)
-            print(f"[OK] Enviadas {len(printers)} impressoras.")
+            print(f"[OK] Encontradas e enviadas: {len(printers)} impressoras!")
         except Exception as e:
-            print(f"[AVISO] Nao foi possivel enviar: {e}")
+            print(f"[AVISO] Não foi possível enviar primeira coleta: {e}")
     else:
         print("[!] Nenhuma impressora detectada nesta primeira execucao.")
         print("    Dicas: confira a comunidade SNMP, se a impressora esta ligada e SNMP ativado.")
-        print("    Voce pode rodar 'scan' manualmente depois.")
+        print("    Voce pode rodar o atalho 'Procurar impressoras' depois.")
 
-    # 6) (opcional) Instalar inicializacao automatica
-    print("\n5/5) Deseja instalar a inicializacao automatica do agente?")
+    # -------------------------------------------------------------------------
+    # 4/4) INSTALAR INICIALIZACAO AUTOMATICA — SEMPRE SIM! (nao pergunta!)
+    # -------------------------------------------------------------------------
+    print("\n4/4) Instalando inicializacao automatica (tarefa agendada)...")
+    instalou_ok = False
     try:
-        instalar = input("    Digite S para SIM (tarefa agendada no login) ou Enter para NAO:\n> ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        instalar = ""
-    if instalar in ("s", "sim", "y", "yes", "1"):
-        try:
-            class _InstArgs:
-                system = False
-                config = str(actual_config_path)  # usa o caminho REAL ajustado!
-            rc = cmd_install(_InstArgs)
-            if rc == 0:
-                print("[OK] Inicializacao automatica instalada.")
-        except Exception as e:
-            print(f"[AVISO] Nao foi possivel instalar inicializacao: {e}")
+        class _InstArgs:
+            system = False
+            config = str(actual_config_path)
+        rc = cmd_install(_InstArgs)
+        if rc == 0:
+            instalou_ok = True
+            print("[OK] Inicializacao automatica instalada com sucesso!")
+            print("     (Agente inicia sozinho toda vez que ligar o PC!)")
+    except Exception as e:
+        print(f"[AVISO] Nao foi possivel instalar inicializacao: {e}")
+        print("     (Voce pode instalar depois pelo atalho: Reinstalar inicializacao)")
 
-    print("\n" + "=" * 62)
-    print("   WIZARD CONCLUIDO.")
-    print("=" * 62)
+    # -------------------------------------------------------------------------
+    # FIM DE TUDO! MENSAGEM BONITO E CLARO!
+    # -------------------------------------------------------------------------
+    print()
+    print("╔══════════════════════════════════════════════════════════╗")
+    print("║          🎉  TUDO PRONTO! INSTALAÇÃO CONCLUÍDA!         ║")
+    print("╚══════════════════════════════════════════════════════════╝")
+    print()
+    print(f" · Código usado     : {code}")
+    print(f" · Servidor         : {server_url}")
+    print(f" · Config salvo em  : {actual_config_path}")
+    print(f" · Impressoras hoje : {len(printers)} encontradas")
+    if instalou_ok:
+        print(f" · Auto inicializa  : ✅ INSTALADA (inicia com o Windows!)")
+    else:
+        print(f" · Auto inicializa  : ⚠️  Instale depois pelo atalho")
+    print()
+    print(" A partir de AGORA, este PC vai coletar as impressoras")
+    print(" automaticamente todos os dias! 🚀")
+    print()
+    try:
+        input(" Pressione ENTER para FECHAR o Wizard...")
+    except EOFError:
+        pass
     return 0
 
 

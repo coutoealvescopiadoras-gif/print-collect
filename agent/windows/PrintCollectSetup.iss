@@ -31,6 +31,8 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Files]
 Source: "..\dist\PrintCollectAgent.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\WizardPareamento.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\SearchPrinters.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\config.example.yaml"; DestDir: "{app}"; DestName: "config.example.yaml"; Flags: ignoreversion
 ; === IMPORTANTE: config.yaml NAO fica mais em {app} (Program Files = somente leitura UAC).
 ; === Agora fica em {commonappdata}\PrintCollect\ = C:\ProgramData\PrintCollect\ (gravavel SEM admin!)
@@ -43,27 +45,25 @@ Source: "{src}\config.yaml"; DestDir: "{commonappdata}\PrintCollect"; DestName: 
 Name: "{commonappdata}\PrintCollect"; Permissions: authusers-modify; Flags: uninsneveruninstall
 
 [Icons]
-; === SOLUCAO 100% SEM BUG: Todos os atalhos de WIZARD chamam DIRETAMENTE run-wizard.bat ===
-; (nao usa parametros, nao usa aspas, nao usa cmd.exe /K — igual aos outros .bat que NUNCA deram erro!)
-; ATALHO DESTAQUE NUMERO 1 (primeiro item do menu iniciar, sempre visivel!)
-Name: "{autoprograms}\Print Collect Agent\1. Parear Agora (Wizard)"; Filename: "{app}\run-wizard.bat"; IconFilename: "{app}\{#MyAppExeName}"
-Name: "{autoprograms}\Print Collect Agent\Wizard de pareamento"; Filename: "{app}\run-wizard.bat"; IconFilename: "{app}\{#MyAppExeName}"
-Name: "{autoprograms}\Print Collect Agent\Procurar impressoras"; Filename: "{app}\list-printers.bat"
+; === WIZARD NATIVO: atalhos apontam para WizardPareamento.exe (NAO E .bat! EXE NATIVO!) ===
+; (NAO usa cmd.exe, NAO usa aspas, NAO da erro de aspas / fechar sozinho! Abre SEMPRE!)
+Name: "{autoprograms}\Print Collect Agent\1. Parear Agora (Wizard)"; Filename: "{app}\WizardPareamento.exe"; IconFilename: "{app}\WizardPareamento.exe"
+Name: "{autoprograms}\Print Collect Agent\Wizard de pareamento"; Filename: "{app}\WizardPareamento.exe"; IconFilename: "{app}\WizardPareamento.exe"
+; === PROCURAR IMPRESSORAS: EXE NATIVO SearchPrinters.exe (nao fecha sozinho!) ===
+Name: "{autoprograms}\Print Collect Agent\Procurar impressoras"; Filename: "{app}\SearchPrinters.exe"; IconFilename: "{app}\SearchPrinters.exe"
 Name: "{autoprograms}\Print Collect Agent\Testar conexao"; Filename: "{app}\test-agent.bat"
 Name: "{autoprograms}\Print Collect Agent\Executar coleta unica"; Filename: "{app}\run-once.bat"
 Name: "{autoprograms}\Print Collect Agent\Editar configuracao"; Filename: "{app}\open-config.bat"
 Name: "{autoprograms}\Print Collect Agent\Reinstalar inicializacao"; Filename: "{app}\register-startup-task.bat"
 Name: "{autoprograms}\Print Collect Agent\Desinstalar inicializacao"; Filename: "{app}\unregister-startup-task.bat"
 Name: "{autoprograms}\Print Collect Agent\Abrir pasta"; Filename: "{app}"
-Name: "{autodesktop}\Print Collect - Wizard"; Filename: "{app}\run-wizard.bat"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\Print Collect - Wizard"; Filename: "{app}\WizardPareamento.exe"; IconFilename: "{app}\WizardPareamento.exe"; Tasks: desktopicon
 
 [Run]
-; === SOLUCAO 100%: cmd.exe /C "bat & pause" (FECHA AUTOMATICAMENTE depois do ultimo pause!) ===
-; (/C = "Close after command" — NAO fica mais sobrando cmd.exe aberto (que gerava erro "codigo nao reconhecido como comando" quando cliente colava codigo fora do wizard!)
-; E adicionamos um pause EXTRA no final do cmd (& pause) para garantir que usuario veja TUDO antes de fechar automaticamente.)
+; === WIZARD NATIVO: Chama WizardPareamento.exe DIRETAMENTE (0 .bat, 0 cmd.exe!) ===
+; (Abre a janela preta SEMPRE, sem bug de fechar sozinho, sem aspas.)
 ; Sem flag unchecked = vem MARCADO POR PADRAO na ultima tela do setup! Todo mundo clica Finish e abre!
-Filename: "{cmd}"; \
-  Parameters: "/C """"{app}\run-wizard.bat"" & pause"""; \
+Filename: "{app}\WizardPareamento.exe"; \
   WorkingDir: "{app}"; \
   Description: "Executar Wizard de Pareamento (vincular agente ao cliente — RECOMENDADO)"; \
   Flags: nowait postinstall skipifsilent

@@ -174,9 +174,47 @@ if (-not (Test-Path $ExeAgent)) { throw "PrintCollectAgent.exe x86 nao gerado em
 Write-OK "Agente x86 buildado: $ExeAgent"
 
 # =============================================================================
+# PASSO 4.5: Build WizardPareamento.exe x86 (EXECUTAVEL NATIVO! nao usa .bat!)
+# (PyInstaller --onefile --console — mesma arquitetura x86 32 bits)
+# =============================================================================
+Write-Step "4.5" "Buildando WizardPareamento.exe x86 32 bits (novo! nativo, sem .bat)"
+$WizardPy = Join-Path $AgentDir "WizardPareamento.py"
+$ExeWizard = Join-Path $DistDir "WizardPareamento.exe"
+if (-not (Test-Path $WizardPy)) { throw "WizardPareamento.py nao encontrado em: $WizardPy" }
+
+Push-Location $AgentDir
+try {
+    & $PyInstaller --noconfirm --clean --onefile --console --name "WizardPareamento" $WizardPy
+    if ($LASTEXITCODE -ne 0) { throw "PyInstaller WizardPareamento (x86) retornou erro $LASTEXITCODE" }
+} finally {
+    Pop-Location
+}
+if (-not (Test-Path $ExeWizard)) { throw "WizardPareamento.exe x86 nao gerado em $ExeWizard" }
+Write-OK "WizardPareamento.exe x86 buildado: $ExeWizard"
+
+# =============================================================================
+# PASSO 4.6: Build SearchPrinters.exe x86 (EXECUTAVEL NATIVO! Busca impressoras, NAO FECHA SOZINHO!)
+# (PyInstaller --onefile --console — mesma arquitetura x86 32 bits)
+# =============================================================================
+Write-Step "4.6" "Buildando SearchPrinters.exe x86 32 bits (novo! nativo, busca impressoras, nao fecha!)"
+$SearchPy = Join-Path $AgentDir "SearchPrinters.py"
+$ExeSearch = Join-Path $DistDir "SearchPrinters.exe"
+if (-not (Test-Path $SearchPy)) { throw "SearchPrinters.py nao encontrado em: $SearchPy" }
+
+Push-Location $AgentDir
+try {
+    & $PyInstaller --noconfirm --clean --onefile --console --name "SearchPrinters" $SearchPy
+    if ($LASTEXITCODE -ne 0) { throw "PyInstaller SearchPrinters (x86) retornou erro $LASTEXITCODE" }
+} finally {
+    Pop-Location
+}
+if (-not (Test-Path $ExeSearch)) { throw "SearchPrinters.exe x86 nao gerado em $ExeSearch" }
+Write-OK "SearchPrinters.exe x86 buildado: $ExeSearch"
+
+# =============================================================================
 # PASSO 5: Copiar runtime + exe para windows/dist
 # =============================================================================
-Write-Step 5 "Preparando arquivos do instalador (runtime + exe)"
+Write-Step 5 "Preparando arquivos do instalador (runtime + exe + wizard nativo + search nativo)"
 $RuntimeFiles = @(
     (Join-Path $RuntimeDir "run-once.bat"),
     (Join-Path $RuntimeDir "test-agent.bat"),
@@ -184,13 +222,21 @@ $RuntimeFiles = @(
     (Join-Path $RuntimeDir "list-printers.bat"),
     (Join-Path $RuntimeDir "register-startup-task.bat"),
     (Join-Path $RuntimeDir "register-startup-task-silent.bat"),
-    (Join-Path $RuntimeDir "unregister-startup-task.bat")
+    (Join-Path $RuntimeDir "unregister-startup-task.bat"),
+    (Join-Path $RuntimeDir "run-wizard.bat")
 )
 foreach ($file in $RuntimeFiles) {
     if (-not (Test-Path $file)) { throw "Arquivo runtime faltando: $file" }
     Copy-Item $file $DistDir -Force
 }
+# Copia os 3 executaveis principais (agente + wizard nativo + search nativo)
+Copy-Item $ExeAgent $DistDir -Force
+Copy-Item $ExeWizard $DistDir -Force
+Copy-Item $ExeSearch $DistDir -Force
+# Tambem copia para agent\windows\ (para testes locais rapidos)
 Copy-Item $ExeAgent $WindowsDir -Force
+Copy-Item $ExeWizard $WindowsDir -Force
+Copy-Item $ExeSearch $WindowsDir -Force
 foreach ($file in $RuntimeFiles) {
     Copy-Item $file $WindowsDir -Force
 }

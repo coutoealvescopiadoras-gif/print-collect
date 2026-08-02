@@ -3,7 +3,6 @@ REM Variante SILENCIOSA do register-startup-task.bat para rodar DENTRO do Inno S
 REM NUNCA usa PAUSE, NUNCA pede interacao, sempre retorna exit 0 para nao travar instalador.
 
 setlocal EnableExtensions
-chcp 65001 >nul
 cd /d "%~dp0"
 
 set "EXE=%~dp0PrintCollectAgent.exe"

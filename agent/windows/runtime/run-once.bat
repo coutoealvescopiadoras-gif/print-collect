@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions
-chcp 65001 >nul
 set "EXE_DIR=%~dp0"
+cd /d "%~dp0"
 if "%PROGRAMDATA%"=="" set "PROGRAMDATA=C:\ProgramData"
 set "CFG_DIR=%PROGRAMDATA%\PrintCollect"
 set "CFG=%CFG_DIR%\config.yaml"
