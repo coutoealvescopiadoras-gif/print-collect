@@ -28,23 +28,112 @@ if TYPE_CHECKING:
     from print_collect.config import AgentConfig
 
 
-def resolve_config_path(config_value: str) -> Path:
+def resolve_config_path(config_value: str, user_explicit: bool = False) -> Path:
+    """
+    Resolve o caminho do config.yaml.
+    - Se usuario passou --config explicitamente: usa ele.
+    - Senao: PRIORIZA o caminho GRAVAVEL (ProgramData ou ~/.print_collect) para
+      evitar erro de PERMISSION DENIED dentro de C:\\Program Files.
+    - Tambem faz fallback: se o arquivo ja existir em outro lugar (candidatos
+      antigos) mas nao no gravavel, usa ele.
+    """
+    from print_collect.config import default_writable_config_path, is_path_writable
+
+    # Se usuario passou um caminho absoluto explicitamente, respeita
     path = Path(config_value)
     if path.is_absolute():
         return path
 
-    candidates = [Path.cwd() / path]
+    default_writable = default_writable_config_path()
 
+    # Se o usuario NAO passou --config (ou seja, o default config.yaml):
+    # PRIORIDADE 1: usar o caminho GRAVAVEL, se ele existir OU se o candidato a
+    # caminho antigo (Program Files) nao for gravavel.
+    if not user_explicit:
+        # 1a) se arquivo ja existe no gravavel -> usa ele
+        if default_writable.exists():
+            return default_writable
+        # 1b) senao, verifica se candidatos antigos (cwd, pasta do exe) tem arquivo
+        # e sao GRAVAVEIS. Se sim, usa (compatibilidade instalacoes antigas).
+        candidates = [Path.cwd() / path]
+        if getattr(sys, "frozen", False):
+            candidates.append(Path(sys.executable).resolve().parent / path)
+        else:
+            candidates.append(Path(__file__).resolve().parents[1] / path)
+        for candidate in candidates:
+            if candidate.exists() and is_path_writable(candidate):
+                return candidate
+        # 1c) nenhum candidato gravavel existe ainda -> usa o default WRITABLE
+        return default_writable
+
+    # Usuario passou --config caminho/relativo (explicito): procura em candidatos
+    candidates = [Path.cwd() / path]
     if getattr(sys, "frozen", False):
         candidates.append(Path(sys.executable).resolve().parent / path)
     else:
         candidates.append(Path(__file__).resolve().parents[1] / path)
-
     for candidate in candidates:
         if candidate.exists():
             return candidate
-
     return candidates[0]
+
+
+def _pair_and_save(server_url: str, code: str, config_path: Path,
+                   community: str = "public", subnets: list[str] | None = None) -> AgentConfig:
+    from print_collect.sender import PairingClient
+    from print_collect.config import save_config, AgentConfig, SnmpConfig
+
+    if not server_url:
+        raise ValueError("server_url nao informado")
+    if not code:
+        raise ValueError("codigo do cliente nao informado")
+
+    print(f"[1/4] Contatando servidor: {server_url}")
+    pairing = PairingClient(server_url.rstrip("/"))
+    hostname = platform.node() or None
+    version = "0.3.0"
+    print(f"[2/4] Validando CÓDIGO DO CLIENTE: {code.upper()} (hostname: {hostname})")
+    mode, result = pairing.exchange_smart(code=code, hostname=hostname, version=version)
+
+    agent_token = result.get("agent_token") or ""
+    client_id = result.get("client_id")
+    client_name = result.get("client_name") or f"Cliente #{client_id}"
+    returned_url = (result.get("server_url") or server_url).rstrip("/")
+    client_code = result.get("client_code")
+
+    if not agent_token:
+        raise RuntimeError("Resposta do servidor nao contem agent_token.")
+
+    if mode == "client_code":
+        print(f"[3/4] CÓDIGO DO CLIENTE OK: vinculado a '{client_name}' (client_id={client_id})")
+    else:
+        print(f"[3/4] Pareamento por código TTL OK: vinculado a '{client_name}' (client_id={client_id})")
+
+    cfg = AgentConfig(
+        server_url=returned_url,
+        agent_token=agent_token,
+        agent_version=version,
+        interval_minutes=15,
+        snmp=SnmpConfig(
+            community=community or "public",
+            timeout=2,
+            subnets=list(subnets or []),
+            ips=[],
+        ),
+    )
+    # save_config agora RETORNA o caminho real (se caiu em fallback de permissao)
+    actual_path = save_config(config_path, cfg)
+    print(f"[4/4] Configuracao salva em: {actual_path}")
+    if actual_path.resolve() != config_path.resolve():
+        print(f"      (Ajustado automaticamente para caminho com permissao de escrita)")
+    if client_code:
+        print(f"      Dica: o Código do Cliente é '{client_code}' e nunca expira.")
+    # Salva o caminho real para uso do callers (install, wizard)
+    try:
+        _pair_and_save._last_config_path = actual_path
+    except Exception:
+        pass
+    return cfg
 
 
 def _print_printers_table(printers: list) -> None:
@@ -165,7 +254,13 @@ def cmd_install(args: argparse.Namespace) -> int:
     Use --system para rodar como SYSTEM (antes o padrao do instalador antigo)."""
     import os
 
-    config_path = resolve_config_path(args.config)
+    # Se temos um ultimo caminho salvo de pair/wizard, usamos ele (garante uso do WRITABLE)
+    last_saved = getattr(_pair_and_save, "_last_config_path", None)
+    if last_saved and isinstance(last_saved, Path):
+        config_path = last_saved
+    else:
+        config_path = resolve_config_path(args.config)
+
     exe = Path(sys.executable).resolve() if getattr(sys, "frozen", False) else Path(sys.executable).resolve()
     # Se nao for frozen (exe PyInstaller) monta como "python -m print_collect ..."
     if getattr(sys, "frozen", False):
@@ -233,56 +328,6 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     return 0
 
 
-def _pair_and_save(server_url: str, code: str, config_path: Path,
-                   community: str = "public", subnets: list[str] | None = None) -> AgentConfig:
-    from print_collect.sender import PairingClient
-    from print_collect.config import save_config, AgentConfig, SnmpConfig
-
-    if not server_url:
-        raise ValueError("server_url nao informado")
-    if not code:
-        raise ValueError("codigo do cliente nao informado")
-
-    print(f"[1/4] Contatando servidor: {server_url}")
-    pairing = PairingClient(server_url.rstrip("/"))
-    hostname = platform.node() or None
-    version = "0.3.0"
-    print(f"[2/4] Validando CÓDIGO DO CLIENTE: {code.upper()} (hostname: {hostname})")
-    mode, result = pairing.exchange_smart(code=code, hostname=hostname, version=version)
-
-    agent_token = result.get("agent_token") or ""
-    client_id = result.get("client_id")
-    client_name = result.get("client_name") or f"Cliente #{client_id}"
-    returned_url = (result.get("server_url") or server_url).rstrip("/")
-    client_code = result.get("client_code")
-
-    if not agent_token:
-        raise RuntimeError("Resposta do servidor nao contem agent_token.")
-
-    if mode == "client_code":
-        print(f"[3/4] CÓDIGO DO CLIENTE OK: vinculado a '{client_name}' (client_id={client_id})")
-    else:
-        print(f"[3/4] Pareamento por código TTL OK: vinculado a '{client_name}' (client_id={client_id})")
-
-    cfg = AgentConfig(
-        server_url=returned_url,
-        agent_token=agent_token,
-        agent_version=version,
-        interval_minutes=15,
-        snmp=SnmpConfig(
-            community=community or "public",
-            timeout=2,
-            subnets=list(subnets or []),
-            ips=[],
-        ),
-    )
-    save_config(config_path, cfg)
-    print(f"[4/4] Configuracao salva em: {config_path}")
-    if client_code:
-        print(f"      Dica: o Código do Cliente é '{client_code}' e nunca expira.")
-    return cfg
-
-
 def cmd_pair(args: argparse.Namespace) -> int:
     config_path = resolve_config_path(args.config)
     # Server URL
@@ -328,6 +373,11 @@ def cmd_pair(args: argparse.Namespace) -> int:
     except Exception as e:
         print(f"[ERRO] Falha no pareamento: {e}")
         return 1
+
+    # Caminho REAL salvo (pode ter sido ajustado por fallback de permissao)
+    actual_config_path = getattr(_pair_and_save, "_last_config_path", config_path)
+    # Garante que chamadas futuras (install, daemon etc) usem o caminho correto
+    args.config = str(actual_config_path)
 
     # Scan opcional
     if not args.no_scan:
@@ -431,6 +481,10 @@ def cmd_wizard(args: argparse.Namespace) -> int:
         print(f"\n[ERRO] Pareamento falhou: {e}")
         return 1
 
+    # Caminho REAL salvo (caso save_config tenha ajustado por fallback de permissao)
+    actual_config_path = getattr(_pair_and_save, "_last_config_path", config_path)
+    args.config = str(actual_config_path)
+
     # 5) Scan + envio
     printers: list = []
     try:
@@ -467,7 +521,7 @@ def cmd_wizard(args: argparse.Namespace) -> int:
         try:
             class _InstArgs:
                 system = False
-                config = args.config
+                config = str(actual_config_path)  # usa o caminho REAL ajustado!
             rc = cmd_install(_InstArgs)
             if rc == 0:
                 print("[OK] Inicializacao automatica instalada.")

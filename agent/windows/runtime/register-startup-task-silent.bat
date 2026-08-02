@@ -7,7 +7,9 @@ chcp 65001 >nul
 cd /d "%~dp0"
 
 set "EXE=%~dp0PrintCollectAgent.exe"
-set "CFG=%~dp0config.yaml"
+if "%PROGRAMDATA%"=="" set "PROGRAMDATA=C:\ProgramData"
+set "CFG_DIR=%PROGRAMDATA%\PrintCollect"
+set "CFG=%CFG_DIR%\config.yaml"
 set "LOG=%TEMP%\print-collect-startup.log"
 
 echo [%date% %time%] Inicio install startup task >> "%LOG%"
@@ -17,6 +19,7 @@ if not exist "%EXE%" (
     exit /b 0
 )
 
+if not exist "%CFG_DIR%" mkdir "%CFG_DIR%" >nul 2>&1
 if not exist "%CFG%" (
     if exist "%~dp0config.example.yaml" (
         copy /Y "%~dp0config.example.yaml" "%CFG%" >nul

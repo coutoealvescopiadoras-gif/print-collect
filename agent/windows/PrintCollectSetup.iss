@@ -32,12 +32,18 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 [Files]
 Source: "..\dist\PrintCollectAgent.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\config.example.yaml"; DestDir: "{app}"; DestName: "config.example.yaml"; Flags: ignoreversion
-Source: "..\config.example.yaml"; DestDir: "{app}"; DestName: "config.yaml"; Flags: ignoreversion onlyifdoesntexist; Check: not HasExternalConfig
+; === IMPORTANTE: config.yaml NAO fica mais em {app} (Program Files = somente leitura UAC).
+; === Agora fica em {commonappdata}\PrintCollect\ = C:\ProgramData\PrintCollect\ (gravavel SEM admin!)
+Source: "..\config.example.yaml"; DestDir: "{commonappdata}\PrintCollect"; DestName: "config.yaml"; Flags: ignoreversion onlyifdoesntexist; Check: not HasExternalConfig
 Source: ".\runtime\*.bat"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{src}\config.yaml"; DestDir: "{app}"; DestName: "config.yaml"; Flags: external ignoreversion onlyifdoesntexist; Check: HasExternalConfig
+Source: "{src}\config.yaml"; DestDir: "{commonappdata}\PrintCollect"; DestName: "config.yaml"; Flags: external ignoreversion onlyifdoesntexist; Check: HasExternalConfig
+
+[Dirs]
+; Garante que a pasta C:\ProgramData\PrintCollect exista antes de qualquer coisa
+Name: "{commonappdata}\PrintCollect"; Permissions: authusers-modify; Flags: uninsneveruninstall
 
 [Icons]
-Name: "{autoprograms}\Print Collect Agent\Wizard de pareamento"; Filename: "{cmd}"; Parameters: "/K """"{app}\PrintCollectAgent.exe"" wizard"""  ; IconFilename: "{app}\{#MyAppExeName}"
+Name: "{autoprograms}\Print Collect Agent\Wizard de pareamento"; Filename: "{cmd}"; Parameters: "/K """"{app}\PrintCollectAgent.exe"" wizard --config ""{commonappdata}\PrintCollect\config.yaml"""""; IconFilename: "{app}\{#MyAppExeName}"
 Name: "{autoprograms}\Print Collect Agent\Procurar impressoras"; Filename: "{app}\list-printers.bat"
 Name: "{autoprograms}\Print Collect Agent\Testar conexao"; Filename: "{app}\test-agent.bat"
 Name: "{autoprograms}\Print Collect Agent\Executar coleta unica"; Filename: "{app}\run-once.bat"
@@ -45,11 +51,11 @@ Name: "{autoprograms}\Print Collect Agent\Editar configuracao"; Filename: "{app}
 Name: "{autoprograms}\Print Collect Agent\Reinstalar inicializacao"; Filename: "{app}\register-startup-task.bat"
 Name: "{autoprograms}\Print Collect Agent\Desinstalar inicializacao"; Filename: "{app}\unregister-startup-task.bat"
 Name: "{autoprograms}\Print Collect Agent\Abrir pasta"; Filename: "{app}"
-Name: "{autodesktop}\Print Collect - Wizard"; Filename: "{cmd}"; Parameters: "/K """"{app}\PrintCollectAgent.exe"" wizard"""; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\Print Collect - Wizard"; Filename: "{cmd}"; Parameters: "/K """"{app}\PrintCollectAgent.exe"" wizard --config ""{commonappdata}\PrintCollect\config.yaml"""""; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\PrintCollectAgent.exe"; \
-  Parameters: "wizard --config ""{app}\config.yaml"""; \
+  Parameters: "wizard --config ""{commonappdata}\PrintCollect\config.yaml"""; \
   WorkingDir: "{app}"; \
   Description: "Executar Wizard de Pareamento (vincular agente ao cliente — recomendado)"; \
   Flags: nowait postinstall skipifsilent unchecked

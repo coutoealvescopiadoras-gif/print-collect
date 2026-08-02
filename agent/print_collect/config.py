@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
+import os
+import platform
+import sys
+import tempfile
 
 import yaml
 
@@ -72,8 +76,47 @@ class AgentConfig:
         return data
 
 
+def default_writable_config_path() -> Path:
+    """
+    Retorna o PATH PADRAO do config.yaml onde o agente SEMPRE consegue ESCREVER
+    (mesmo sem permissao de administrador).
+    - Windows: %PROGRAMDATA%\PrintCollect\config.yaml
+               (ex: C:\ProgramData\PrintCollect\config.yaml — fora de Program Files)
+    - Linux/macOS: ~/.print_collect/config.yaml
+    """
+    system = platform.system().lower()
+    if system == "windows":
+        base = os.environ.get("PROGRAMDATA") or r"C:\ProgramData"
+        folder = Path(base) / "PrintCollect"
+    else:
+        folder = Path.home() / ".print_collect"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / "config.yaml"
+
+
+def is_path_writable(path: Path) -> bool:
+    """Testa se conseguimos ESCREVER em um path (usando arquivo temporario para nao corromper)."""
+    test_file = path.parent / f".write-test-{os.getpid()}.tmp"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with test_file.open("w") as f:
+            f.write("ok")
+        test_file.unlink(missing_ok=True)
+        return True
+    except (OSError, PermissionError):
+        try:
+            test_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return False
+
+
 def load_config(path: Path) -> AgentConfig:
     if not path.exists():
+        # Fallback amigavel: tenta buscar no PROGRAMDATA se nao achou no Program Files
+        fallback = default_writable_config_path()
+        if fallback.exists() and fallback.resolve() != path.resolve():
+            return load_config(fallback)
         raise FileNotFoundError(
             f"Configuracao nao encontrada: {path}\n"
             f"Copie config.example.yaml para config.yaml e preencha os valores, "
@@ -87,14 +130,41 @@ def load_config(path: Path) -> AgentConfig:
 
 
 def save_config(path: Path, config: AgentConfig) -> Path:
-    """Salva AgentConfig em arquivo YAML."""
+    """
+    Salva AgentConfig em arquivo YAML.
+    Se der PERMISSION DENIED (erro 13) no caminho original (por exemplo,
+    dentro de C:\Program Files), salva automaticamente no caminho GRAVAVEL
+    (ProgramData ou home) e retorna esse novo caminho.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        yaml.safe_dump(
-            config.to_dict(),
-            f,
-            sort_keys=False,
-            allow_unicode=True,
-            width=120,
-        )
-    return path
+    try:
+        with path.open("w", encoding="utf-8") as f:
+            yaml.safe_dump(
+                config.to_dict(),
+                f,
+                sort_keys=False,
+                allow_unicode=True,
+                width=120,
+            )
+        return path
+    except PermissionError:
+        # === FALLBACK: nao consegue escrever em Program Files ===
+        writable = default_writable_config_path()
+        print(f"[!] Permissao negada ao salvar em: {path}")
+        print(f"[!] Salvando automaticamente no caminho gravavel: {writable}")
+        writable.parent.mkdir(parents=True, exist_ok=True)
+        with writable.open("w", encoding="utf-8") as f:
+            yaml.safe_dump(
+                config.to_dict(),
+                f,
+                sort_keys=False,
+                allow_unicode=True,
+                width=120,
+            )
+        # Tambem salva log_file (se existia) com caminho absoluto para nao perder referencia
+        try:
+            save_config._last_fallback_path = writable
+        except Exception:
+            pass
+        return writable
+
