@@ -45,6 +45,8 @@ Name: "{commonappdata}\PrintCollect"; Permissions: authusers-modify; Flags: unin
 [Icons]
 ; === SOLUCAO 100% SEM BUG: Todos os atalhos de WIZARD chamam DIRETAMENTE run-wizard.bat ===
 ; (nao usa parametros, nao usa aspas, nao usa cmd.exe /K — igual aos outros .bat que NUNCA deram erro!)
+; ATALHO DESTAQUE NUMERO 1 (primeiro item do menu iniciar, sempre visivel!)
+Name: "{autoprograms}\Print Collect Agent\1. Parear Agora (Wizard)"; Filename: "{app}\run-wizard.bat"; IconFilename: "{app}\{#MyAppExeName}"
 Name: "{autoprograms}\Print Collect Agent\Wizard de pareamento"; Filename: "{app}\run-wizard.bat"; IconFilename: "{app}\{#MyAppExeName}"
 Name: "{autoprograms}\Print Collect Agent\Procurar impressoras"; Filename: "{app}\list-printers.bat"
 Name: "{autoprograms}\Print Collect Agent\Testar conexao"; Filename: "{app}\test-agent.bat"
@@ -56,8 +58,14 @@ Name: "{autoprograms}\Print Collect Agent\Abrir pasta"; Filename: "{app}"
 Name: "{autodesktop}\Print Collect - Wizard"; Filename: "{app}\run-wizard.bat"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\run-wizard.bat"; \
-  Description: "Executar Wizard de Pareamento (vincular agente ao cliente — recomendado)"; \
+; === SOLUCAO MAGICA PARA JANELA PRETA NAO FECHAR SOZINHA: CHAMAR VIA cmd.exe /K ===
+; (/K = "Keep console open": Mantem a janela cmd EXPLICITAMENTE aberta ATE O CLIENTE FECHAR MANUALMENTE!
+;  Nao importa se run-wizard.bat der erro, ou PrintCollectAgent.exe crashear, a JANELA SEMPRE FICA ABERTA!
+;  Sem flag unchecked = vem MARCADO POR PADRAO na ultima tela do setup! Todo mundo clica Finish e abre! )
+Filename: "{cmd}"; \
+  Parameters: "/K """"{app}\run-wizard.bat"""""; \
+  WorkingDir: "{app}"; \
+  Description: "Executar Wizard de Pareamento (vincular agente ao cliente — RECOMENDADO)"; \
   Flags: nowait postinstall skipifsilent
 Filename: "{app}\list-printers.bat"; \
   Description: "Procurar impressoras na rede do cliente (primeira busca)"; \
