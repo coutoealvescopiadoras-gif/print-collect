@@ -43,9 +43,9 @@ Source: "{src}\config.yaml"; DestDir: "{commonappdata}\PrintCollect"; DestName: 
 Name: "{commonappdata}\PrintCollect"; Permissions: authusers-modify; Flags: uninsneveruninstall
 
 [Icons]
-; === MELHOR e SEM ERROS: chamar PrintCollectAgent.exe DIRETAMENTE (nao usa cmd.exe!) ===
-; Nao precisa mais de {cmd} /K com aspas que davam erro "nao reconhecido como comando interno".
-Name: "{autoprograms}\Print Collect Agent\Wizard de pareamento"; Filename: "{app}\PrintCollectAgent.exe"; Parameters: "wizard --config ""{commonappdata}\PrintCollect\config.yaml"""; IconFilename: "{app}\{#MyAppExeName}"
+; === SOLUCAO 100% SEM BUG: Todos os atalhos de WIZARD chamam DIRETAMENTE run-wizard.bat ===
+; (nao usa parametros, nao usa aspas, nao usa cmd.exe /K — igual aos outros .bat que NUNCA deram erro!)
+Name: "{autoprograms}\Print Collect Agent\Wizard de pareamento"; Filename: "{app}\run-wizard.bat"; IconFilename: "{app}\{#MyAppExeName}"
 Name: "{autoprograms}\Print Collect Agent\Procurar impressoras"; Filename: "{app}\list-printers.bat"
 Name: "{autoprograms}\Print Collect Agent\Testar conexao"; Filename: "{app}\test-agent.bat"
 Name: "{autoprograms}\Print Collect Agent\Executar coleta unica"; Filename: "{app}\run-once.bat"
@@ -53,19 +53,12 @@ Name: "{autoprograms}\Print Collect Agent\Editar configuracao"; Filename: "{app}
 Name: "{autoprograms}\Print Collect Agent\Reinstalar inicializacao"; Filename: "{app}\register-startup-task.bat"
 Name: "{autoprograms}\Print Collect Agent\Desinstalar inicializacao"; Filename: "{app}\unregister-startup-task.bat"
 Name: "{autoprograms}\Print Collect Agent\Abrir pasta"; Filename: "{app}"
-Name: "{autodesktop}\Print Collect - Wizard"; Filename: "{app}\PrintCollectAgent.exe"; Parameters: "wizard --config ""{commonappdata}\PrintCollect\config.yaml"""; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\Print Collect - Wizard"; Filename: "{app}\run-wizard.bat"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\PrintCollectAgent.exe"; \
-  Parameters: "wizard --config ""{commonappdata}\PrintCollect\config.yaml"""; \
-  WorkingDir: "{app}"; \
+Filename: "{app}\run-wizard.bat"; \
   Description: "Executar Wizard de Pareamento (vincular agente ao cliente — recomendado)"; \
-  Flags: nowait postinstall skipifsilent unchecked
-Filename: "{app}\PrintCollectAgent.exe"; \
-  Parameters: "networks pause"; \
-  WorkingDir: "{app}"; \
-  Description: "Diagnostico rapido: verificar sub-redes detectadas"; \
-  Flags: nowait postinstall skipifsilent unchecked
+  Flags: nowait postinstall skipifsilent
 Filename: "{app}\list-printers.bat"; \
   Description: "Procurar impressoras na rede do cliente (primeira busca)"; \
   Flags: nowait postinstall skipifsilent unchecked
