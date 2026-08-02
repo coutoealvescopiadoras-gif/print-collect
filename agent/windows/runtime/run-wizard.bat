@@ -32,5 +32,16 @@ echo   2) Inserir CODIGO DO CLIENTE ou CODIGO DE PAREAMENTO
 echo   3) Instalar a inicializacao automatica (Tarefa Agendada)
 echo.
 "%EXE%" --config "%CFG%" wizard
+set EXIT_CODE=%ERRORLEVEL%
 echo.
-pause
+if %EXIT_CODE% NEQ 0 (
+    echo.
+    echo [AVISO] Wizard terminou com codigo de erro: %EXIT_CODE%
+)
+echo.
+echo ==============================================================
+echo   FIM DO WIZARD. PRESSIONE QUALQUER TECLA PARA FECHAR.
+echo ==============================================================
+echo.
+pause >nul
+exit /b %EXIT_CODE%

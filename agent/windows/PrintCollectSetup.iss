@@ -58,12 +58,12 @@ Name: "{autoprograms}\Print Collect Agent\Abrir pasta"; Filename: "{app}"
 Name: "{autodesktop}\Print Collect - Wizard"; Filename: "{app}\run-wizard.bat"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-; === SOLUCAO MAGICA PARA JANELA PRETA NAO FECHAR SOZINHA: CHAMAR VIA cmd.exe /K ===
-; (/K = "Keep console open": Mantem a janela cmd EXPLICITAMENTE aberta ATE O CLIENTE FECHAR MANUALMENTE!
-;  Nao importa se run-wizard.bat der erro, ou PrintCollectAgent.exe crashear, a JANELA SEMPRE FICA ABERTA!
-;  Sem flag unchecked = vem MARCADO POR PADRAO na ultima tela do setup! Todo mundo clica Finish e abre! )
+; === SOLUCAO 100%: cmd.exe /C "bat & pause" (FECHA AUTOMATICAMENTE depois do ultimo pause!) ===
+; (/C = "Close after command" — NAO fica mais sobrando cmd.exe aberto (que gerava erro "codigo nao reconhecido como comando" quando cliente colava codigo fora do wizard!)
+; E adicionamos um pause EXTRA no final do cmd (& pause) para garantir que usuario veja TUDO antes de fechar automaticamente.)
+; Sem flag unchecked = vem MARCADO POR PADRAO na ultima tela do setup! Todo mundo clica Finish e abre!
 Filename: "{cmd}"; \
-  Parameters: "/K """"{app}\run-wizard.bat"""""; \
+  Parameters: "/C """"{app}\run-wizard.bat"" & pause"""; \
   WorkingDir: "{app}"; \
   Description: "Executar Wizard de Pareamento (vincular agente ao cliente — RECOMENDADO)"; \
   Flags: nowait postinstall skipifsilent
