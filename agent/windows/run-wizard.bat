@@ -31,6 +31,6 @@ echo   1) Conectar no servidor oficial
 echo   2) Inserir CODIGO DO CLIENTE ou CODIGO DE PAREAMENTO
 echo   3) Instalar a inicializacao automatica (Tarefa Agendada)
 echo.
-"%EXE%" wizard --config "%CFG%"
+"%EXE%" --config "%CFG%" wizard
 echo.
 pause
