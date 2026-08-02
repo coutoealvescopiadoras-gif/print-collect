@@ -124,10 +124,18 @@ $PyInstaller = Join-Path $VenvDir "Scripts\pyinstaller.exe"
 
 # =============================================================================
 # PASSO 2: Instalar dependencias do agente
+# OBS: agent\requirements.txt tem "-e ." na linha 1 = instala projeto local.
+# Portanto o pip install TEM QUE RODAR com CWD = $AgentDir (pasta agent\) para
+# o "." de "-e ." apontar para agent\ (onde tem pyproject.toml).
 # =============================================================================
 Write-Step 2 "Instalando dependencias do agente no .venv-x86"
-& $PipVenv install --disable-pip-version-check -r (Join-Path $AgentDir "requirements.txt")
-if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar requirements.txt (x86)" }
+Push-Location $AgentDir
+try {
+    & $PipVenv install --disable-pip-version-check -r (Join-Path $AgentDir "requirements.txt")
+    if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar requirements.txt (x86)" }
+} finally {
+    Pop-Location
+}
 
 # =============================================================================
 # PASSO 3: Instalar PyInstaller
@@ -135,8 +143,13 @@ if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar requirements.txt (x86)" }
 Write-Step 3 "Verificando PyInstaller no .venv-x86"
 if (-not (Test-Path $PyInstaller)) {
     Write-Host "  Instalando PyInstaller..."
-    & $PipVenv install --disable-pip-version-check "pyinstaller>=6.0"
-    if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar PyInstaller (x86)" }
+    Push-Location $AgentDir
+    try {
+        & $PipVenv install --disable-pip-version-check "pyinstaller>=6.0"
+        if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar PyInstaller (x86)" }
+    } finally {
+        Pop-Location
+    }
 }
 Write-OK "PyInstaller x86 pronto em: $PyInstaller"
 
