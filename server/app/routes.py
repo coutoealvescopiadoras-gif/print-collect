@@ -57,7 +57,7 @@ router = APIRouter(prefix="/api", tags=["api"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/token")
 SECRET_KEY = settings.secret_key
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 43200
 ROLE_SUPERADMIN = "superadmin"
 ROLE_PARTNER_ADMIN = "partner_admin"
 ROLE_CLIENT_MANAGER = "client_manager"
@@ -179,7 +179,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
+        expire = datetime.now(timezone.utc) + timedelta(days=30)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
