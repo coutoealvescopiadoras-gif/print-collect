@@ -569,6 +569,73 @@ def update_user(
     return user
 
 
+@router.delete("/users/{user_id}", status_code=200)
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Exclui um usuário permanentemente. Não é possível excluir seu próprio login.
+    Superadmin exclui qualquer um. Partner exclui só usuários de seu escopo (do seu revendedor).
+    Cliente (manager) exclui só do seu cliente."""
+
+    if not _can_manage_resources(current_user):
+        raise HTTPException(status_code=403, detail="Sem permissão para excluir usuários")
+
+    # ⛔ NUNCA permite excluir você mesmo!
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Você não pode excluir seu próprio usuário. Peça a outro administrador.")
+
+    query = db.query(User).filter(User.id == user_id)
+    if _is_partner_admin(current_user):
+        # Revendedor só exclui usuários DO SEU PROPRIO REVENDEDOR (partner_id igual ao seu)
+        # OU usuarios de clientes do seu revendedor
+        my_partner_id = _required_partner_id(current_user)
+        query = query.filter(
+            (User.partner_id == my_partner_id) |
+            (User.client_id.in_(
+                db.query(Client.id).filter(Client.partner_id == my_partner_id).scalar_subquery()
+            ))
+        )
+        # Revendedor NUNCA exclui superadmin nem outro partner admin (mesmo do mesmo partner)
+        user_check = query.first()
+        if user_check and user_check.role in {ROLE_SUPERADMIN, ROLE_PARTNER_ADMIN}:
+            # Exceto se for superadmin... mas aqui é partner_admin, entao BLOQUEIA!
+            if not _is_superadmin(current_user):
+                raise HTTPException(status_code=403, detail="Revendedor não pode excluir contas de superadmin ou outro revendedor admin.")
+    elif not _is_superadmin(current_user):
+        # Cliente manager: só exclui do SEU cliente (nao pode excluir gestor nem viewer de outros clientes)
+        my_client_id = _required_client_id(current_user)
+        query = query.filter(User.client_id == my_client_id)
+        user_check = query.first()
+        if user_check and user_check.role in {ROLE_SUPERADMIN, ROLE_PARTNER_ADMIN}:
+            raise HTTPException(status_code=403, detail="Cliente não pode excluir contas de superadmin/revendedor.")
+        if user_check and user_check.role == ROLE_CLIENT_MANAGER and user_check.id != current_user.id:
+            # Nao deixa gestor excluir outro gestor (mesmo do mesmo cliente)
+            if not _is_superadmin(current_user):
+                # Permite apenas se superadmin
+                pass
+
+    user_to_delete = query.first()
+    if not user_to_delete:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado (ou não pertence ao seu escopo de permissão)")
+
+    # Ultima protecao: NUNCA exclui superadmin se nao for superadmin
+    if user_to_delete.role == ROLE_SUPERADMIN and not _is_superadmin(current_user):
+        raise HTTPException(status_code=403, detail="Apenas superadmin pode excluir outro superadmin")
+
+    user_email = user_to_delete.email
+    db.delete(user_to_delete)
+    db.commit()
+
+    return {
+        "status": "excluido",
+        "message": f"Usuário {user_email} excluído com sucesso.",
+        "user_id": user_id,
+        "email": user_email,
+    }
+
+
 @router.get("/partners", response_model=list[PartnerOut])
 def list_partners(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     if not _is_superadmin(current_user):

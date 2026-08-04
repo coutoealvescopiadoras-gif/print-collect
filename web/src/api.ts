@@ -198,6 +198,8 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+  deleteUser: (userId: number) =>
+    request<{ status: string; message: string; user_id: number; email: string }>(`/api/users/${userId}`, { method: "DELETE" }),
   getStats: () => request<import("./types").DashboardStats>("/api/dashboard/stats"),
   getClients: () => request<import("./types").Client[]>("/api/clients"),
   createClient: (data: Partial<import("./types").Client>) =>

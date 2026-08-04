@@ -84,6 +84,23 @@ export default function Usuarios() {
     await load();
   };
 
+  const handleDelete = async (item: User) => {
+    const confirm1 = window.confirm(
+      `⚠️ EXCLUIR USUÁRIO PERMANENTEMENTE?\n\nLogin: ${item.email}\nPerfil: ${ROLE_OPTIONS.find((r) => r.value === item.role)?.label || item.role}\n\n📢 ESTA AÇÃO NÃO PODE SER DESFEITA!`
+    );
+    if (!confirm1) return;
+    const confirm2 = window.confirm(
+      `✅ ÚLTIMA CONFIRMAÇÃO:\n\nTem CERTEZA ABSOLUTA que quer apagar "${item.email}"?\n\nTodos os acessos deste login serão removidos IMEDIATAMENTE.`
+    );
+    if (!confirm2) return;
+    try {
+      await api.deleteUser(item.id);
+      await load();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Erro ao excluir usuário. Verifique as permissões.");
+    }
+  };
+
   const openResetModal = (item: User) => {
     setSelectedUser(item);
     setResetPassword("");
@@ -167,6 +184,21 @@ export default function Usuarios() {
                       {item.id !== currentUser?.id && (
                         <button className="btn btn-ghost" onClick={() => toggleActive(item)}>
                           {item.active ? "Desativar" : "Ativar"}
+                        </button>
+                      )}
+                      {item.id !== currentUser?.id && (
+                        <button
+                          className="btn btn-ghost"
+                          style={{
+                            border: "1px solid var(--danger)",
+                            color: "var(--danger)",
+                            background: "rgba(220, 38, 38, 0.06)",
+                            fontWeight: 600,
+                          }}
+                          onClick={() => handleDelete(item)}
+                          title="Excluir usuário permanentemente"
+                        >
+                          🗑️ Excluir
                         </button>
                       )}
                     </div>
