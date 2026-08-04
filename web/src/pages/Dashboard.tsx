@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { DashboardStats, Alert } from "../types";
+import { formatDateTimeBrasil } from "../utils";
 
 export default function Dashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -70,7 +71,7 @@ export default function Dashboard() {
                   <td>
                     <span className={`badge ${a.severity}`}>{a.severity}</span>
                   </td>
-                  <td>{new Date(a.created_at).toLocaleString("pt-BR")}</td>
+                  <td>{formatDateTimeBrasil(a.created_at)}</td>
                 </tr>
               ))}
             </tbody>

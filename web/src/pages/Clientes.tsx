@@ -2,13 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { api, getPublicApiUrl } from "../api";
 import type { AgentPairingCode, Client, Location, Printer } from "../types";
 import { useAuth } from "../context/AuthContext";
-
-function formatDatePtBr(iso: string | null | undefined) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString("pt-BR");
-}
+import { formatDateTimeBrasil, formatNumberBrasil } from "../utils";
 
 function copyText(text: string) {
   if (!text) return;
@@ -364,11 +358,9 @@ export default function Clientes() {
                                     <td>
                                       <span className={`badge ${printer.status}`}>{printer.status}</span>
                                     </td>
-                                    <td>{printer.pages_total.toLocaleString("pt-BR")}</td>
+                                    <td>{formatNumberBrasil(printer.pages_total)}</td>
                                     <td>
-                                      {printer.last_seen
-                                        ? new Date(printer.last_seen).toLocaleString("pt-BR")
-                                        : "—"}
+                                      {formatDateTimeBrasil(printer.last_seen)}
                                     </td>
                                   </tr>
                                 ))}

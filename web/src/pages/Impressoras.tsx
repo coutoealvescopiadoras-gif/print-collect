@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Printer } from "../types";
+import { formatDateTimeBrasil, formatNumberBrasil } from "../utils";
 
 function TonerBar({ level }: { level: number | null }) {
   if (level === null) return <span>—</span>;
@@ -54,13 +55,9 @@ export default function Impressoras() {
                   <td>
                     <span className={`badge ${p.status}`}>{p.status}</span>
                   </td>
-                  <td>{p.pages_total.toLocaleString("pt-BR")}</td>
+                  <td>{formatNumberBrasil(p.pages_total)}</td>
                   <td><TonerBar level={p.toner_black} /></td>
-                  <td>
-                    {p.last_seen
-                      ? new Date(p.last_seen).toLocaleString("pt-BR")
-                      : "—"}
-                  </td>
+                  <td>{formatDateTimeBrasil(p.last_seen)}</td>
                 </tr>
               ))}
             </tbody>

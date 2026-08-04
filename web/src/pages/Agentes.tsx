@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Agent, Client } from "../types";
 import { useAuth } from "../context/AuthContext";
+import { formatDateTimeBrasil } from "../utils";
 
 export default function Agentes() {
   const { user } = useAuth();
@@ -122,7 +123,7 @@ export default function Agentes() {
                   <td>{clients.find((c) => c.id === a.client_id)?.name || `#${a.client_id}`}</td>
                   <td>
                     {a.last_heartbeat
-                      ? new Date(a.last_heartbeat).toLocaleString("pt-BR")
+                      ? formatDateTimeBrasil(a.last_heartbeat)
                       : "Nunca"}
                   </td>
                   <td>{a.version || "—"}</td>

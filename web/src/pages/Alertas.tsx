@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Alert } from "../types";
+import { formatDateTimeBrasil } from "../utils";
 
 export default function Alertas() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -41,7 +42,7 @@ export default function Alertas() {
                   <td>
                     <span className={`badge ${a.severity}`}>{a.severity}</span>
                   </td>
-                  <td>{new Date(a.created_at).toLocaleString("pt-BR")}</td>
+                  <td>{formatDateTimeBrasil(a.created_at)}</td>
                   <td>
                     <button className="btn btn-ghost" onClick={() => handleResolve(a.id)}>
                       Resolver
