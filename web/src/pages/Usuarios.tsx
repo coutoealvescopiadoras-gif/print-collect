@@ -11,7 +11,7 @@ const ROLE_OPTIONS = [
 ] as const;
 
 export default function Usuarios() {
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, loading: authLoading } = useAuth();
   const effectiveRole = currentUser?.role || "superadmin";
   const isSuperadmin = effectiveRole === "superadmin";
   const isPartnerAdmin = effectiveRole === "partner_admin";
@@ -47,9 +47,9 @@ export default function Usuarios() {
   };
 
   useEffect(() => {
-    if (!canManageUsers) return;
+    if (authLoading || !currentUser || !canManageUsers) return;
     load();
-  }, [canManageUsers]);
+  }, [authLoading, currentUser, canManageUsers]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();

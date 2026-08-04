@@ -34,8 +34,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+    let retryTimer: number | undefined;
 
-    async function bootstrap() {
+    async function bootstrap(retryCount = 0) {
       if (!INITIAL_TOKEN) {
         if (!cancelled) setLoading(false);
         return;
@@ -46,14 +47,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const userData = await api.getMe();
         if (cancelled) return;
         setUser(normalizeUser(userData));
+        if (!cancelled) setLoading(false);
       } catch (err) {
         if (cancelled) return;
-        console.error("❌ AuthContext: token invalido/expirado. Limpando.", err);
-        setToken(null);
+
+        // 🔴 RETRY AUTOMÁTICO: até 3 tentativas com intervalo de 600ms
+        // para casos de rede instável, timeout, ou erro transitório.
+        // Só desiste DEPOIS de 3 tentativas falhadas!
+        if (retryCount < 3) {
+          console.warn(
+            `⚠️ AuthContext: getMe falhou (tentativa ${retryCount + 1}/3). Retentando em 600ms...`,
+            err
+          );
+          retryTimer = window.setTimeout(() => {
+            if (!cancelled) bootstrap(retryCount + 1);
+          }, 600);
+          return;
+        }
+
+        // 🔴 FIX NUCLEAR: NUNCA MAIS APAGAR O TOKEN DO localStorage NO catch()!
+        // Motivo: Qualquer erro TRANSITÓRIO apagava um token VÁLIDO e causava deslogue no F5!
+        // Token SÓ é apagado quando usuário clica EXPLICITAMENTE em "Sair" (função logout).
+        console.error(
+          "❌ AuthContext: getMe falhou em todas as 3 tentativas. Mantendo token salvo para retry manual (F5)...",
+          err
+        );
+        // SÓ apaga o `user` do state (UI vai redirecionar pro login via ProtectedRoutes),
+        // mas MANTÉM token em localStorage e no módulo api!
+        setToken(INITIAL_TOKEN);
         setUser(null);
-        window.localStorage.removeItem("token");
-        setAuthToken(null);
-      } finally {
         if (!cancelled) setLoading(false);
       }
     }
@@ -62,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, []);
 

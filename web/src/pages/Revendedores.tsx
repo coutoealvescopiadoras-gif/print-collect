@@ -4,7 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import type { Partner, PartnerBillingStats } from "../types";
 
 export default function Revendedores() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const isSuperadmin = (user?.role || "superadmin") === "superadmin";
   const [partners, setPartners] = useState<Partner[]>([]);
   const [partnerStats, setPartnerStats] = useState<PartnerBillingStats[]>([]);
@@ -27,9 +27,9 @@ export default function Revendedores() {
   };
 
   useEffect(() => {
-    if (!isSuperadmin) return;
+    if (authLoading || !user || !isSuperadmin) return;
     load();
-  }, [isSuperadmin]);
+  }, [authLoading, user, isSuperadmin]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
