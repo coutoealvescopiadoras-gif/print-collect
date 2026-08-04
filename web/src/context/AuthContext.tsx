@@ -57,10 +57,52 @@ if (INITIAL_TOKEN) {
   setAuthToken(INITIAL_TOKEN);
 }
 
+const BRANDING_CACHE_KEY = "pc_branding_cache_v1";
+
+function loadInitialBrandingFromCache(): Branding {
+  if (typeof window === "undefined") return DEFAULT_BRANDING;
+  try {
+    const raw = window.localStorage.getItem(BRANDING_CACHE_KEY);
+    if (!raw) return DEFAULT_BRANDING;
+    const parsed = JSON.parse(raw) as Branding;
+    if (!parsed || typeof parsed !== "object") return DEFAULT_BRANDING;
+    return {
+      display_name: parsed.display_name || DEFAULT_BRANDING.display_name,
+      logo_src: parsed.logo_src || DEFAULT_BRANDING.logo_src,
+      tagline: parsed.tagline || DEFAULT_BRANDING.tagline,
+      partner_id: parsed.partner_id ?? null,
+      partner_name: parsed.partner_name ?? null,
+      client_id: parsed.client_id ?? null,
+      client_name: parsed.client_name ?? null,
+      role_label: parsed.role_label || DEFAULT_BRANDING.role_label,
+    };
+  } catch {
+    return DEFAULT_BRANDING;
+  }
+}
+
+function saveBrandingCache(b: Branding) {
+  try {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(BRANDING_CACHE_KEY, JSON.stringify(b));
+  } catch {
+    /* noop */
+  }
+}
+
+function clearBrandingCache() {
+  try {
+    if (typeof window === "undefined") return;
+    window.localStorage.removeItem(BRANDING_CACHE_KEY);
+  } catch {
+    /* noop */
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(INITIAL_TOKEN);
-  const [branding, setBranding] = useState<Branding>(DEFAULT_BRANDING);
+  const [branding, setBranding] = useState<Branding>(() => loadInitialBrandingFromCache());
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -81,9 +123,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         role_label: b.role_label || DEFAULT_BRANDING.role_label,
       };
       setBranding(merged);
+      saveBrandingCache(merged);
       safeDocumentTitle(merged.display_name, merged.tagline);
     } catch (e) {
       setBranding(DEFAULT_BRANDING);
+      saveBrandingCache(DEFAULT_BRANDING);
       safeDocumentTitle(DEFAULT_BRANDING.display_name, DEFAULT_BRANDING.tagline);
     }
   }
@@ -126,6 +170,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setToken(INITIAL_TOKEN);
         setUser(null);
         setBranding(DEFAULT_BRANDING);
+        clearBrandingCache();
+        safeDocumentTitle(DEFAULT_BRANDING.display_name, DEFAULT_BRANDING.tagline);
         if (!cancelled) setLoading(false);
       }
     }
@@ -155,6 +201,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.localStorage.removeItem("token");
     setAuthToken(null);
     setBranding(DEFAULT_BRANDING);
+    clearBrandingCache();
     safeDocumentTitle(DEFAULT_BRANDING.display_name, DEFAULT_BRANDING.tagline);
   };
 

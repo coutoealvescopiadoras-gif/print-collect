@@ -4,7 +4,7 @@ import { useAuth } from "./context/AuthContext";
 import { api } from "./api";
 
 export default function Layout() {
-  const { user, branding, logout } = useAuth();
+  const { user, branding, logout, loading } = useAuth();
   const navigate = useNavigate();
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordForm, setPasswordForm] = useState({
@@ -14,6 +14,47 @@ export default function Layout() {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  // ⛔ GUARD INQUEBRÁVEL: NÃO RENDERIZA SIDEBAR (NENHUMA LOGO!) ATÉ CARREGAR 100%
+  // Isso ELIMINA 100% o "pisca" da logo C&A antes da logo do revendedor.
+  if (loading || !user) {
+    return (
+      <>
+        <style>{`
+          @keyframes pc-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        `}</style>
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            width: "100vw",
+            height: "100vh",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
+            background: "var(--bg, #0f172a)",
+            zIndex: 99999,
+            gap: "1rem",
+          }}
+        >
+          <div
+            style={{
+              width: 64,
+              height: 64,
+              border: "6px solid #1e293b",
+              borderTopColor: "#2563eb",
+              borderRadius: "50%",
+              animation: "pc-spin 900ms linear infinite",
+            }}
+          />
+          <div style={{ color: "var(--text-muted, #94a3b8)", fontSize: 14, fontWeight: 500 }}>
+            Carregando dados do painel...
+          </div>
+        </div>
+      </>
+    );
+  }
 
   const effectiveRole = user ? (user.role || "superadmin") : null;
   const isSuperadmin = effectiveRole === "superadmin";
