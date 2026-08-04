@@ -1302,20 +1302,26 @@ async def agent_report(
 
         db.flush()
 
-        db.add(
-            Reading(
-                printer_id=printer.id,
-                pages_total=reading.pages_total,
-                pages_bw=reading.pages_bw,
-                pages_color=reading.pages_color,
-                toner_black=reading.toner_black,
-                toner_cyan=reading.toner_cyan,
-                toner_magenta=reading.toner_magenta,
-                toner_yellow=reading.toner_yellow,
-                status=reading.status,
-                collected_at=now,
-            )
-        )
+        # ---------------------------------------------------------------------
+        # JULIO PEDIU: NÃO SALVAR HISTÓRICO!
+        # (Sempre sobrescreve apenas o ÚLTIMO contador na tabela `printers`.
+        # Linhas comentadas = antigamente gravava Reading (tabela readings).
+        # ---------------------------------------------------------------------
+        # db.add(
+        #     Reading(
+        #         printer_id=printer.id,
+        #         pages_total=reading.pages_total,
+        #         pages_bw=reading.pages_bw,
+        #         pages_color=reading.pages_color,
+        #         toner_black=reading.toner_black,
+        #         toner_cyan=reading.toner_cyan,
+        #         toner_magenta=reading.toner_magenta,
+        #         toner_yellow=reading.toner_yellow,
+        #         status=reading.status,
+        #         collected_at=now,
+        #     )
+        # )
+        # ---------------------------------------------------------------------
 
         _sync_alerts(db, printer, reading.alerts)
 

@@ -113,7 +113,7 @@ def _pair_and_save(server_url: str, code: str, config_path: Path,
         server_url=returned_url,
         agent_token=agent_token,
         agent_version=version,
-        interval_minutes=15,
+        interval_minutes=720,
         snmp=SnmpConfig(
             community=community or "public",
             timeout=2,
@@ -272,14 +272,62 @@ def cmd_install(args: argparse.Namespace) -> int:
     task_name = "Print Collect Agent"
 
     if system == "windows":
-        schtasks = ["schtasks", "/Create", "/F", "/TN", task_name, "/SC", "ONLOGON", "/TR", " ".join(f'"{x}"' for x in base_cmd)]
-        if args.system:
-            schtasks.extend(["/RU", "SYSTEM", "/RL", "HIGHEST", "/SC", "ONSTART"])
-        rc = _exe_cmd(schtasks)
-        if rc == 0:
-            print("\n[OK] Tarefa agendada criada. Iniciando agora...")
-            _exe_cmd(["schtasks", "/Run", "/TN", task_name])
-        return rc
+        # =====================================================================
+        # ESTRATEGIA NOVA (INFALIVEL!): 3 tarefas agendadas RODANDO 'once'
+        # (nao usamos DAEMON de jeito nenhum! Processo fecha apos cada coleta)
+        # =====================================================================
+        #   1) DAILY as 08:00 (manha) -> once
+        #   2) DAILY as 18:00 (tarde) -> once  (=> 2x por dia, 12/12h como Julio pediu!)
+        #   3) ONLOGON              -> once (se usuario ligar o PC fora de horario,
+        #                                 garante que ja coleta no login!)
+        # =====================================================================
+
+        # Comando BASE para 'once' (coleta 1 vez, envia e fecha!)
+        # Obs: base_cmd ja tem [exe, --config, cfg_path] — adicionamos 'once' no final
+        base_cmd_once = base_cmd + ["once"]
+        tr_once = " ".join(f'"{x}"' for x in base_cmd_once)
+
+        tarefas = [
+            # (Nome da Tarefa, /SC ..., extras [/ST, /RU etc])
+            ("Print Collect Agent - Manha (08h)", ["ONLOGON"]),      # placeholder temporario
+            ("Print Collect Agent - Tarde (18h)", ["ONLOGON"]),      # substituidos abaixo
+            ("Print Collect Agent - Ao Logar",     ["ONLOGON"]),
+        ]
+        # Tarefas fixas de hora (usam /SC DAILY com horario):
+        tarefas_hora = [
+            ("Print Collect Agent - Manha (08h)", "DAILY", "08:00"),
+            ("Print Collect Agent - Tarde (18h)", "DAILY", "18:00"),
+            ("Print Collect Agent - Ao Logar",     None,    None),
+        ]
+
+        tarefa_ok = 0
+        tarefa_total = 0
+        for nome_tarefa, sc, st in tarefas_hora:
+            tarefa_total += 1
+            cmd_sch = ["schtasks", "/Create", "/F", "/TN", nome_tarefa, "/TR", tr_once]
+            if sc and st:
+                # Tarefa DAILY com hora fixa
+                cmd_sch.extend(["/SC", sc, "/ST", st])
+            else:
+                # Tarefa ONLOGON (ao iniciar sessao)
+                cmd_sch.extend(["/SC", "ONLOGON"])
+            # Se usuario pediu --system, roda como SYSTEM
+            if args.system:
+                cmd_sch.extend(["/RU", "SYSTEM", "/RL", "HIGHEST"])
+            print(f"\nCriando tarefa [{nome_tarefa}] ...")
+            rc = _exe_cmd(cmd_sch)
+            if rc == 0:
+                tarefa_ok += 1
+
+        print(f"\nTarefas criadas com sucesso: {tarefa_ok}/{tarefa_total}")
+        if tarefa_ok > 0:
+            print("\n[OK] Agendamento configurado! Rodando uma coleta AGORA para testar...")
+            # Roda 'once' uma vez agora para confirmar que funciona e atualizar contadores
+            _exe_cmd(base_cmd_once)
+            print("\n[DICA] Para ver as tarefas no Windows:")
+            print("       Painel de Controle > Ferramentas Administrativas > Agendador de Tarefas")
+            print("       OU: execute: schtasks /Query | findstr 'Print Collect'")
+        return 0 if tarefa_ok == tarefa_total else 1
 
     # Linux/systemd
     service_name = "print-collect.service"
@@ -310,10 +358,22 @@ def cmd_install(args: argparse.Namespace) -> int:
 
 
 def cmd_uninstall(args: argparse.Namespace) -> int:
-    task_name = "Print Collect Agent"
     system = platform.system().lower()
     if system == "windows":
-        return _exe_cmd(["schtasks", "/Delete", "/F", "/TN", task_name])
+        # NOVA estrategia: 3 tarefas agendadas (em vez de 1)
+        tarefas = [
+            "Print Collect Agent",                    # nome antigo (ainda pode existir!)
+            "Print Collect Agent - Manha (08h)",
+            "Print Collect Agent - Tarde (18h)",
+            "Print Collect Agent - Ao Logar",
+        ]
+        total_ok = 0
+        for tn in tarefas:
+            rc = _exe_cmd(["schtasks", "/Delete", "/F", "/TN", tn])
+            if rc == 0:
+                total_ok += 1
+        print(f"\nForam removidas {total_ok} tarefa(s) do Agendador.")
+        return 0 if total_ok > 0 else 1
     # Linux
     _exe_cmd(["systemctl", "disable", "--now", "print-collect.service"], check=False)
     import os
