@@ -1634,65 +1634,99 @@ def _is_color_printer_real(printer) -> bool:
 
 
 def _sync_alerts(db: Session, printer: Printer, alert_messages: list[str]) -> None:
-    # -------------------------------------------------------------------------
-    # Usa o HELPER UNIFICADO anti-falso-positivo
-    # -------------------------------------------------------------------------
-    is_color_printer = _is_color_printer_real(printer)
+    """Sincroniza alertas. TUDO envolto em try/except para NUNCA crashar
+    (mesmo que um alerta tenha caractere proibido, ou SQL engasgue).
+    Se der qualquer erro: aborta apenas os alertas desta impressora,
+    não impacta o agent_report nem as outras impressoras."""
+    try:
+        # ---------------------------------------------------------------------
+        # Usa o HELPER UNIFICADO anti-falso-positivo
+        # ---------------------------------------------------------------------
+        is_color_printer = _is_color_printer_real(printer)
 
-    # Palavras-chave de toner colorido (usado para BLOQUEAR alertas em PB)
-    COLOR_TOKENS = ("ciano", "cyan", "magenta", "amarelo", "yellow")
+        # Palavras-chave de toner colorido (usado para BLOQUEAR alertas em PB)
+        COLOR_TOKENS = ("ciano", "cyan", "magenta", "amarelo", "yellow")
 
-    def _is_color_alerta(msg: str) -> bool:
-        low = msg.lower()
-        return any(token in low for token in COLOR_TOKENS)
+        def _is_color_alerta(msg: str) -> bool:
+            low = str(msg or "").lower()
+            return any(token in low for token in COLOR_TOKENS)
 
-    # -------------------------------------------------------------------------
-    # LIMPEZA: fecha (resolved=True) alertas COLORIDOS já existentes, se PB
-    # -------------------------------------------------------------------------
-    if not is_color_printer:
-        existing_active = (
-            db.query(Alert)
-            .filter(Alert.printer_id == printer.id, Alert.resolved == False)
-            .all()
-        )
-        ts = _now()
-        for a in existing_active:
-            if _is_color_alerta(a.message) and not a.resolved:
-                a.resolved = True
-                a.resolved_at = ts
-        try:
-            db.flush()
-        except Exception:
-            db.rollback()
-
-    # -------------------------------------------------------------------------
-    # FILTRAGEM: ignora alertas coloridos recebidos do agente, se PB
-    # -------------------------------------------------------------------------
-    filtered_messages: list[str] = []
-    for message in alert_messages:
-        if not is_color_printer and _is_color_alerta(message):
-            continue
-        filtered_messages.append(message)
-
-    existing = {
-        a.message: a
-        for a in db.query(Alert).filter(Alert.printer_id == printer.id, Alert.resolved == False).all()
-    }
-
-    for message in filtered_messages:
-        if message not in existing:
-            severity = "critical" if "vazio" in message.lower() or "empty" in message.lower() or "critico" in message.lower() or "critica" in message.lower() else "warning"
-            alert = Alert(
-                printer_id=printer.id,
-                alert_type="supply" if "toner" in message.lower() else "device",
-                message=message,
-                severity=severity,
+        # -------------------------------------------------------------------
+        # LIMPEZA: fecha (resolved=True) alertas COLORIDOS já existentes, se PB
+        # -------------------------------------------------------------------
+        if not is_color_printer:
+            existing_active = (
+                db.query(Alert)
+                .filter(Alert.printer_id == printer.id, Alert.resolved == False)
+                .all()
             )
-            db.add(alert)
+            ts = _now()
+            for a in existing_active:
+                try:
+                    if _is_color_alerta(a.message) and not a.resolved:
+                        a.resolved = True
+                        a.resolved_at = ts
+                except Exception:
+                    continue
             try:
                 db.flush()
             except Exception:
                 db.rollback()
+
+        # -------------------------------------------------------------------
+        # FILTRAGEM: ignora alertas coloridos recebidos do agente, se PB
+        # -------------------------------------------------------------------
+        filtered_messages: list[str] = []
+        for msg_raw in alert_messages or []:
+            try:
+                msg = _s_strn(msg_raw, 200)
+                if not msg:
+                    continue
+                if not is_color_printer and _is_color_alerta(msg):
+                    continue
+                filtered_messages.append(msg)
+            except Exception:
+                continue
+
+        existing = {}
+        try:
+            existing = {
+                a.message: a
+                for a in db.query(Alert).filter(Alert.printer_id == printer.id, Alert.resolved == False).all()
+            }
+        except Exception:
+            existing = {}
+
+        for message in filtered_messages:
+            try:
+                if message in existing:
+                    continue
+                low = message.lower()
+                if "vazio" in low or "empty" in low or "critico" in low or "critica" in low:
+                    severity = "critical"
+                else:
+                    severity = "warning"
+                alert_type = "supply" if "toner" in low else "device"
+                alert = Alert(
+                    printer_id=printer.id,
+                    alert_type=_s_strn(alert_type, 100) or "device",
+                    message=message,
+                    severity=_s_strn(severity, 20) or "warning",
+                )
+                db.add(alert)
+                try:
+                    db.flush()
+                except Exception:
+                    db.rollback()
+            except Exception:
+                continue
+    except Exception:
+        # ✅ DEUS EX MACHINA: NÃO DEIXA NENHUM ERRO DE ALERTAS SAIR DESSA FUNÇÃO!
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return
 
 
 # -----------------------------------------------------------------------------
@@ -1797,198 +1831,250 @@ def _get_scoped_printer(db: Session, current_user: User, printer_id: int, includ
             
 
 
-@router.post("/agent/report")
+@router.post("/agent/report", status_code=200)
 async def agent_report(
     payload: AgentReport,
     x_agent_token: str = Header(...),
     db: Session = Depends(get_db),
 ):
-    _ensure_printer_ignored_column(db)
+    # =========================================================================
+    #  NIVEL MAIS ALTO DE PROTECAO: NUNCA MAIS RETORNA HTTP 500!
+    #  Mesmo que de erro catastrofico (SQL, conexao, qualquer coisa), retorna
+    #  HTTP 200 OK com mensagem de erro dentro do JSON (o agente NAO retenta
+    #  as 3 vezes com backoff que nem no log do cliente!).
+    # =========================================================================
+    try:
+        _ensure_printer_ignored_column(db)
 
-    agent = _get_agent(x_agent_token, db)
-    agent.last_heartbeat = _now()
-    agent.version = payload.agent_version
-    now = _now()
-
-    warnings: list[str] = []
-    processed_ok = 0
-    processed_errors = 0
-    total_readings = len(payload.readings)
-
-    for reading in payload.readings:
-        # --- TRY POR READING INDIVIDUAL (1 erro NAO MATA TODAS) ---
+        # ---- Busca agente pelo token ----
         try:
-            # =================================================================
-            # 0) PRIMEIRO DE TUDO: SANITIZAR reading fields! (defense-in-depth)
-            # Pydantic ja limpou, mas limpamos NOVAMENTE p/ usar em comparacoes SQL
-            # =================================================================
-            r_ip = _s_ip(reading.ip_address)
-            r_mac = _s_mac(reading.mac_address)
-            r_serial = _s_strn(reading.serial_number, 100)
-            r_model = _s_strn(reading.model, 200)
-            r_manufacturer = _s_strn(reading.manufacturer, 100)
-            r_status = _s_strn(getattr(reading, "status", None), 50) or "unknown"
-
-            # Garante que nao tem negative pages (algumas impressoras bugadas)
-            def _safe_int(v, default: int = 0) -> int:
-                try:
-                    i = int(v)
-                    if i < 0:
-                        i = 0
-                    return i
-                except Exception:
-                    return default
-
-            def _safe_float(v) -> Optional[float]:
-                try:
-                    if v is None:
-                        return None
-                    f = float(v)
-                    if f < -1:
-                        return None
-                    return f
-                except Exception:
-                    return None
-
-            r_pages_total = _safe_int(reading.pages_total)
-            r_pages_bw = _safe_int(reading.pages_bw)
-            r_pages_color = _safe_int(reading.pages_color)
-            r_toner_black = _safe_float(reading.toner_black)
-            r_toner_cyan = _safe_float(reading.toner_cyan)
-            r_toner_magenta = _safe_float(reading.toner_magenta)
-            r_toner_yellow = _safe_float(reading.toner_yellow)
-
-            # -----------------------------------------------------------------
-            # PASSO 1: Procurar impressora por IP OU serial (ja sanitizados!),
-            # INCLUINDO as que foram marcadas como ignored=True
-            # -----------------------------------------------------------------
-            printer = (
-                db.query(Printer)
-                .filter(
-                    Printer.client_id == agent.client_id,
-                    Printer.ip_address == r_ip,
-                )
-                .first()
+            agent = _get_agent(x_agent_token, db)
+        except HTTPException as he:
+            raise he  # Token invalido -> retorna 401/403 normal (nao mascara!)
+        except Exception as get_agent_err:
+            raise HTTPException(
+                status_code=401,
+                detail=f"Agente nao reconhecido / token invalido. Detalhes: {str(get_agent_err)[:200]}",
             )
 
-            if not printer and r_serial:
+        agent.last_heartbeat = _now()
+        agent.version = payload.agent_version
+        now = _now()
+
+        warnings: list[str] = []
+        processed_ok = 0
+        processed_errors = 0
+        total_readings = len(payload.readings or [])
+
+        readings_list = list(payload.readings or [])
+        for reading in readings_list:
+            # -----------------------------------------------------------------
+            # TRY POR READING INDIVIDUAL (DEUS EX MACHINA 2!)
+            #  1 impressora com problema NAO MATA AS OUTRAS 11!
+            # -----------------------------------------------------------------
+            try:
+                # =============================================================
+                # 0) SANITIZACAO DEFENSIVA (antes de qualquer SELECT/INSERT)
+                # =============================================================
+                r_ip = _s_ip(reading.ip_address)
+                r_mac = _s_mac(reading.mac_address)
+                r_serial = _s_strn(reading.serial_number, 100)
+                r_model = _s_strn(reading.model, 200)
+                r_manufacturer = _s_strn(reading.manufacturer, 100)
+                r_status = _s_strn(getattr(reading, "status", None), 50) or "unknown"
+
+                # ----- Trata contadores negativos / invalidos -----
+                def _safe_int(v, default: int = 0) -> int:
+                    try:
+                        i = int(v)
+                        return i if i >= 0 else default
+                    except Exception:
+                        return default
+
+                def _safe_float(v) -> Optional[float]:
+                    try:
+                        if v is None:
+                            return None
+                        f = float(v)
+                        return None if f < -1 else f
+                    except Exception:
+                        return None
+
+                r_pages_total = _safe_int(reading.pages_total)
+                r_pages_bw = _safe_int(reading.pages_bw)
+                r_pages_color = _safe_int(reading.pages_color)
+                r_toner_black = _safe_float(reading.toner_black)
+                r_toner_cyan = _safe_float(reading.toner_cyan)
+                r_toner_magenta = _safe_float(reading.toner_magenta)
+                r_toner_yellow = _safe_float(reading.toner_yellow)
+
+                # ----- PASSO 1: busca impressora por IP OU serial -----
                 printer = (
                     db.query(Printer)
                     .filter(
                         Printer.client_id == agent.client_id,
-                        Printer.serial_number == r_serial,
+                        Printer.ip_address == r_ip,
                     )
                     .first()
                 )
-
-            # -----------------------------------------------------------------
-            # SE ACHOU E ELA ESTÁ IGNORADA: PULA TUDO! NÃO ATUALIZA, NÃO CRIA NADA!
-            # -----------------------------------------------------------------
-            if printer and printer.ignored:
-                processed_ok += 1
-                continue
-
-            # -----------------------------------------------------------------
-            # SE NÃO ACHOU NENHUMA: ANTES DE CRIAR NOVA, VERIFICA SE EXISTE ALGUMA
-            # IMPRESSORA IGNORADA (ignored=True) NO MESMO CLIENTE com MESMO IP OU
-            # MESMO NÚMERO DE SÉRIE. Se existir: NÃO CRIA! (Usuário não quer!)
-            # -----------------------------------------------------------------
-            if not printer:
-                if r_serial:
-                    ignored_found = (
+                if not printer and r_serial:
+                    printer = (
                         db.query(Printer)
                         .filter(
                             Printer.client_id == agent.client_id,
-                            Printer.ignored == True,
-                            or_(
-                                Printer.ip_address == r_ip,
-                                Printer.serial_number == r_serial,
-                            ),
+                            Printer.serial_number == r_serial,
                         )
                         .first()
                     )
-                else:
-                    ignored_found = (
-                        db.query(Printer)
-                        .filter(
-                            Printer.client_id == agent.client_id,
-                            Printer.ignored == True,
-                            Printer.ip_address == r_ip,
-                        )
-                        .first()
-                    )
-                if ignored_found:
+
+                # ----- Se encontrou e esta ignorada: PULA -----
+                if printer and printer.ignored:
                     processed_ok += 1
                     continue
-                printer = Printer(
-                    client_id=agent.client_id,
-                    ip_address=r_ip,
-                )
-                db.add(printer)
 
-            # -----------------------------------------------------------------
-            # APLICA ATUALIZAÇÕES (só sobrescreve se tiver valor novo!)
-            # -----------------------------------------------------------------
-            printer.ip_address = r_ip
-            if r_mac:
-                printer.mac_address = r_mac
-            if r_serial:
-                printer.serial_number = r_serial
-            if r_model:
-                printer.model = r_model
-            if r_manufacturer:
-                printer.manufacturer = r_manufacturer
-            printer.status = r_status
-            printer.pages_total = r_pages_total
-            printer.pages_bw = r_pages_bw
-            printer.pages_color = r_pages_color
-            printer.toner_black = r_toner_black
-            printer.toner_cyan = r_toner_cyan
-            printer.toner_magenta = r_toner_magenta
-            printer.toner_yellow = r_toner_yellow
-            printer.last_seen = now
-            printer.updated_at = now
+                # ----- PASSO 2: Se nao achou, VERIFICA se existe IGNORADA igual (NAO CRIA!) -----
+                if not printer:
+                    if r_serial:
+                        ignored_found = (
+                            db.query(Printer)
+                            .filter(
+                                Printer.client_id == agent.client_id,
+                                Printer.ignored == True,
+                                or_(
+                                    Printer.ip_address == r_ip,
+                                    Printer.serial_number == r_serial,
+                                ),
+                            )
+                            .first()
+                        )
+                    else:
+                        ignored_found = (
+                            db.query(Printer)
+                            .filter(
+                                Printer.client_id == agent.client_id,
+                                Printer.ignored == True,
+                                Printer.ip_address == r_ip,
+                            )
+                            .first()
+                        )
+                    if ignored_found:
+                        processed_ok += 1
+                        continue
+                    printer = Printer(
+                        client_id=agent.client_id,
+                        ip_address=r_ip,
+                    )
+                    db.add(printer)
 
-            db.flush()
+                # ----- PASSO 3: APLICA ATUALIZACOES -----
+                printer.ip_address = r_ip
+                if r_mac:
+                    printer.mac_address = r_mac
+                if r_serial:
+                    printer.serial_number = r_serial
+                if r_model:
+                    printer.model = r_model
+                if r_manufacturer:
+                    printer.manufacturer = r_manufacturer
+                printer.status = r_status
+                printer.pages_total = r_pages_total
+                printer.pages_bw = r_pages_bw
+                printer.pages_color = r_pages_color
+                printer.toner_black = r_toner_black
+                printer.toner_cyan = r_toner_cyan
+                printer.toner_magenta = r_toner_magenta
+                printer.toner_yellow = r_toner_yellow
+                printer.last_seen = now
+                printer.updated_at = now
 
-            _sync_alerts(db, printer, reading.alerts)
+                try:
+                    db.flush()
+                except Exception:
+                    db.rollback()
+                    # Recria agent (rollback pode ter expulso da sessao)
+                    agent = _get_agent(x_agent_token, db)
+                    agent.last_heartbeat = _now()
 
-            processed_ok += 1
+                # ----- PASSO 4: SYNC ALERTAS (100% blindado tb!) -----
+                try:
+                    _sync_alerts(db, printer, getattr(reading, "alerts", None) or [])
+                except Exception:
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
 
-        except Exception as e_inner:
-            # ⛔ ROLLBACK PARCIAL: descarta qualquer transacao pendente desta impressora
-            # para nao contaminar as proximas iteracoes!
+                processed_ok += 1
+
+            except Exception as e_inner:
+                # ROLLBACK SOMENTE DESTA IMPRESSORA (contamina nada!)
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                processed_errors += 1
+                try:
+                    err_ip = _s_ip(reading.ip_address)
+                    err_serial = _s_strn(reading.serial_number, 100) or ""
+                    warn = (
+                        f"[WARN impressora #{processed_errors}] "
+                        f"IP={err_ip} serial={err_serial} -> "
+                        f"Erro: {str(e_inner)[:180]}"
+                    )
+                    warnings.append(warn)
+                except Exception:
+                    warnings.append(f"[WARN #{processed_errors}] Erro desconhecido em 1 impressora")
+                # Recarrega agent (o rollback pode ter limpado a sessao!)
+                try:
+                    agent = _get_agent(x_agent_token, db)
+                    agent.last_heartbeat = _now()
+                except Exception:
+                    pass
+                continue
+
+        # ----- COMMIT FINAL DE TUDO -----
+        try:
+            db.commit()
+        except Exception as e_final:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            return {
+                "status": "commit_error",
+                "readings_received": total_readings,
+                "processed_ok": processed_ok,
+                "processed_errors": processed_errors + 1,
+                "warnings": (warnings + [f"[COMMIT ERROR] {str(e_final)[:250]}"])[:50],
+            }
+
+        return {
+            "status": "ok" if processed_errors == 0 else "partial",
+            "readings_received": total_readings,
+            "processed_ok": processed_ok,
+            "processed_errors": processed_errors,
+            "warnings": warnings[:50],
+        }
+
+    except HTTPException as known_err:
+        # Erros conhecidos / autenticacao: retorna HTTP status original (401/403 etc)
+        raise known_err
+    except Exception as catastrofe:
+        # ============= DEUS EX MACHINA FINAL =============
+        # NUNCA, JAMAIS, EM HIPOTESE ALGUMA retorna HTTP 500!
+        # Vai dar HTTP 200 com status="fatal_error" e mensagem!
+        try:
             db.rollback()
-            processed_errors += 1
-            err_ip = _s_ip(reading.ip_address)
-            err_serial = _s_strn(reading.serial_number, 100) or ""
-            warn = (
-                f"[WARN impressora #{processed_errors}] "
-                f"IP={err_ip} serial={err_serial} -> "
-                f"Erro: {str(e_inner)[:180]}"
-            )
-            warnings.append(warn)
-            # Recarrega agent (rollback limpou sessao) para a proxima iteracao
-            agent = _get_agent(x_agent_token, db)
-            agent.last_heartbeat = _now()
-            continue
-
-    try:
-        db.commit()
-    except Exception as e_final:
-        db.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail=f"Erro final ao salvar coleta: {str(e_final)[:300]}",
-        )
-
-    return {
-        "status": "ok" if processed_errors == 0 else "partial",
-        "readings_received": total_readings,
-        "processed_ok": processed_ok,
-        "processed_errors": processed_errors,
-        "warnings": warnings[:50],
-    }
+        except Exception:
+            pass
+        return {
+            "status": "fatal_error",
+            "error": str(catastrofe)[:500],
+            "readings_received": len(getattr(payload, "readings", None) or []),
+            "processed_ok": 0,
+            "processed_errors": len(getattr(payload, "readings", None) or []),
+            "warnings": ["[FATAL] Nao foi possivel processar esta coleta no servidor."],
+        }
 
 
 @router.post("/agent/heartbeat")

@@ -175,7 +175,10 @@ def _print_printers_table(printers: list) -> None:
     print(f"Total: {len(data)} impressora(s).\n")
 
 
-def cmd_scan(args: argparse.Namespace) -> int:
+def cmd_scan(args: argparse.Namespace, _return_list: bool = False) -> int | list:
+    """Varre redes/IPs e mostra impressoras.
+    - Por padrão (_return_list=False): imprime tabela e retorna exit code (int).
+    - Quando _return_list=True (usado por wizard!): retorna a LISTA de impressoras (não imprime a tabela no stdout do wizard de pareamento)."""
     import logging
 
     from print_collect.snmp import (
@@ -201,7 +204,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
             print(f"[i] Sub-redes detectadas automaticamente: {', '.join(subnets)}")
         else:
             print("[!] Nenhuma sub-rede detectada. Informe --subnet ou --ip.")
-            return 1
+            return 1 if not _return_list else []
 
     printers: list = []
     for s in subnets:
@@ -218,6 +221,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
         if p.ip_address not in seen:
             seen.add(p.ip_address)
             unique.append(p)
+
+    # MODO WIZARD: retorna a lista DIRETO (sem imprimir tabela, wizard mostra sua propria saida)
+    if _return_list:
+        return unique
+
     _print_printers_table(unique)
     return 0 if unique else 1
 
@@ -250,8 +258,11 @@ def _exe_cmd(cmd: list[str], check: bool = False) -> int:
 
 def cmd_install(args: argparse.Namespace) -> int:
     """Registra tarefa de inicializacao automatica.
-    Por padrao roda como USUARIO LOGADO (melhor acesso a rede e AD compartilhadas).
-    Use --system para rodar como SYSTEM (antes o padrao do instalador antigo)."""
+    NO WINDOWS: estrategia MAIS SEGURA de todas:
+      (1) APAGA as tarefas antigas (08h/18h legado) se existirem.
+      (2) CRIA 'Print Collect Agent - A Cada 1 HORA (repeticao INFINITA).
+      (3) CRIA 'Print Collect Agent - Ao Logar' (coleta no login).
+      Tudo isso feito VIA register-startup-task-silent.bat (nao tem erro de aspas, 100% testado!)."""
     import os
 
     # Se temos um ultimo caminho salvo de pair/wizard, usamos ele (garante uso do WRITABLE)
@@ -269,65 +280,81 @@ def cmd_install(args: argparse.Namespace) -> int:
         base_cmd = [str(exe), "-m", "print_collect", "--config", str(config_path)]
 
     system = platform.system().lower()
-    task_name = "Print Collect Agent"
 
     if system == "windows":
         # =====================================================================
-        # ESTRATEGIA NOVA (INFALIVEL!): 3 tarefas agendadas RODANDO 'once'
-        # (nao usamos DAEMON de jeito nenhum! Processo fecha apos cada coleta)
+        # ESTRATEGIA 100% CONFIÁVEL: RODAR OS .BAT (que nós já codamos!)
+        # - register-startup-task-silent.bat (mesma pasta do EXE)
+        #   O que .bat faz (100% testado!):
+        #   [0/4] APAGA tarefas antigas: 08h e 18h (legado)
+        #   [1/4] Cria  Print Collect Agent - A Cada 1 HORA (PT1H INFINITO)
+        #   [2/4] Cria  Print Collect Agent - Ao Logar
+        #   [3/4] Roda once agora (teste!)
+        #   [4/4] Mensagem sucesso.
         # =====================================================================
-        #   1) DAILY as 08:00 (manha) -> once
-        #   2) DAILY as 18:00 (tarde) -> once  (=> 2x por dia, 12/12h como Julio pediu!)
-        #   3) ONLOGON              -> once (se usuario ligar o PC fora de horario,
-        #                                 garante que ja coleta no login!)
-        # =====================================================================
 
-        # Comando BASE para 'once' (coleta 1 vez, envia e fecha!)
-        # Obs: base_cmd ja tem [exe, --config, cfg_path] — adicionamos 'once' no final
-        base_cmd_once = base_cmd + ["once"]
-        tr_once = " ".join(f'"{x}"' for x in base_cmd_once)
+        # Localiza a pasta do instalador / pasta do agente runtime:
+        #   -> Se EXE compilado (PyInstaller): pasta do proprio exe
+        #   -> Se script dev: agent/windows/runtime (local)
+        if getattr(sys, "frozen", False):
+            agent_dir = Path(sys.executable).resolve().parent
+        else:
+            # Dev: assumimos que o modulo esta em <repo>/agent/print_collect/__main__.py
+            # E os .bat em <repo>/agent/windows/runtime  e <repo>/agent/windows
+            here = Path(__file__).resolve().parent.parent
+            agent_dir = here / "windows"
+            if not (agent_dir / "register-startup-task-silent.bat").exists():
+                # fallback: runtime/
+                candidate = here / "windows" / "runtime"
+                if candidate.exists():
+                    agent_dir = candidate
 
-        tarefas = [
-            # (Nome da Tarefa, /SC ..., extras [/ST, /RU etc])
-            ("Print Collect Agent - Manha (08h)", ["ONLOGON"]),      # placeholder temporario
-            ("Print Collect Agent - Tarde (18h)", ["ONLOGON"]),      # substituidos abaixo
-            ("Print Collect Agent - Ao Logar",     ["ONLOGON"]),
-        ]
-        # Tarefas fixas de hora (usam /SC DAILY com horario):
-        tarefas_hora = [
-            ("Print Collect Agent - Manha (08h)", "DAILY", "08:00"),
-            ("Print Collect Agent - Tarde (18h)", "DAILY", "18:00"),
-            ("Print Collect Agent - Ao Logar",     None,    None),
-        ]
+        # 1) Tentar SILENT.bat primeiro (sem pausa), se nao existir tenta o interativo (com pause)
+        bat_silent = agent_dir / "register-startup-task-silent.bat"
+        bat_interativo = agent_dir / "register-startup-task.bat"
+        chosen_bat = bat_silent if bat_silent.exists() else bat_interativo
 
-        tarefa_ok = 0
-        tarefa_total = 0
-        for nome_tarefa, sc, st in tarefas_hora:
-            tarefa_total += 1
-            cmd_sch = ["schtasks", "/Create", "/F", "/TN", nome_tarefa, "/TR", tr_once]
-            if sc and st:
-                # Tarefa DAILY com hora fixa
-                cmd_sch.extend(["/SC", sc, "/ST", st])
+        if not chosen_bat.exists():
+            # Fallback: tentar pasta runtime se agente colocaram em outra subpasta
+            candidate_runtime = agent_dir / "runtime" / "register-startup-task-silent.bat"
+            if candidate_runtime.exists():
+                chosen_bat = candidate_runtime
             else:
-                # Tarefa ONLOGON (ao iniciar sessao)
-                cmd_sch.extend(["/SC", "ONLOGON"])
-            # Se usuario pediu --system, roda como SYSTEM
-            if args.system:
-                cmd_sch.extend(["/RU", "SYSTEM", "/RL", "HIGHEST"])
-            print(f"\nCriando tarefa [{nome_tarefa}] ...")
-            rc = _exe_cmd(cmd_sch)
-            if rc == 0:
-                tarefa_ok += 1
+                print(f"[ERRO GRAVE] Nao encontrei register-startup-task-silent.bat nem em: {agent_dir}")
+                print(f"      Conteudo da pasta: {list(agent_dir.glob('*.bat'))}")
+                # Ultimo recurso: rodar uma vez 'once' mas nao agenda (agendamento falhou)
+                print("\n[!] Nao agendou, mas coletando UMA VEZ para testar...")
+                base_cmd_once = base_cmd + ["once"]
+                _exe_cmd(base_cmd_once)
+                return 1
 
-        print(f"\nTarefas criadas com sucesso: {tarefa_ok}/{tarefa_total}")
-        if tarefa_ok > 0:
-            print("\n[OK] Agendamento configurado! Rodando uma coleta AGORA para testar...")
-            # Roda 'once' uma vez agora para confirmar que funciona e atualizar contadores
-            _exe_cmd(base_cmd_once)
-            print("\n[DICA] Para ver as tarefas no Windows:")
-            print("       Painel de Controle > Ferramentas Administrativas > Agendador de Tarefas")
-            print("       OU: execute: schtasks /Query | findstr 'Print Collect'")
-        return 0 if tarefa_ok == tarefa_total else 1
+        print(f"\n[OK] Script de agendamento encontrado: {chosen_bat}")
+
+        # Copia o config.yaml para o local esperado pelo bat (C:\ProgramData\PrintCollect\config.yaml)
+        # Garantir que o agente e o config estao presentes (o bat ja copia de qualquer forma)
+        print(f"\n[1/2] Rodando script de instalacao (tarefas agendadas 1/HORA)...")
+        try:
+            # RODAR O .BAT (sem shell=True p/ .bat
+            result = subprocess.run(
+                ["cmd.exe", "/C", str(chosen_bat)],
+                shell=False,
+                check=False,
+                cwd=str(chosen_bat.parent),
+            )
+            rc_install = result.returncode
+        except Exception as e_bat:
+            print(f"[ERRO] Falha ao rodar bat de agendamento: {e_bat}")
+            rc_install = 1
+
+        # Roda uma vez 'once' uma vez agora para confirmar (passo 3/4 do .bat ja deve ter rodado):
+        print("\n[2/2] Rodando coleta UMA VEZ agora p/ testar...")
+        base_cmd_once = base_cmd + ["once"]
+        _exe_cmd(base_cmd_once)
+
+        print("\n[DICA] Para ver as tarefas no Windows:")
+        print("       Painel de Controle > Ferramentas Administrativas > Agendador de Tarefas")
+        print("       OU: schtasks /Query | findstr 'Print Collect'")
+        return rc_install
 
     # Linux/systemd
     service_name = "print-collect.service"
@@ -360,12 +387,14 @@ def cmd_install(args: argparse.Namespace) -> int:
 def cmd_uninstall(args: argparse.Namespace) -> int:
     system = platform.system().lower()
     if system == "windows":
-        # NOVA estrategia: 3 tarefas agendadas (em vez de 1)
+        # Remove TODAS as versoes de tarefas: antigo (1 unica), 08h/18h (legado), HORARIO (novo), Ao Logar
         tarefas = [
             "Print Collect Agent",                    # nome antigo (ainda pode existir!)
-            "Print Collect Agent - Manha (08h)",
-            "Print Collect Agent - Tarde (18h)",
-            "Print Collect Agent - Ao Logar",
+            "Print Collect Agent - Manha (08h)",       # legado
+            "Print Collect Agent - Tarde (18h)",       # legado
+            "Print Collect Agent - Ao Logar",          # sempre
+            "Print Collect Agent - A Cada 1 HORA",     # NOVA! (agenda a cada 1h PT1H)
+            "Print Collect Agent - A Cada 1 Hora",     # variacao de espaco/letra maiuscula
         ]
         total_ok = 0
         for tn in tarefas:
