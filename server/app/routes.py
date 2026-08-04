@@ -1228,14 +1228,55 @@ def _get_agent(x_agent_token: str, db: Session) -> Agent:
 
 
 def _sync_alerts(db: Session, printer: Printer, alert_messages: list[str]) -> None:
+    # -------------------------------------------------------------------------
+    # DETECTA IMPRESSORA MONOCROMATICA (PB)
+    # Regra: NENHUMA página colorida impressa E NENHUM toner colorido informado
+    # -------------------------------------------------------------------------
+    has_color_pages = bool(printer.pages_color and printer.pages_color > 0)
+    has_color_toners = any(t is not None for t in (
+        printer.toner_cyan, printer.toner_magenta, printer.toner_yellow
+    ))
+    is_color_printer = has_color_pages or has_color_toners
+
+    # Palavras-chave de toner colorido (usado para BLOQUEAR alertas em PB)
+    COLOR_TOKENS = ("ciano", "cyan", "magenta", "amarelo", "yellow")
+
+    def _is_color_alerta(msg: str) -> bool:
+        low = msg.lower()
+        return any(token in low for token in COLOR_TOKENS)
+
+    # -------------------------------------------------------------------------
+    # LIMPEZA: fecha (resolved=True) alertas COLORIDOS já existentes, se PB
+    # -------------------------------------------------------------------------
+    if not is_color_printer:
+        existing_active = (
+            db.query(Alert)
+            .filter(Alert.printer_id == printer.id, Alert.resolved == False)
+            .all()
+        )
+        for a in existing_active:
+            if _is_color_alerta(a.message) and not a.resolved:
+                a.resolved = True
+                a.resolved_at = _now()
+        db.flush()
+
+    # -------------------------------------------------------------------------
+    # FILTRAGEM: ignora alertas coloridos recebidos do agente, se PB
+    # -------------------------------------------------------------------------
+    filtered_messages: list[str] = []
+    for message in alert_messages:
+        if not is_color_printer and _is_color_alerta(message):
+            continue
+        filtered_messages.append(message)
+
     existing = {
         a.message: a
         for a in db.query(Alert).filter(Alert.printer_id == printer.id, Alert.resolved == False).all()
     }
 
-    for message in alert_messages:
+    for message in filtered_messages:
         if message not in existing:
-            severity = "critical" if "vazio" in message.lower() or "empty" in message.lower() else "warning"
+            severity = "critical" if "vazio" in message.lower() or "empty" in message.lower() or "critico" in message.lower() or "critica" in message.lower() else "warning"
             alert = Alert(
                 printer_id=printer.id,
                 alert_type="supply" if "toner" in message.lower() else "device",

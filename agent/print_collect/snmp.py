@@ -339,14 +339,24 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 2) -> Opt
         toner_yellow=toner_yellow,
     )
 
-    # Alertas basicos de toner
+    # Determina se a impressora é MONOCROMÁTICA (Preto & Branco)
+    # Regra: NÃO possui páginas coloridas totais impressas OU
+    #       NÃO retorna níveis de toner coloridos (todos são None).
+    has_color_pages = bool(pages_color and pages_color > 0)
+    has_color_toners = any(t is not None for t in (toner_cyan, toner_magenta, toner_yellow))
+    is_color_printer = has_color_pages or has_color_toners
+
+    # Alertas básicos de toner (SOMENTE para toners EXISTENTES!)
     alerts: list[str] = []
-    for color, pct in (
-        ("preto", toner_black),
-        ("ciano", toner_cyan),
-        ("magenta", toner_magenta),
-        ("amarelo", toner_yellow),
-    ):
+    toners_to_check: list[tuple[str, Optional[float]]] = [("preto", toner_black)]
+    if is_color_printer:
+        toners_to_check.extend([
+            ("ciano", toner_cyan),
+            ("magenta", toner_magenta),
+            ("amarelo", toner_yellow),
+        ])
+
+    for color, pct in toners_to_check:
         if pct is None:
             continue
         if pct <= 5:
