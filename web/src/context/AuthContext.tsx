@@ -17,7 +17,7 @@ export type Branding = {
 interface AuthContextType {
   user: User | null;
   token: string | null;
-  branding: Branding;
+  branding: Branding | null; // null = ainda nao carregou (NAO EXIBE NADA)
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   loading: boolean;
@@ -59,14 +59,14 @@ if (INITIAL_TOKEN) {
 
 const BRANDING_CACHE_KEY = "pc_branding_cache_v1";
 
-function loadInitialBrandingFromCache(): Branding {
-  if (typeof window === "undefined") return DEFAULT_BRANDING;
+function loadInitialBrandingFromCache(): Branding | null {
+  if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(BRANDING_CACHE_KEY);
-    if (!raw) return DEFAULT_BRANDING;
+    if (!raw) return null;
     const parsed = JSON.parse(raw) as Branding;
-    if (!parsed || typeof parsed !== "object") return DEFAULT_BRANDING;
-    return {
+    if (!parsed || typeof parsed !== "object") return null;
+    const sanitized: Branding = {
       display_name: parsed.display_name || DEFAULT_BRANDING.display_name,
       logo_src: parsed.logo_src || DEFAULT_BRANDING.logo_src,
       tagline: parsed.tagline || DEFAULT_BRANDING.tagline,
@@ -76,8 +76,12 @@ function loadInitialBrandingFromCache(): Branding {
       client_name: parsed.client_name ?? null,
       role_label: parsed.role_label || DEFAULT_BRANDING.role_label,
     };
+    // Seguranca: Se tem token inicial, NÃO RETORNAR LOGO AINDA (evita piscada em transicao).
+    // Vamos retornar null e deixar o guard no Layout cobrir. A proxima pintura ja vem correta.
+    if (INITIAL_TOKEN) return null;
+    return sanitized;
   } catch {
-    return DEFAULT_BRANDING;
+    return null;
   }
 }
 
@@ -102,8 +106,11 @@ function clearBrandingCache() {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(INITIAL_TOKEN);
-  const [branding, setBranding] = useState<Branding>(() => loadInitialBrandingFromCache());
-  const [loading, setLoading] = useState(true);
+  // ⛔ branding INICIAL = null (NAO TEM DEFAULT C&A!)
+  // Assim NUNCA pinta tela com a logo errada, nem por 1 frame.
+  const [branding, setBranding] = useState<Branding | null>(() => loadInitialBrandingFromCache());
+  // ⛔ loading INICIAL = TRUE SEMPRE que existir token (nao ha usuario sem carregar)
+  const [loading, setLoading] = useState<boolean>(!!INITIAL_TOKEN);
 
   useEffect(() => {
     safeDocumentTitle(DEFAULT_BRANDING.display_name, DEFAULT_BRANDING.tagline);
@@ -122,10 +129,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         client_name: b.client_name ?? null,
         role_label: b.role_label || DEFAULT_BRANDING.role_label,
       };
+      // ✅ Agora branding NUNCA é null!
       setBranding(merged);
       saveBrandingCache(merged);
       safeDocumentTitle(merged.display_name, merged.tagline);
     } catch (e) {
+      // ✅ Fallback: mesmo com erro, mostra a C&A (sem null para nao travar guard)
       setBranding(DEFAULT_BRANDING);
       saveBrandingCache(DEFAULT_BRANDING);
       safeDocumentTitle(DEFAULT_BRANDING.display_name, DEFAULT_BRANDING.tagline);
@@ -169,7 +178,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         );
         setToken(INITIAL_TOKEN);
         setUser(null);
-        setBranding(DEFAULT_BRANDING);
+        // ⛔ Token invalido: branding null para nao mostrar logo nenhuma
+        setBranding(null);
         clearBrandingCache();
         safeDocumentTitle(DEFAULT_BRANDING.display_name, DEFAULT_BRANDING.tagline);
         if (!cancelled) setLoading(false);
@@ -200,7 +210,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(null);
     window.localStorage.removeItem("token");
     setAuthToken(null);
-    setBranding(DEFAULT_BRANDING);
+    // ⛔ Ao sair: branding volta para null (para a pagina de login pintar a generica)
+    setBranding(null);
     clearBrandingCache();
     safeDocumentTitle(DEFAULT_BRANDING.display_name, DEFAULT_BRANDING.tagline);
   };

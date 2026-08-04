@@ -15,13 +15,14 @@ export default function Layout() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  // ⛔ GUARD INQUEBRÁVEL: NÃO RENDERIZA SIDEBAR (NENHUMA LOGO!) ATÉ CARREGAR 100%
-  // Isso ELIMINA 100% o "pisca" da logo C&A antes da logo do revendedor.
-  if (loading || !user) {
+  // ⛔ GUARD INQUEBRÁVEL V2: NÃO RENDERIZA NADA (NENHUM ELEMENTO, NENHUMA IMAGEM!)
+  //     ATÉ TER user + branding (null = ainda não carregou -> NÃO PINTA NADA!)
+  //     Isso ELIMINA 100% qualquer frame com logo de C&A antes da logo do revendedor.
+  if (loading || !user || !branding) {
     return (
       <>
         <style>{`
-          @keyframes pc-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+          @keyframes pc-spin-v2 { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         `}</style>
         <div
           style={{
@@ -33,9 +34,13 @@ export default function Layout() {
             flexDirection: "column",
             justifyContent: "center",
             alignItems: "center",
-            background: "var(--bg, #0f172a)",
-            zIndex: 99999,
+            // COR EXATA DO MODO ESCURO (sem usar variaveis CSS que poderiam demorar a carregar!)
+            background: "#0b1220",
+            backgroundColor: "#0b1220",
+            zIndex: 999999,
             gap: "1rem",
+            margin: 0,
+            padding: 0,
           }}
         >
           <div
@@ -45,10 +50,10 @@ export default function Layout() {
               border: "6px solid #1e293b",
               borderTopColor: "#2563eb",
               borderRadius: "50%",
-              animation: "pc-spin 900ms linear infinite",
+              animation: "pc-spin-v2 900ms linear infinite",
             }}
           />
-          <div style={{ color: "var(--text-muted, #94a3b8)", fontSize: 14, fontWeight: 500 }}>
+          <div style={{ color: "#94a3b8", fontSize: 14, fontWeight: 500, letterSpacing: 0.3 }}>
             Carregando dados do painel...
           </div>
         </div>
