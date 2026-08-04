@@ -592,7 +592,11 @@ def list_partner_stats(db: Session = Depends(get_db), current_user: User = Depen
 
         printers: list[Printer] = []
         if client_ids:
-            printers = db.query(Printer).filter(Printer.client_id.in_(client_ids)).all()
+            printers = (
+                db.query(Printer)
+                .filter(Printer.client_id.in_(client_ids), Printer.ignored == False)
+                .all()
+            )
 
         stats.append(
             PartnerBillingStats(
@@ -613,6 +617,9 @@ def list_partner_stats(db: Session = Depends(get_db), current_user: User = Depen
 
 @router.get("/dashboard/stats", response_model=DashboardStats)
 def dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    # MIGRACAO AUTOMATICA: adiciona coluna `ignored` na tabela printers se nao existir!
+    _ensure_printer_ignored_column(db)
+
     # LIMPEZA AUTOMATICA: fecha alertas falsos de toner colorido em impressoras PB!
     # Roda SEMPRE que carregar o Dashboard, por user scope (superadmin/partner/client)
     if _is_partner_admin(current_user):
@@ -625,8 +632,8 @@ def dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(
         _cleanup_false_color_alerts(db, partner_id=None, client_id=client_id)
     db.commit()
 
-    printers_query = db.query(Printer)
-    alerts_query = db.query(Alert).join(Printer)
+    printers_query = db.query(Printer).filter(Printer.ignored == False)
+    alerts_query = db.query(Alert).join(Printer).filter(Printer.ignored == False)
     clients_query = db.query(Client).filter(Client.active == True)
 
     if _is_partner_admin(current_user):
@@ -741,7 +748,7 @@ def create_location(payload: LocationCreate, db: Session = Depends(get_db), curr
 @router.get("/printers", response_model=list[PrinterOut])
 def list_printers(client_id: Optional[int] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     scoped_client_id = _scoped_client_id(current_user, client_id)
-    query = db.query(Printer)
+    query = db.query(Printer).filter(Printer.ignored == False)
     if _is_partner_admin(current_user):
         partner_id = _required_partner_id(current_user)
         query = query.join(Client).filter(Client.partner_id == partner_id)
@@ -779,6 +786,8 @@ def update_printer(printer_id: int, payload: PrinterUpdate, db: Session = Depend
 
 @router.get("/alerts", response_model=list[AlertOut])
 def list_alerts(resolved: Optional[bool] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    _ensure_printer_ignored_column(db)
+
     # LIMPEZA AUTOMATICA: fecha alertas falsos de toner colorido em impressoras PB
     # (roda tambem ao abrir a tela de Alertas)
     if _is_partner_admin(current_user):
@@ -789,7 +798,7 @@ def list_alerts(resolved: Optional[bool] = None, db: Session = Depends(get_db), 
         _cleanup_false_color_alerts(db, client_id=_required_client_id(current_user))
     db.commit()
 
-    query = db.query(Alert).join(Printer)
+    query = db.query(Alert).join(Printer).filter(Printer.ignored == False)
     if _is_partner_admin(current_user):
         query = query.join(Client, Client.id == Printer.client_id).filter(Client.partner_id == _required_partner_id(current_user))
     elif not _is_superadmin(current_user):
@@ -797,6 +806,44 @@ def list_alerts(resolved: Optional[bool] = None, db: Session = Depends(get_db), 
     if resolved is not None:
         query = query.filter(Alert.resolved == resolved)
     return query.order_by(Alert.created_at.desc()).limit(100).all()
+
+
+@router.post("/printers/{printer_id}/ignore", response_model=PrinterOut)
+def toggle_ignore_printer(
+    printer_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Alterna o status 'ignored' da impressora (remover / voltar a monitorar).
+
+    - Quando ignorada (ignored=True): some das listagens, NÃO é atualizada pelo
+      agente em próximas coletas, e NÃO é recriada se for encontrada na rede.
+      Também fecha TODOS os alertas abertos automaticamente.
+    - Quando reativada (ignored=False): volta a aparecer no painel e o agente
+      volta a atualizar seus dados normalmente nas próximas leituras.
+    """
+    # Busca INCLUINDO as impressoras ignoradas (precisamos achá-la para toggle!)
+    printer = _get_scoped_printer(db, current_user, printer_id, include_ignored=True)
+    _require_manage_scope(current_user, printer.client_id)
+
+    now = _now()
+    printer.ignored = not printer.ignored
+    printer.updated_at = now
+
+    # Se está SENDO IGNORADA AGORA: fecha todos os alertas abertos dela!
+    if printer.ignored:
+        open_alerts = (
+            db.query(Alert)
+            .filter(Alert.printer_id == printer.id, Alert.resolved == False)
+            .all()
+        )
+        for a in open_alerts:
+            a.resolved = True
+            a.resolved_at = now
+
+    db.commit()
+    db.refresh(printer)
+    return printer
 
 
 @router.post("/alerts/clean-false-color")
@@ -1384,6 +1431,54 @@ def _cleanup_false_color_alerts(db: Session, partner_id: int | None = None, clie
             total_closed = 0
 
     return total_closed
+
+
+# -----------------------------------------------------------------------------
+# MIGRACAO AUTOMATICA: adiciona coluna `ignored` na tabela `printers` + índice,
+# se ainda nao existir (PostgreSQL). Nao precisa de SQL manual! Roda sempre ao
+# abrir o Dashboard ou /health, antes de qualquer outra operacao.
+# -----------------------------------------------------------------------------
+_MIGRATION_IGNORED_DONE = False
+
+
+def _ensure_printer_ignored_column(db: Session) -> None:
+    global _MIGRATION_IGNORED_DONE
+    if _MIGRATION_IGNORED_DONE:
+        return
+    try:
+        from sqlalchemy import text
+        db.execute(text("""
+            ALTER TABLE printers
+            ADD COLUMN IF NOT EXISTS ignored BOOLEAN NOT NULL DEFAULT FALSE
+        """))
+        try:
+            db.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_printers_ignored
+                ON printers (ignored)
+            """))
+        except Exception:
+            pass
+        db.commit()
+        _MIGRATION_IGNORED_DONE = True
+    except Exception:
+        db.rollback()
+
+
+def _get_scoped_printer(db: Session, current_user: User, printer_id: int, include_ignored: bool = False) -> Printer:
+    q = db.query(Printer).filter(Printer.id == printer_id)
+    if not include_ignored:
+        q = q.filter(Printer.ignored == False)
+    if not _is_superadmin(current_user):
+        if _is_partner_admin(current_user):
+            q = q.join(Client, Client.id == Printer.client_id).filter(
+                Client.partner_id == _required_partner_id(current_user)
+            )
+        else:
+            q = q.filter(Printer.client_id == _required_client_id(current_user))
+    p = q.first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Impressora não encontrada")
+    return p
             
 
 
@@ -1393,12 +1488,19 @@ async def agent_report(
     x_agent_token: str = Header(...),
     db: Session = Depends(get_db),
 ):
+    _ensure_printer_ignored_column(db)
+
     agent = _get_agent(x_agent_token, db)
     agent.last_heartbeat = _now()
     agent.version = payload.agent_version
     now = _now()
 
     for reading in payload.readings:
+        # ---------------------------------------------------------------------
+        # PASSO 1: Procurar impressora por IP OU serial, INCLUINDO as que foram
+        # marcadas como ignored=True (precisamos encontrar ela para saber que
+        # o usuário NÃO quer mais monitorar!)
+        # ---------------------------------------------------------------------
         printer = (
             db.query(Printer)
             .filter(
@@ -1418,7 +1520,35 @@ async def agent_report(
                 .first()
             )
 
+        # ---------------------------------------------------------------------
+        # SE ACHOU E ELA ESTÁ IGNORADA: PULA TUDO! NÃO ATUALIZA, NÃO CRIA NADA!
+        # ---------------------------------------------------------------------
+        if printer and printer.ignored:
+            continue
+
+        # ---------------------------------------------------------------------
+        # SE NÃO ACHOU NENHUMA: ANTES DE CRIAR NOVA, VERIFICA SE EXISTE ALGUMA
+        # IMPRESSORA IGNORADA (ignored=True) NO MESMO CLIENTE com MESMO IP OU
+        # MESMO NÚMERO DE SÉRIE. Se existir: NÃO CRIA! (Usuário não quer!)
+        # ---------------------------------------------------------------------
         if not printer:
+            ignored_found = (
+                db.query(Printer)
+                .filter(
+                    Printer.client_id == agent.client_id,
+                    Printer.ignored == True,
+                    (
+                        (Printer.ip_address == reading.ip_address)
+                        | (
+                            (reading.serial_number != None)  # type: ignore[arg-type]
+                            & (Printer.serial_number == reading.serial_number)
+                        )
+                    ),
+                )
+                .first()
+            )
+            if ignored_found:
+                continue
             printer = Printer(
                 client_id=agent.client_id,
                 ip_address=reading.ip_address,

@@ -236,6 +236,10 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+  ignorePrinter: (printerId: number) =>
+    request<import("./types").Printer>(`/api/printers/${printerId}/ignore`, {
+      method: "POST",
+    }),
   getPrinters: (clientId?: number) =>
     request<import("./types").Printer[]>(
       clientId ? `/api/printers?client_id=${clientId}` : "/api/printers",

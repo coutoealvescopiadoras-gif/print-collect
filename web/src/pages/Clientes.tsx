@@ -122,6 +122,29 @@ export default function Clientes() {
     }
   };
 
+  const handleRemovePrinter = async (clientId: number, printer: Printer) => {
+    const model = printer.model || printer.ip_address || "esta impressora";
+    const ok = window.confirm(
+      `Confirma REMOVER "${model}"?\n\n` +
+        `Ela NÃO será mais monitorada e NÃO voltará a aparecer automaticamente, mesmo que seja encontrada na rede na próxima coleta.\n\n` +
+        `(Se mudar de ideia depois, crie uma impressora manualmente com o mesmo IP/serial, ou contate o suporte.)`,
+    );
+    if (!ok) return;
+
+    try {
+      await api.ignorePrinter(printer.id);
+      setClientPrinters((current) => {
+        const list = current[clientId] || [];
+        return {
+          ...current,
+          [clientId]: list.filter((p) => p.id !== printer.id),
+        };
+      });
+    } catch (e: any) {
+      window.alert("Erro ao remover impressora: " + String(e?.message || e));
+    }
+  };
+
   const toggleClientPrinters = async (clientId: number) => {
     if (expandedClientId === clientId) {
       setExpandedClientId(null);
@@ -329,7 +352,7 @@ export default function Clientes() {
                   </tr>
                   {expandedClientId === c.id && (
                     <tr key={`details-${c.id}`}>
-                      <td colSpan={7} style={{ background: "var(--surface-hover)" }}>
+                      <td colSpan={8} style={{ background: "var(--surface-hover)" }}>
                         <div style={{ padding: "1rem 0" }}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap", marginBottom: "0.75rem" }}>
                             <div style={{ fontWeight: 600 }}>
@@ -394,6 +417,7 @@ export default function Clientes() {
                                   <th>Status</th>
                                   <th>Contador</th>
                                   <th>Última coleta</th>
+                                  {canEditSector && <th style={{ width: 110 }}>Ações</th>}
                                 </tr>
                               </thead>
                               <tbody>
@@ -495,6 +519,40 @@ export default function Clientes() {
                                       <td>
                                         {formatDateTimeBrasil(printer.last_seen)}
                                       </td>
+                                      {canEditSector && (
+                                        <td>
+                                          <button
+                                            type="button"
+                                            className="btn btn-secondary"
+                                            style={{
+                                              color: "var(--danger)",
+                                              borderColor: "transparent",
+                                              background: "transparent",
+                                              padding: "0.3rem 0.6rem",
+                                              fontSize: 13,
+                                              display: "inline-flex",
+                                              alignItems: "center",
+                                              gap: 4,
+                                            }}
+                                            title="Remover esta impressora do monitoramento"
+                                            onMouseEnter={(e) => {
+                                              (e.currentTarget as HTMLButtonElement).style.background =
+                                                "rgba(239, 68, 68, 0.08)";
+                                              (e.currentTarget as HTMLButtonElement).style.borderColor =
+                                                "rgba(239, 68, 68, 0.3)";
+                                            }}
+                                            onMouseLeave={(e) => {
+                                              (e.currentTarget as HTMLButtonElement).style.borderColor =
+                                                "transparent";
+                                              (e.currentTarget as HTMLButtonElement).style.background =
+                                                "transparent";
+                                            }}
+                                            onClick={() => handleRemovePrinter(c.id, printer)}
+                                          >
+                                            🗑️ Remover
+                                          </button>
+                                        </td>
+                                      )}
                                     </tr>
                                   );
                                 })}

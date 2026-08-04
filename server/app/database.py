@@ -98,6 +98,7 @@ class Printer(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+    ignored = Column(Boolean, default=False, nullable=False, index=True)
 
     client = relationship("Client", back_populates="printers")
     location = relationship("Location", back_populates="printers")
