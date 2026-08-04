@@ -1,20 +1,20 @@
-import { NavLink, Outlet } from "react-router-dom";
 import { useState } from "react";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
 import { api } from "./api";
-import { LOGO_URL } from "./assets/placeholder-logo";
 
 export default function Layout() {
-  const { user, logout } = useAuth();
+  const { user, branding, logout } = useAuth();
+  const navigate = useNavigate();
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordForm, setPasswordForm] = useState({
-    currentPassword: "",
-    newPassword: "",
-    confirmPassword: "",
+    current: "",
+    new: "",
+    confirm: "",
   });
-  const [passwordSaving, setPasswordSaving] = useState(false);
-  const [passwordError, setPasswordError] = useState("");
-  const [passwordSuccess, setPasswordSuccess] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
   const effectiveRole = user ? (user.role || "superadmin") : null;
   const isSuperadmin = effectiveRole === "superadmin";
   const isPartnerAdmin = effectiveRole === "partner_admin";
@@ -26,33 +26,80 @@ export default function Layout() {
       ? "Superadmin"
       : effectiveRole === "partner_admin"
         ? "Revendedor"
-      : effectiveRole === "client_manager"
-        ? "Gestor do cliente"
-        : "Cliente";
+        : effectiveRole === "client_manager"
+          ? "Gestor"
+          : effectiveRole === "client_viewer"
+            ? "Cliente"
+            : "";
+
+  async function handlePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    if (passwordForm.new !== passwordForm.confirm) {
+      setError("Nova senha e confirmação não batem");
+      setSaving(false);
+      return;
+    }
+    if (passwordForm.new.length < 6) {
+      setError("Nova senha deve ter pelo menos 6 caracteres");
+      setSaving(false);
+      return;
+    }
+    try {
+      await api.changePassword(passwordForm.current, passwordForm.new);
+      window.alert("Senha alterada com sucesso!");
+      setShowPasswordModal(false);
+      setPasswordForm({ current: "", new: "", confirm: "" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao trocar senha. Verifique a senha atual.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleLogout() {
+    logout();
+    navigate("/login");
+  }
 
   return (
     <div className="layout">
       <aside className="sidebar">
-        <div style={{ 
-          display: "flex", 
-          alignItems: "center", 
-          gap: "0.75rem", 
-          marginBottom: "2rem" 
-        }}>
-          <img 
-            src={LOGO_URL} 
-            alt="C&A Soluções"
-            style={{
-              width: "160px",
-              height: "auto",
-              borderRadius: "0",
-              objectFit: "contain",
-              backgroundColor: "transparent",
-              mixBlendMode: "multiply",
-              filter: "brightness(1.2) saturate(1.3)",
-            }}
-          />
+        <div style={{ padding: "1.5rem 1rem", borderBottom: "1px solid var(--border)", marginBottom: "1rem" }}>
+          <div style={{ textAlign: "center" }}>
+            <img
+              src={branding.logo_src}
+              alt={branding.display_name}
+              style={{
+                width: "160px",
+                height: "auto",
+                borderRadius: "0",
+                objectFit: "contain",
+                maxWidth: "100%",
+                marginBottom: "0.5rem",
+                background: "#fff",
+                padding: 8,
+                borderRadius: 8,
+              }}
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 2 }}>{branding.display_name}</div>
+            {branding.tagline && branding.tagline !== branding.display_name && (
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>
+                {branding.tagline}
+              </div>
+            )}
+            {roleLabel && (
+              <div style={{ marginTop: 6, fontSize: 12 }}>
+                <span className={`badge ${isSuperadmin ? "online" : "offline"}`}>{roleLabel}</span>
+              </div>
+            )}
+          </div>
         </div>
+
         <nav>
           <NavLink to="/" end>Dashboard</NavLink>
           {isSuperadmin && <NavLink to="/revendedores">Revendedores</NavLink>}
@@ -63,150 +110,72 @@ export default function Layout() {
           {canManageResources && <NavLink to="/agentes">Agentes</NavLink>}
           {canManageUsers && <NavLink to="/usuarios">Usuários</NavLink>}
         </nav>
+
         <div style={{
           marginTop: "auto",
           padding: "1rem",
-          borderTop: "1px solid #334155",
+          borderTop: "1px solid var(--border)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "0.5rem",
         }}>
-          <div style={{
-            color: "#94a3b8",
-            fontSize: "0.875rem",
-            marginBottom: "0.5rem",
-          }}>
-            {user?.email || user?.username}
-          </div>
-          <div style={{
-            color: "#64748b",
-            fontSize: "0.75rem",
-            marginBottom: "0.75rem",
-            textTransform: "uppercase",
-            letterSpacing: "0.04em",
-          }}>
-            {roleLabel || ""}
+          <div style={{ fontSize: 14, wordBreak: "break-all" }}>
+            <strong>{user?.email}</strong>
           </div>
           <button
-            onClick={() => {
-              setPasswordError("");
-              setPasswordSuccess("");
-              setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
-              setShowPasswordModal(true);
-            }}
-            style={{
-              width: "100%",
-              padding: "0.5rem",
-              borderRadius: "6px",
-              border: "none",
-              background: "transparent",
-              color: "#94a3b8",
-              cursor: "pointer",
-              fontSize: "0.875rem",
-              textAlign: "left",
-              transition: "all 0.2s",
-              marginBottom: "0.25rem",
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.background = "#1e293b";
-              e.currentTarget.style.color = "#fff";
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.background = "transparent";
-              e.currentTarget.style.color = "#94a3b8";
-            }}
+            className="btn btn-ghost"
+            style={{ justifyContent: "flex-start" }}
+            onClick={() => setShowPasswordModal(true)}
           >
-            Trocar senha
+            🔑 Trocar senha
           </button>
-          <button
-            onClick={logout}
-            style={{
-              width: "100%",
-              padding: "0.5rem",
-              borderRadius: "6px",
-              border: "none",
-              background: "transparent",
-              color: "#94a3b8",
-              cursor: "pointer",
-              fontSize: "0.875rem",
-              textAlign: "left",
-              transition: "all 0.2s",
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.background = "#1e293b";
-              e.currentTarget.style.color = "#fff";
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.background = "transparent";
-              e.currentTarget.style.color = "#94a3b8";
-            }}
-          >
+          <button className="btn btn-ghost" style={{ color: "var(--danger)", justifyContent: "flex-start" }} onClick={handleLogout}>
             Sair
           </button>
         </div>
       </aside>
-      <main className="main">
+
+      <main className="content">
         <Outlet />
       </main>
+
       {showPasswordModal && (
         <div className="modal-overlay" onClick={() => setShowPasswordModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Trocar senha</h3>
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                setPasswordError("");
-                setPasswordSuccess("");
-                if (passwordForm.newPassword.length < 6) {
-                  setPasswordError("A nova senha deve ter pelo menos 6 caracteres.");
-                  return;
-                }
-                if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-                  setPasswordError("A confirmação da senha não confere.");
-                  return;
-                }
-                try {
-                  setPasswordSaving(true);
-                  await api.changeOwnPassword(passwordForm.currentPassword, passwordForm.newPassword);
-                  setPasswordSuccess("Senha alterada com sucesso.");
-                  setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
-                } catch (err) {
-                  setPasswordError(err instanceof Error ? err.message : "Erro ao alterar senha");
-                } finally {
-                  setPasswordSaving(false);
-                }
-              }}
-            >
+            <form onSubmit={handlePassword}>
               <div className="form-group">
-                <label>Senha atual *</label>
+                <label>Senha atual</label>
                 <input
-                  required
                   type="password"
-                  value={passwordForm.currentPassword}
-                  onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
+                  value={passwordForm.current}
+                  onChange={(e) => setPasswordForm({ ...passwordForm, current: e.target.value })}
+                  required
                 />
               </div>
               <div className="form-group">
-                <label>Nova senha *</label>
+                <label>Nova senha (mínimo 6 caracteres)</label>
                 <input
-                  required
                   type="password"
-                  value={passwordForm.newPassword}
-                  onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+                  value={passwordForm.new}
+                  onChange={(e) => setPasswordForm({ ...passwordForm, new: e.target.value })}
+                  required
                 />
               </div>
               <div className="form-group">
-                <label>Confirmar nova senha *</label>
+                <label>Confirme a nova senha</label>
                 <input
-                  required
                   type="password"
-                  value={passwordForm.confirmPassword}
-                  onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
+                  value={passwordForm.confirm}
+                  onChange={(e) => setPasswordForm({ ...passwordForm, confirm: e.target.value })}
+                  required
                 />
               </div>
-              {passwordError && <div style={{ color: "var(--danger)", marginBottom: "1rem" }}>{passwordError}</div>}
-              {passwordSuccess && <div style={{ color: "var(--success)", marginBottom: "1rem" }}>{passwordSuccess}</div>}
+              {error && <div style={{ color: "var(--danger)", marginBottom: "1rem" }}>{error}</div>}
               <div className="modal-actions">
-                <button type="button" className="btn btn-ghost" onClick={() => setShowPasswordModal(false)}>Fechar</button>
-                <button type="submit" className="btn btn-primary" disabled={passwordSaving}>
-                  {passwordSaving ? "Salvando..." : "Salvar nova senha"}
+                <button type="button" className="btn btn-ghost" onClick={() => setShowPasswordModal(false)}>Cancelar</button>
+                <button type="submit" className="btn btn-primary" disabled={saving}>
+                  {saving ? "Salvando..." : "Salvar nova senha"}
                 </button>
               </div>
             </form>

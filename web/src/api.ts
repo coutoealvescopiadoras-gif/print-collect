@@ -250,6 +250,17 @@ export const api = {
     ),
   resolveAlert: (id: number) =>
     request<import("./types").Alert>(`/api/alerts/${id}/resolve`, { method: "POST" }),
+  getBrandingMe: () =>
+    request<{
+      display_name: string;
+      logo_src: string | null;
+      tagline: string;
+      partner_id: number | null;
+      partner_name: string | null;
+      client_id: number | null;
+      client_name: string | null;
+      role_label: string;
+    }>("/api/branding/me"),
   getAgents: () => request<import("./types").Agent[]>("/api/agents"),
   getPartners: () => request<import("./types").Partner[]>("/api/partners"),
   getPartnerStats: () => request<import("./types").PartnerBillingStats[]>("/api/partners/stats"),

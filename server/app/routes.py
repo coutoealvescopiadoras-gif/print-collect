@@ -645,6 +645,82 @@ def list_partner_stats(db: Session = Depends(get_db), current_user: User = Depen
     return stats
 
 
+SUPERADMIN_DISPLAY_NAME = "C&A Soluções"
+SUPERADMIN_TAGLINE = "Monitoramento de Impressoras"
+PLATFORM_DEFAULT_PARTNER_LABEL = "Revendedor autorizado"
+PLATFORM_DEFAULT_CLIENT_LABEL = "Painel do Cliente"
+
+
+def _role_label_for(current_user: User) -> str:
+    r = _user_role(current_user)
+    return (
+        "Superadmin"
+        if r == ROLE_SUPERADMIN
+        else "Revendedor"
+        if r == ROLE_PARTNER_ADMIN
+        else "Gestor"
+        if r == ROLE_CLIENT_MANAGER
+        else "Cliente"
+    )
+
+
+@router.get("/branding/me", response_model=BrandingOut)
+def get_branding_me(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    """
+    Retorna a identidade visual (logo e nome principal) para o usuário logado.
+    Regra:
+      - Superadmin: usa NOME/LOGO da PLATAFORMA (C&A) — mas se quiser trocar depois, basta altere as constantes acima.
+      - Usuário vinculado a um parceiro (diretao partner_admin OU client_* com client.partner_id):
+        • Se o parceiro tiver logo_data OU logo_url → mostra a logo DO PARCEIRO.
+        • Nome principal = Nome do parceiro.
+        • Se for client_* também: exibe também o nome do cliente como referência.
+    """
+    partner: Optional[Partner] = None
+    client: Optional[Client] = None
+    role_label = _role_label_for(current_user)
+
+    if current_user.partner_id:
+        partner = db.query(Partner).filter(Partner.id == current_user.partner_id).first()
+    elif current_user.client_id:
+        client = db.query(Client).filter(Client.id == current_user.client_id).first()
+        if client and client.partner_id:
+            partner = db.query(Partner).filter(Partner.id == client.partner_id).first()
+
+    partner_id = partner.id if partner else None
+    partner_name = partner.name if partner else None
+    client_id = client.id if client else None
+    client_name = client.name if client else None
+
+    logo_src: Optional[str] = None
+    display_name: str = SUPERADMIN_DISPLAY_NAME
+    tagline: str = SUPERADMIN_TAGLINE
+
+    if partner:
+        display_name = partner.name
+        tagline = PLATFORM_DEFAULT_PARTNER_LABEL
+        if partner.logo_data:
+            logo_src = partner.logo_data
+        elif partner.logo_url:
+            logo_src = partner.logo_url
+        if client:
+            tagline = f"{client.name}"
+
+    elif client:
+        display_name = client.name
+        tagline = PLATFORM_DEFAULT_CLIENT_LABEL
+
+    return BrandingOut(
+        display_name=display_name,
+        logo_src=logo_src,
+        tagline=tagline,
+        partner_id=partner_id,
+        partner_name=partner_name,
+        client_id=client_id,
+        client_name=client_name,
+        role_label=role_label,
+    )
+
+
 @router.get("/dashboard/stats", response_model=DashboardStats)
 def dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     # MIGRACAO AUTOMATICA: adiciona coluna `ignored` na tabela printers se nao existir!

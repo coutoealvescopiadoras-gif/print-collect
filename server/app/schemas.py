@@ -245,6 +245,17 @@ class DashboardStats(BaseModel):
     low_toner_count: int
 
 
+class BrandingOut(BaseModel):
+    display_name: str
+    logo_src: Optional[str] = None
+    tagline: str
+    partner_id: Optional[int] = None
+    partner_name: Optional[str] = None
+    client_id: Optional[int] = None
+    client_name: Optional[str] = None
+    role_label: str
+
+
 class UserBase(BaseModel):
     email: str
 

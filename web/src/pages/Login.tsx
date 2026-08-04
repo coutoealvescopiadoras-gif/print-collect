@@ -1,151 +1,85 @@
 import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { LOGO_URL } from "../assets/placeholder-logo";
+import { useNavigate } from "react-router-dom";
+import { LOGO_URL as DEFAULT_LOGO_URL } from "../assets/placeholder-logo";
 
 export function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const { login, branding } = useAuth();
+  const navigate = useNavigate();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError("");
     setLoading(true);
+    setError("");
     try {
-      await login(email, password);
+      await login(email.trim(), password);
+      navigate("/");
     } catch (err) {
-      setError("E-mail ou senha incorretos");
+      setError(err instanceof Error ? err.message : "Login ou senha incorretos");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   return (
-    <div style={{
-      minHeight: "100vh",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      background: "linear-gradient(135deg, #1e3a8a 0%, #0f172a 100%)",
-    }}>
-      <div style={{
-        background: "#1e293b",
-        padding: "3rem",
-        borderRadius: "12px",
-        boxShadow: "0 20px 25px -5px rgba(0,0,0,0.3)",
-        width: "100%",
-        maxWidth: "400px",
-      }}>
+    <div className="login-page">
+      <div className="login-container">
         <div style={{ textAlign: "center", marginBottom: "2rem" }}>
-          <img 
-            src={LOGO_URL} 
-            alt="C&A Soluções em Copiadoras"
+          <img
+            src={branding?.logo_src || DEFAULT_LOGO_URL}
+            alt={branding?.display_name || "C&A Soluções em Copiadoras"}
             style={{
               width: "320px",
               height: "auto",
               borderRadius: "0",
               objectFit: "contain",
-              marginBottom: "2rem",
-              backgroundColor: "transparent",
-              mixBlendMode: "multiply",
-              filter: "brightness(1.2) saturate(1.3)",
+              maxWidth: "100%",
+              marginBottom: "1rem",
+            }}
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).src = DEFAULT_LOGO_URL;
             }}
           />
+          <h1 style={{ marginBottom: "0.5rem" }}>
+            {branding?.display_name || "C&A Soluções em Copiadoras"}
+          </h1>
+          <p style={{ color: "var(--text-muted)" }}>
+            {branding?.tagline || "Painel de Monitoramento de Impressoras"}
+          </p>
         </div>
 
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: "1.5rem" }}>
-            <label style={{
-              display: "block",
-              color: "#94a3b8",
-              marginBottom: "0.5rem",
-              fontSize: "0.875rem",
-            }}>E-mail</label>
+        <form className="login-form" onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label>E-mail</label>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              style={{
-                width: "100%",
-                padding: "0.75rem 1rem",
-                borderRadius: "8px",
-                border: "1px solid #334155",
-                background: "#0f172a",
-                color: "#fff",
-                fontSize: "1rem",
-                outline: "none",
-                transition: "border-color 0.2s",
-              }}
-              onFocus={(e) => e.target.style.borderColor = "#3b82f6"}
-              onBlur={(e) => e.target.style.borderColor = "#334155"}
+              autoComplete="email"
+              placeholder="seu@email.com"
+              disabled={loading}
             />
           </div>
-
-          <div style={{ marginBottom: "1.5rem" }}>
-            <label style={{
-              display: "block",
-              color: "#94a3b8",
-              marginBottom: "0.5rem",
-              fontSize: "0.875rem",
-            }}>Senha</label>
+          <div className="form-group">
+            <label>Senha</label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              style={{
-                width: "100%",
-                padding: "0.75rem 1rem",
-                borderRadius: "8px",
-                border: "1px solid #334155",
-                background: "#0f172a",
-                color: "#fff",
-                fontSize: "1rem",
-                outline: "none",
-                transition: "border-color 0.2s",
-              }}
-              onFocus={(e) => e.target.style.borderColor = "#3b82f6"}
-              onBlur={(e) => e.target.style.borderColor = "#334155"}
+              autoComplete="current-password"
+              placeholder="••••••••"
+              disabled={loading}
             />
           </div>
 
-          {error && (
-            <div style={{
-              color: "#ef4444",
-              fontSize: "0.875rem",
-              marginBottom: "1rem",
-              textAlign: "center",
-            }}>
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              width: "100%",
-              padding: "0.875rem",
-              borderRadius: "8px",
-              background: "#3b82f6",
-              color: "#fff",
-              fontSize: "1rem",
-              fontWeight: "600",
-              border: "none",
-              cursor: "pointer",
-              transition: "background-color 0.2s",
-              opacity: loading ? 0.5 : 1,
-            }}
-            onMouseOver={(e) => {
-              if (!loading) e.currentTarget.style.background = "#2563eb";
-            }}
-            onMouseOut={(e) => {
-              if (!loading) e.currentTarget.style.background = "#3b82f6";
-            }}
-          >
+          {error && <div style={{ color: "var(--danger)", marginBottom: "1rem" }}>{error}</div>}
+          <button type="submit" className="btn btn-primary btn-block" disabled={loading}>
             {loading ? "Entrando..." : "Entrar"}
           </button>
         </form>
