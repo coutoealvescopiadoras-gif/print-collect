@@ -67,36 +67,54 @@ export default function Layout() {
     <div className="layout">
       <aside className="sidebar">
         <div style={{ padding: "1.5rem 1rem", borderBottom: "1px solid var(--border)", marginBottom: "1rem" }}>
-          <div style={{ textAlign: "center" }}>
-            <img
-              src={branding.logo_src}
-              alt={branding.display_name}
-              style={{
-                width: "160px",
-                height: "auto",
-                objectFit: "contain",
-                maxWidth: "100%",
-                marginBottom: "0.5rem",
-                background: "#fff",
-                padding: 8,
-                borderRadius: 8,
-              }}
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).style.display = "none";
-              }}
-            />
-            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 2 }}>{branding.display_name}</div>
-            {branding.tagline && branding.tagline !== branding.display_name && (
-              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>
-                {branding.tagline}
-              </div>
-            )}
-            {roleLabel && (
-              <div style={{ marginTop: 6, fontSize: 12 }}>
-                <span className={`badge ${isSuperadmin ? "online" : "offline"}`}>{roleLabel}</span>
-              </div>
-            )}
-          </div>
+          {isSuperadmin ? (
+            <div>
+              <img
+                src={branding.logo_src}
+                alt={branding.display_name}
+                style={{
+                  width: "160px",
+                  height: "auto",
+                  borderRadius: "0",
+                  objectFit: "contain",
+                }}
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                }}
+              />
+            </div>
+          ) : (
+            <div style={{ textAlign: "center" }}>
+              <img
+                src={branding.logo_src}
+                alt={branding.display_name}
+                style={{
+                  width: "160px",
+                  height: "auto",
+                  objectFit: "contain",
+                  maxWidth: "100%",
+                  marginBottom: "0.5rem",
+                  background: "#fff",
+                  padding: 8,
+                  borderRadius: 8,
+                }}
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                }}
+              />
+              <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 2 }}>{branding.display_name}</div>
+              {branding.tagline && branding.tagline !== branding.display_name && (
+                <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>
+                  {branding.tagline}
+                </div>
+              )}
+              {roleLabel && (
+                <div style={{ marginTop: 6, fontSize: 12 }}>
+                  <span className={`badge offline`}>{roleLabel}</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <nav>
