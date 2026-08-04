@@ -68,7 +68,8 @@ function resolveBaseUrl() {
 
 const BASE = resolveBaseUrl();
 
-let token: string | null = null;
+let token: string | null =
+  typeof window !== "undefined" ? window.localStorage.getItem("token") : null;
 
 export function getApiBaseUrl() {
   return BASE;

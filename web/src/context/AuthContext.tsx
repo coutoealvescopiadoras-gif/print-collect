@@ -20,50 +20,65 @@ function normalizeUser(user: User): User {
   };
 }
 
+const INITIAL_TOKEN: string | null =
+  typeof window !== "undefined" ? window.localStorage.getItem("token") : null;
+
+if (INITIAL_TOKEN) {
+  setAuthToken(INITIAL_TOKEN);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(localStorage.getItem("token"));
+  const [token, setToken] = useState<string | null>(INITIAL_TOKEN);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    console.log("🔑 AuthContext: token inicial:", token);
-    setAuthToken(token);
-    if (token) {
-      console.log("🔑 AuthContext: tentando obter dados do usuário...");
-      api.getMe().then((userData) => {
-        console.log("✅ AuthContext: dados do usuário obtidos com sucesso!", userData);
+    let cancelled = false;
+
+    async function bootstrap() {
+      if (!INITIAL_TOKEN) {
+        if (!cancelled) setLoading(false);
+        return;
+      }
+
+      try {
+        setAuthToken(INITIAL_TOKEN);
+        const userData = await api.getMe();
+        if (cancelled) return;
         setUser(normalizeUser(userData));
-      }).catch((err) => {
-        console.error("❌ AuthContext: erro ao obter dados do usuário!", err);
+      } catch (err) {
+        if (cancelled) return;
+        console.error("❌ AuthContext: token invalido/expirado. Limpando.", err);
         setToken(null);
-        localStorage.removeItem("token");
+        setUser(null);
+        window.localStorage.removeItem("token");
         setAuthToken(null);
-      }).finally(() => setLoading(false));
-    } else {
-      console.log("🔑 AuthContext: nenhum token encontrado");
-      setLoading(false);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
-  }, [token]);
+
+    bootstrap();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const login = async (email: string, password: string) => {
-    console.log("🔑 Login: tentando login com e-mail:", email);
     const response = await api.login(email, password);
-    console.log("✅ Login: token obtido com sucesso!", response);
     const newToken = response.access_token;
-    setToken(newToken);
-    localStorage.setItem("token", newToken);
+    window.localStorage.setItem("token", newToken);
     setAuthToken(newToken);
-    console.log("🔑 Login: obtendo dados do usuário...");
+    setToken(newToken);
     const userData = await api.getMe();
-    console.log("✅ Login: dados do usuário obtidos com sucesso!", userData);
     setUser(normalizeUser(userData));
   };
 
   const logout = () => {
-    console.log("🔑 Logout: limpando dados do usuário");
     setUser(null);
     setToken(null);
-    localStorage.removeItem("token");
+    window.localStorage.removeItem("token");
     setAuthToken(null);
   };
 
