@@ -854,6 +854,21 @@ def create_location(payload: LocationCreate, db: Session = Depends(get_db), curr
 
 @router.get("/printers", response_model=list[PrinterOut])
 def list_printers(client_id: Optional[int] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    _ensure_printer_ignored_column(db)
+
+    # ⛔ LIMPEZA AUTOMATICA: fecha alertas falsos de toner colorido em impressoras PB
+    # (roda ao abrir aba Impressoras OU ao expandir impressoras de um cliente na aba Clientes!)
+    try:
+        scoped = _scoped_client_id(current_user, client_id)
+        if scoped is not None:
+            _cleanup_false_color_alerts(db, client_id=scoped)
+        elif _is_partner_admin(current_user):
+            _cleanup_false_color_alerts(db, partner_id=_required_partner_id(current_user))
+        elif _is_superadmin(current_user):
+            _cleanup_false_color_alerts(db)
+    except Exception:
+        pass
+
     scoped_client_id = _scoped_client_id(current_user, client_id)
     query = db.query(Printer).filter(Printer.ignored == False)
     if _is_partner_admin(current_user):
@@ -1431,16 +1446,54 @@ def _get_agent(x_agent_token: str, db: Session) -> Agent:
     return agent
 
 
+# -----------------------------------------------------------------------------
+# DETECÇÃO UNIFICADA DE IMPRESSORA COLORIDA vs MONOCROMÁTICA (PB)
+# HELPER ÚNICO USADO EM TODOS OS LOCAIS: sync alertas, limpeza global, etc.
+# REGRA AGRESSIVA ANTI-FALSOS POSITIVOS:
+#   → SÓ é IMPRESSORA COLORIDA se tiver ALGUMA COISA REALMENTE COLORIDA:
+#       A) pages_color >= 1 (imprimiu pelo menos 1 página colorida na vida)
+#       OU
+#       B) PELO MENOS UM dos toners coloridos (cyan/magenta/yellow) tem valor > 0
+#          (mesmo que venha reportado 0 ou null → PB!)
+#   → QUALQUER OUTRO CASO → MONOCROMÁTICA (PB) → FECHA TODOS alertas coloridos!
+# -----------------------------------------------------------------------------
+def _is_color_printer_real(printer) -> bool:
+    """Retorna True se a impressora é REALMENTE colorida (evita falsos PB)."""
+    # Critério A: páginas coloridas já impressas >= 1?
+    try:
+        has_color_pages = bool(printer.pages_color is not None and int(printer.pages_color) > 0)
+    except Exception:
+        has_color_pages = False
+
+    # Critério B: algum toner colorido REALMENTE > 0 (não nulo, não zero, não negativo!)
+    try:
+        toners_color = [
+            printer.toner_cyan,
+            printer.toner_magenta,
+            printer.toner_yellow,
+        ]
+        has_color_toners = False
+        for t in toners_color:
+            if t is None:
+                continue
+            try:
+                v = float(t)
+                if v > 0:
+                    has_color_toners = True
+                    break
+            except Exception:
+                continue
+    except Exception:
+        has_color_toners = False
+
+    return has_color_pages or has_color_toners
+
+
 def _sync_alerts(db: Session, printer: Printer, alert_messages: list[str]) -> None:
     # -------------------------------------------------------------------------
-    # DETECTA IMPRESSORA MONOCROMATICA (PB)
-    # Regra: NENHUMA página colorida impressa E NENHUM toner colorido informado
+    # Usa o HELPER UNIFICADO anti-falso-positivo
     # -------------------------------------------------------------------------
-    has_color_pages = bool(printer.pages_color and printer.pages_color > 0)
-    has_color_toners = any(t is not None for t in (
-        printer.toner_cyan, printer.toner_magenta, printer.toner_yellow
-    ))
-    is_color_printer = has_color_pages or has_color_toners
+    is_color_printer = _is_color_printer_real(printer)
 
     # Palavras-chave de toner colorido (usado para BLOQUEAR alertas em PB)
     COLOR_TOKENS = ("ciano", "cyan", "magenta", "amarelo", "yellow")
@@ -1458,11 +1511,15 @@ def _sync_alerts(db: Session, printer: Printer, alert_messages: list[str]) -> No
             .filter(Alert.printer_id == printer.id, Alert.resolved == False)
             .all()
         )
+        ts = _now()
         for a in existing_active:
             if _is_color_alerta(a.message) and not a.resolved:
                 a.resolved = True
-                a.resolved_at = _now()
-        db.flush()
+                a.resolved_at = ts
+        try:
+            db.flush()
+        except Exception:
+            db.rollback()
 
     # -------------------------------------------------------------------------
     # FILTRAGEM: ignora alertas coloridos recebidos do agente, se PB
@@ -1488,7 +1545,10 @@ def _sync_alerts(db: Session, printer: Printer, alert_messages: list[str]) -> No
                 severity=severity,
             )
             db.add(alert)
-            db.flush()
+            try:
+                db.flush()
+            except Exception:
+                db.rollback()
 
 
 # -----------------------------------------------------------------------------
@@ -1515,23 +1575,19 @@ def _cleanup_false_color_alerts(db: Session, partner_id: int | None = None, clie
 
     printers: list[Printer] = printers_query.all()
     total_closed = 0
+    ts = _now()
 
     for printer in printers:
-        has_color_pages = bool(printer.pages_color and printer.pages_color > 0)
-        has_color_toners = any(t is not None for t in (
-            printer.toner_cyan, printer.toner_magenta, printer.toner_yellow
-        ))
-        is_color_printer = has_color_pages or has_color_toners
-        if is_color_printer:
+        # ⛔ Usa o helper novo (MESSA É A REGRA CORRETA!)
+        if _is_color_printer_real(printer):
             continue
 
-        # Impressora PB: fecha alertas coloridos ativos
+        # Impressora 100% confirmada PB: fecha QUALQUER alerta colorido ativo!
         actives = (
             db.query(Alert)
             .filter(Alert.printer_id == printer.id, Alert.resolved == False)
             .all()
         )
-        ts = _now()
         for a in actives:
             if _is_color_msg(a.message) and not a.resolved:
                 a.resolved = True
@@ -1540,7 +1596,7 @@ def _cleanup_false_color_alerts(db: Session, partner_id: int | None = None, clie
 
     if total_closed > 0:
         try:
-            db.flush()
+            db.commit()
         except Exception:
             db.rollback()
             total_closed = 0
