@@ -110,22 +110,43 @@ function readTokenFromStorage(): string | null {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const RETRYABLE_STATUS = new Set([404, 500, 502, 503, 504]);
+  const MAX_RETRIES = 2;
+  const RETRY_DELAY_MS = 800;
 
-  const currentToken = readTokenFromStorage();
-  if (currentToken) {
-    headers["Authorization"] = `Bearer ${currentToken}`;
-  }
+  let lastError: unknown = null;
 
-  const response = await fetch(`${BASE}${path}`, {
-    headers: { ...headers, ...options?.headers },
-    ...options,
-  });
-  if (!response.ok) {
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+
+    const currentToken = readTokenFromStorage();
+    if (currentToken) {
+      headers["Authorization"] = `Bearer ${currentToken}`;
+    }
+
+    const response = await fetch(`${BASE}${path}`, {
+      headers: { ...headers, ...options?.headers },
+      ...options,
+    });
+
+    if (response.ok) {
+      return response.json();
+    }
+
     const text = await response.text();
-    throw new Error(text || response.statusText);
+    lastError = new Error(text || response.statusText);
+
+    const shouldRetry = attempt < MAX_RETRIES && RETRYABLE_STATUS.has(response.status);
+    if (shouldRetry) {
+      // Delay + retry (evita 404 de cold-start da Vercel / Render)
+      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+      continue;
+    }
+
+    throw lastError;
   }
-  return response.json();
+
+  throw lastError;
 }
 
 export const api = {
