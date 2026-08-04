@@ -93,13 +93,28 @@ export function getPublicApiUrl() {
 
 export function setAuthToken(newToken: string | null) {
   token = newToken;
+  if (typeof window !== "undefined") {
+    if (newToken) {
+      window.localStorage.setItem("token", newToken);
+    } else {
+      window.localStorage.removeItem("token");
+    }
+  }
+}
+
+function readTokenFromStorage(): string | null {
+  if (typeof window === "undefined") return token;
+  const stored = window.localStorage.getItem("token");
+  if (stored !== token) token = stored;
+  return token;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
+
+  const currentToken = readTokenFromStorage();
+  if (currentToken) {
+    headers["Authorization"] = `Bearer ${currentToken}`;
   }
 
   const response = await fetch(`${BASE}${path}`, {

@@ -16,7 +16,7 @@ function copyText(text: string) {
 }
 
 export default function Clientes() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const effectiveRole = user?.role || "superadmin";
   const canManageClients = effectiveRole === "superadmin" || effectiveRole === "partner_admin";
   const [clients, setClients] = useState<Client[]>([]);
@@ -38,7 +38,10 @@ export default function Clientes() {
   const [pairingCopied, setPairingCopied] = useState(false);
 
   const load = () => api.getClients().then(setClients);
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (authLoading || !user) return;
+    load();
+  }, [authLoading, user]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -2,17 +2,20 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { DashboardStats, Alert } from "../types";
 import { formatDateTimeBrasil } from "../utils";
+import { useAuth } from "../context/AuthContext";
 
 export default function Dashboard() {
+  const { user, loading: authLoading } = useAuth();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
 
   useEffect(() => {
+    if (authLoading || !user) return;
     Promise.all([api.getStats(), api.getAlerts(false)]).then(([s, a]) => {
       setStats(s);
       setAlerts(a.slice(0, 5));
     });
-  }, []);
+  }, [authLoading, user]);
 
   if (!stats) return <div className="loading">Carregando...</div>;
 

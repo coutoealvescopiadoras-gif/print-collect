@@ -2,12 +2,17 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Alert } from "../types";
 import { formatDateTimeBrasil } from "../utils";
+import { useAuth } from "../context/AuthContext";
 
 export default function Alertas() {
+  const { user, loading: authLoading } = useAuth();
   const [alerts, setAlerts] = useState<Alert[]>([]);
 
   const load = () => api.getAlerts(false).then(setAlerts);
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (authLoading || !user) return;
+    load();
+  }, [authLoading, user]);
 
   const handleResolve = async (id: number) => {
     await api.resolveAlert(id);

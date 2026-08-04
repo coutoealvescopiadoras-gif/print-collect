@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Printer } from "../types";
 import { formatDateTimeBrasil, formatNumberBrasil } from "../utils";
+import { useAuth } from "../context/AuthContext";
 
 function TonerBar({ level }: { level: number | null }) {
   if (level === null) return <span>—</span>;
@@ -17,11 +18,13 @@ function TonerBar({ level }: { level: number | null }) {
 }
 
 export default function Impressoras() {
+  const { user, loading: authLoading } = useAuth();
   const [printers, setPrinters] = useState<Printer[]>([]);
 
   useEffect(() => {
+    if (authLoading || !user) return;
     api.getPrinters().then(setPrinters);
-  }, []);
+  }, [authLoading, user]);
 
   return (
     <>

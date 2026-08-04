@@ -5,7 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { formatDateTimeBrasil } from "../utils";
 
 export default function Agentes() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const effectiveRole = user?.role || "superadmin";
   const canManageAgents = effectiveRole === "superadmin" || effectiveRole === "partner_admin" || effectiveRole === "client_manager";
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -20,7 +20,10 @@ export default function Agentes() {
     api.getAgents().then(setAgents);
     api.getClients().then(setClients);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (authLoading || !user) return;
+    load();
+  }, [authLoading, user]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
