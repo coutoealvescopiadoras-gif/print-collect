@@ -502,7 +502,7 @@ export default function Clientes() {
                     </button>
                   </div>
                   <div style={{ marginTop: "0.75rem", fontSize: 13, color: "var(--text-muted)" }}>
-                    Expira em: <strong style={{ color: "var(--text)" }}>{formatDatePtBr(pairingResult.pairing_expires_at)}</strong>
+                    Expira em: <strong style={{ color: "var(--text)" }}>{formatDateTimeBrasil(pairingResult.pairing_expires_at)}</strong>
                     {"  ·  "}
                     {pairingResult.server_url && (
                       <>Servidor: <code style={{ background: "rgba(0,0,0,0.08)", padding: "1px 6px", borderRadius: 4 }}>{pairingResult.server_url}</code></>
