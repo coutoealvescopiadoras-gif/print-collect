@@ -613,6 +613,18 @@ def list_partner_stats(db: Session = Depends(get_db), current_user: User = Depen
 
 @router.get("/dashboard/stats", response_model=DashboardStats)
 def dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    # LIMPEZA AUTOMATICA: fecha alertas falsos de toner colorido em impressoras PB!
+    # Roda SEMPRE que carregar o Dashboard, por user scope (superadmin/partner/client)
+    if _is_partner_admin(current_user):
+        partner_id = _required_partner_id(current_user)
+        _cleanup_false_color_alerts(db, partner_id=partner_id, client_id=None)
+    elif _is_superadmin(current_user):
+        _cleanup_false_color_alerts(db, partner_id=None, client_id=None)
+    else:
+        client_id = _required_client_id(current_user)
+        _cleanup_false_color_alerts(db, partner_id=None, client_id=client_id)
+    db.commit()
+
     printers_query = db.query(Printer)
     alerts_query = db.query(Alert).join(Printer)
     clients_query = db.query(Client).filter(Client.active == True)
@@ -767,6 +779,16 @@ def update_printer(printer_id: int, payload: PrinterUpdate, db: Session = Depend
 
 @router.get("/alerts", response_model=list[AlertOut])
 def list_alerts(resolved: Optional[bool] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    # LIMPEZA AUTOMATICA: fecha alertas falsos de toner colorido em impressoras PB
+    # (roda tambem ao abrir a tela de Alertas)
+    if _is_partner_admin(current_user):
+        _cleanup_false_color_alerts(db, partner_id=_required_partner_id(current_user))
+    elif _is_superadmin(current_user):
+        _cleanup_false_color_alerts(db)
+    else:
+        _cleanup_false_color_alerts(db, client_id=_required_client_id(current_user))
+    db.commit()
+
     query = db.query(Alert).join(Printer)
     if _is_partner_admin(current_user):
         query = query.join(Client, Client.id == Printer.client_id).filter(Client.partner_id == _required_partner_id(current_user))
@@ -775,6 +797,26 @@ def list_alerts(resolved: Optional[bool] = None, db: Session = Depends(get_db), 
     if resolved is not None:
         query = query.filter(Alert.resolved == resolved)
     return query.order_by(Alert.created_at.desc()).limit(100).all()
+
+
+@router.post("/alerts/clean-false-color")
+def clean_false_color_alerts_endpoint(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Fecha TODOS os alertas ativos de toner colorido em impressoras PB.
+    Roda automaticamente no Dashboard/Alertas, mas pode ser chamado manualmente.
+    """
+    _require_manage_any(current_user)
+    closed = 0
+    if _is_partner_admin(current_user):
+        closed = _cleanup_false_color_alerts(db, partner_id=_required_partner_id(current_user))
+    elif _is_superadmin(current_user):
+        closed = _cleanup_false_color_alerts(db)
+    else:
+        closed = _cleanup_false_color_alerts(db, client_id=_required_client_id(current_user))
+    db.commit()
+    return {"status": "ok", "closed_alerts": closed}
 
 
 @router.post("/alerts/{alert_id}/resolve", response_model=AlertOut)
@@ -1285,6 +1327,63 @@ def _sync_alerts(db: Session, printer: Printer, alert_messages: list[str]) -> No
             )
             db.add(alert)
             db.flush()
+
+
+# -----------------------------------------------------------------------------
+# LIMPEZA GLOBAL: fecha alertas FALSOS de toner colorido EM TODAS AS
+# IMPRESSORAS MONOCROMATICAS (PB) DO BANCO, MESMO SEM NOVA LEITURA.
+# Chamado automaticamente ao carregar o Dashboard e via endpoint explicito.
+# -----------------------------------------------------------------------------
+COLOR_TOKENS_GLOBAL = ("ciano", "cyan", "magenta", "amarelo", "yellow")
+
+
+def _is_color_msg(msg: str) -> bool:
+    low = msg.lower()
+    return any(token in low for token in COLOR_TOKENS_GLOBAL)
+
+
+def _cleanup_false_color_alerts(db: Session, partner_id: int | None = None, client_id: int | None = None) -> int:
+    """Fecha alertas ativos de toner colorido em impressoras PB. Retorna qtd fechada."""
+    printers_query = db.query(Printer)
+
+    if client_id is not None:
+        printers_query = printers_query.filter(Printer.client_id == client_id)
+    elif partner_id is not None:
+        printers_query = printers_query.join(Client, Client.id == Printer.client_id).filter(Client.partner_id == partner_id)
+
+    printers: list[Printer] = printers_query.all()
+    total_closed = 0
+
+    for printer in printers:
+        has_color_pages = bool(printer.pages_color and printer.pages_color > 0)
+        has_color_toners = any(t is not None for t in (
+            printer.toner_cyan, printer.toner_magenta, printer.toner_yellow
+        ))
+        is_color_printer = has_color_pages or has_color_toners
+        if is_color_printer:
+            continue
+
+        # Impressora PB: fecha alertas coloridos ativos
+        actives = (
+            db.query(Alert)
+            .filter(Alert.printer_id == printer.id, Alert.resolved == False)
+            .all()
+        )
+        ts = _now()
+        for a in actives:
+            if _is_color_msg(a.message) and not a.resolved:
+                a.resolved = True
+                a.resolved_at = ts
+                total_closed += 1
+
+    if total_closed > 0:
+        try:
+            db.flush()
+        except Exception:
+            db.rollback()
+            total_closed = 0
+
+    return total_closed
             
 
 
