@@ -23,30 +23,149 @@ export default function Dashboard() {
     <>
       <h1 className="page-title">Dashboard</h1>
 
-      <div className="dashboard-stats-row">
-        <div className="dashboard-stat-col">
-          <div className="label">Clientes ativos</div>
-          <div className="value">{stats.total_clients}</div>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "row",
+          flexWrap: "wrap",
+          justifyContent: "flex-start",
+          alignItems: "stretch",
+          gap: "1rem",
+          marginBottom: "2rem",
+          width: "100%",
+          maxWidth: "100%",
+          boxSizing: "border-box",
+          clear: "both",
+          float: "none",
+          padding: 0,
+          margin: 0,
+          marginBottom: "2rem",
+        }}
+      >
+        <div
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            padding: "1.25rem",
+            boxSizing: "border-box",
+            minWidth: "170px",
+            width: "auto",
+            flex: "1 1 calc(25% - 1rem)",
+            maxWidth: "calc(25% - 1rem)",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <div style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>
+            Clientes ativos
+          </div>
+          <div style={{ fontSize: "2rem", fontWeight: 700 }}>{stats.total_clients}</div>
         </div>
-        <div className="dashboard-stat-col">
-          <div className="label">Impressoras</div>
-          <div className="value">{stats.total_printers}</div>
+
+        <div
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            padding: "1.25rem",
+            boxSizing: "border-box",
+            minWidth: "170px",
+            width: "auto",
+            flex: "1 1 calc(25% - 1rem)",
+            maxWidth: "calc(25% - 1rem)",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <div style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>
+            Impressoras
+          </div>
+          <div style={{ fontSize: "2rem", fontWeight: 700 }}>{stats.total_printers}</div>
         </div>
-        <div className="dashboard-stat-col success">
-          <div className="label">Online</div>
-          <div className="value">{stats.online_printers}</div>
+
+        <div
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            padding: "1.25rem",
+            boxSizing: "border-box",
+            minWidth: "170px",
+            width: "auto",
+            flex: "1 1 calc(25% - 1rem)",
+            maxWidth: "calc(25% - 1rem)",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <div style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>
+            Online
+          </div>
+          <div style={{ fontSize: "2rem", fontWeight: 700, color: "var(--success)" }}>{stats.online_printers}</div>
         </div>
-        <div className="dashboard-stat-col danger">
-          <div className="label">Offline</div>
-          <div className="value">{stats.offline_printers}</div>
+
+        <div
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            padding: "1.25rem",
+            boxSizing: "border-box",
+            minWidth: "170px",
+            width: "auto",
+            flex: "1 1 calc(25% - 1rem)",
+            maxWidth: "calc(25% - 1rem)",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <div style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>
+            Offline
+          </div>
+          <div style={{ fontSize: "2rem", fontWeight: 700, color: "var(--danger)" }}>{stats.offline_printers}</div>
         </div>
-        <div className="dashboard-stat-col warning">
-          <div className="label">Alertas ativos</div>
-          <div className="value">{stats.active_alerts}</div>
+
+        <div
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            padding: "1.25rem",
+            boxSizing: "border-box",
+            minWidth: "170px",
+            width: "auto",
+            flex: "1 1 calc(25% - 1rem)",
+            maxWidth: "calc(25% - 1rem)",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <div style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>
+            Alertas ativos
+          </div>
+          <div style={{ fontSize: "2rem", fontWeight: 700, color: "var(--warning)" }}>{stats.active_alerts}</div>
         </div>
-        <div className="dashboard-stat-col warning">
-          <div className="label">Toner baixo</div>
-          <div className="value">{stats.low_toner_count}</div>
+
+        <div
+          style={{
+            background: "var(--surface)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            padding: "1.25rem",
+            boxSizing: "border-box",
+            minWidth: "170px",
+            width: "auto",
+            flex: "1 1 calc(25% - 1rem)",
+            maxWidth: "calc(25% - 1rem)",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <div style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>
+            Toner baixo
+          </div>
+          <div style={{ fontSize: "2rem", fontWeight: 700, color: "var(--warning)" }}>{stats.low_toner_count}</div>
         </div>
       </div>
 
