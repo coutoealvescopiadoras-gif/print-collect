@@ -29,6 +29,7 @@ class Partner(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(200), nullable=False, unique=True)
     logo_url = Column(String(500), nullable=True)
+    logo_data = Column(Text, nullable=True)
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -244,6 +245,8 @@ def _ensure_partner_multitenancy_columns(target_engine) -> None:
         existing_columns = {column["name"] for column in inspector.get_columns("partners")}
         if "logo_url" not in existing_columns:
             statements.append("ALTER TABLE partners ADD COLUMN logo_url VARCHAR(500) NULL")
+        if "logo_data" not in existing_columns:
+            statements.append("ALTER TABLE partners ADD COLUMN logo_data TEXT NULL")
 
     if "clients" in table_names:
         existing_columns = {column["name"] for column in inspector.get_columns("clients")}

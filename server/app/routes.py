@@ -138,6 +138,36 @@ def _download_partner_logo(logo_url: str) -> Optional[Tuple[str, bytes]]:
         return None
 
 
+def _parse_partner_logo_data(logo_data: str) -> Optional[Tuple[str, bytes]]:
+    """
+    Recebe uma Data URI (ex: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA...")
+    e retorna (filename, bytes) prontos para salvar no ZIP.
+    Limite de 2MB para não explodir o banco nem o pacote.
+    """
+    import base64 as _base64
+
+    if not logo_data or not logo_data.startswith("data:image/"):
+        return None
+
+    try:
+        header_part, b64_part = logo_data.split(",", 1)
+        header_lower = header_part.lower()
+
+        if ";base64" not in header_lower:
+            return None
+
+        mime = header_part[len("data:") : header_part.find(";base64")].strip().lower()
+        extension = _guess_logo_extension(f"file.{mime.split('/')[-1] if '/' in mime else 'png'}", mime)
+
+        raw_bytes = _base64.b64decode(b64_part + "==", validate=False)
+        if not raw_bytes or len(raw_bytes) > 2 * 1024 * 1024:
+            return None
+
+        return (f"logo-revendedor{extension}", raw_bytes)
+    except Exception:
+        return None
+
+
 def verify_password(plain_password, hashed_password):
     try:
         if isinstance(hashed_password, str):
@@ -1202,7 +1232,14 @@ def download_agent_windows_package(
         zf.writestr("config.yaml", config_yaml)
         downloaded_logo_name: Optional[str] = None
         if partner:
-            if partner.logo_url:
+            logo_from_data = (
+                _parse_partner_logo_data(partner.logo_data) if partner.logo_data else None
+            )
+            if logo_from_data:
+                logo_filename, logo_bytes = logo_from_data
+                downloaded_logo_name = logo_filename
+                zf.writestr(logo_filename, logo_bytes)
+            elif partner.logo_url:
                 downloaded_logo = _download_partner_logo(partner.logo_url)
                 if downloaded_logo:
                     logo_filename, logo_bytes = downloaded_logo
@@ -1213,6 +1250,7 @@ def download_agent_windows_package(
                     "[partner]",
                     f"name={partner.name}",
                     f"logo_url={partner.logo_url or ''}",
+                    f"logo_data={'1' if partner.logo_data else ''}",
                     f"logo_file={downloaded_logo_name or ''}",
                     "",
                 ]

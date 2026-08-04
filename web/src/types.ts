@@ -88,6 +88,7 @@ export interface Partner {
   id: number;
   name: string;
   logo_url: string | null;
+  logo_data: string | null;
   active: boolean;
   created_at: string;
 }

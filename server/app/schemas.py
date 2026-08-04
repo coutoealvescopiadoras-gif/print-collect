@@ -40,6 +40,7 @@ class ClientOut(ClientBase):
 class PartnerBase(BaseModel):
     name: str
     logo_url: Optional[str] = None
+    logo_data: Optional[str] = None
     active: bool = True
 
 
@@ -50,6 +51,7 @@ class PartnerCreate(PartnerBase):
 class PartnerUpdate(BaseModel):
     name: Optional[str] = None
     logo_url: Optional[str] = None
+    logo_data: Optional[str] = None
     active: Optional[bool] = None
 
 

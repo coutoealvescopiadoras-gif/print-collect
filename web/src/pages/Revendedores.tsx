@@ -3,19 +3,49 @@ import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
 import type { Partner, PartnerBillingStats } from "../types";
 
+function getPartnerLogoSrc(partner: { logo_data: string | null; logo_url: string | null }): string | null {
+  if (partner.logo_data) return partner.logo_data;
+  if (partner.logo_url) return partner.logo_url;
+  return null;
+}
+
+function fileToDataUri(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Erro ao ler arquivo"));
+    reader.readAsDataURL(file);
+  });
+}
+
+const MAX_LOGO_MB = 2;
+
+type EditMode = "create" | "edit";
+
 export default function Revendedores() {
   const { user, loading: authLoading } = useAuth();
   const isSuperadmin = (user?.role || "superadmin") === "superadmin";
   const [partners, setPartners] = useState<Partner[]>([]);
   const [partnerStats, setPartnerStats] = useState<PartnerBillingStats[]>([]);
   const [showModal, setShowModal] = useState(false);
+  const [editMode, setEditMode] = useState<EditMode>("create");
+  const [editingPartnerId, setEditingPartnerId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [showUrlField, setShowUrlField] = useState(false);
   const [form, setForm] = useState({
     name: "",
     logo_url: "",
+    logo_data: "",
     active: true,
   });
+
+  const resetForm = () => {
+    setForm({ name: "", logo_url: "", logo_data: "", active: true });
+    setShowUrlField(false);
+    setError("");
+    setEditingPartnerId(null);
+  };
 
   const load = async () => {
     const [partnersData, statsData] = await Promise.all([
@@ -31,21 +61,83 @@ export default function Revendedores() {
     load();
   }, [authLoading, user, isSuperadmin]);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const openCreate = () => {
+    setEditMode("create");
+    resetForm();
+    setShowModal(true);
+  };
+
+  const openEdit = (partner: Partner) => {
+    setEditMode("edit");
+    setEditingPartnerId(partner.id);
+    setForm({
+      name: partner.name,
+      logo_url: partner.logo_url || "",
+      logo_data: partner.logo_data || "",
+      active: partner.active,
+    });
+    setShowUrlField(!!partner.logo_url && !partner.logo_data);
+    setError("");
+    setShowModal(true);
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > MAX_LOGO_MB * 1024 * 1024) {
+      window.alert(
+        `Arquivo muito grande! Escolha uma imagem com no máximo ${MAX_LOGO_MB}MB.\n` +
+          `Tamanho selecionado: ${(file.size / (1024 * 1024)).toFixed(2)}MB.`,
+      );
+      e.target.value = "";
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      window.alert("Escolha um arquivo de imagem (PNG, JPG, WebP, SVG, GIF).");
+      e.target.value = "";
+      return;
+    }
+
+    try {
+      const dataUri = await fileToDataUri(file);
+      setForm((curr) => ({ ...curr, logo_data: dataUri }));
+    } catch (err) {
+      window.alert("Erro ao converter imagem. Tente novamente.");
+    } finally {
+      e.target.value = "";
+    }
+  };
+
+  const handleRemoveLogo = () => {
+    setForm((curr) => ({ ...curr, logo_data: "", logo_url: "" }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setError("");
     try {
-      await api.createPartner({
+      const payload = {
         name: form.name.trim(),
         logo_url: form.logo_url.trim() || null,
+        logo_data: form.logo_data.trim() || null,
         active: form.active,
-      });
+      };
+
+      if (editMode === "create") {
+        await api.createPartner(payload);
+      } else {
+        if (editingPartnerId == null) throw new Error("ID do revendedor não encontrado");
+        await api.updatePartner(editingPartnerId, payload);
+      }
+
       setShowModal(false);
-      setForm({ name: "", logo_url: "", active: true });
+      resetForm();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao criar revendedor");
+      setError(err instanceof Error ? err.message : "Erro ao salvar revendedor");
     } finally {
       setSaving(false);
     }
@@ -67,11 +159,17 @@ export default function Revendedores() {
     );
   }
 
+  const logoPreviewSrc = form.logo_data
+    ? form.logo_data
+    : form.logo_url
+      ? form.logo_url
+      : null;
+
   return (
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
         <h1 className="page-title" style={{ marginBottom: 0 }}>Revendedores</h1>
-        <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Novo revendedor</button>
+        <button className="btn btn-primary" onClick={openCreate}>+ Novo revendedor</button>
       </div>
 
       <div className="card">
@@ -84,51 +182,88 @@ export default function Revendedores() {
           <table>
             <thead>
               <tr>
+                <th style={{ width: 90 }}>Logo</th>
                 <th>Revendedor</th>
                 <th>Clientes</th>
                 <th>Impressoras</th>
                 <th>Cobradas</th>
                 <th>Online</th>
                 <th>Offline</th>
-                <th>Logo</th>
                 <th>Status</th>
-                <th></th>
+                <th style={{ width: 180 }}>Ações</th>
               </tr>
             </thead>
             <tbody>
               {partners.map((partner) => {
                 const stats = partnerStats.find((item) => item.partner_id === partner.id);
+                const logoSrc = getPartnerLogoSrc(partner);
                 return (
-                <tr key={partner.id}>
-                  <td>{partner.name}</td>
-                  <td>{stats?.total_clients ?? 0}</td>
-                  <td>{stats?.total_printers ?? 0}</td>
-                  <td>
-                    <strong>{stats?.billable_printers ?? 0}</strong>
-                  </td>
-                  <td>{stats?.online_printers ?? 0}</td>
-                  <td>{stats?.offline_printers ?? 0}</td>
-                  <td>
-                    {partner.logo_url ? (
-                      <a href={partner.logo_url} target="_blank" rel="noreferrer">
-                        Ver logo
-                      </a>
-                    ) : (
-                      "Sem logo"
-                    )}
-                  </td>
-                  <td>
-                    <span className={`badge ${partner.active ? "online" : "offline"}`}>
-                      {partner.active ? "Ativo" : "Inativo"}
-                    </span>
-                  </td>
-                  <td>
-                    <button className="btn btn-ghost" onClick={() => toggleActive(partner)}>
-                      {partner.active ? "Desativar" : "Ativar"}
-                    </button>
-                  </td>
-                </tr>
-              )})}
+                  <tr key={partner.id}>
+                    <td>
+                      {logoSrc ? (
+                        <img
+                          src={logoSrc}
+                          alt={partner.name}
+                          title={partner.name}
+                          style={{
+                            width: 64,
+                            height: 40,
+                            objectFit: "contain",
+                            background: "#fff",
+                            border: "1px solid var(--border)",
+                            borderRadius: 6,
+                            padding: 4,
+                          }}
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                          }}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            width: 64,
+                            height: 40,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            background: "var(--surface-hover)",
+                            border: "1px dashed var(--border)",
+                            borderRadius: 6,
+                            color: "var(--text-muted)",
+                            fontSize: 11,
+                          }}
+                          title="Sem logo"
+                        >
+                          —
+                        </div>
+                      )}
+                    </td>
+                    <td><strong>{partner.name}</strong></td>
+                    <td>{stats?.total_clients ?? 0}</td>
+                    <td>{stats?.total_printers ?? 0}</td>
+                    <td>
+                      <strong>{stats?.billable_printers ?? 0}</strong>
+                    </td>
+                    <td>{stats?.online_printers ?? 0}</td>
+                    <td>{stats?.offline_printers ?? 0}</td>
+                    <td>
+                      <span className={`badge ${partner.active ? "online" : "offline"}`}>
+                        {partner.active ? "Ativo" : "Inativo"}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <button className="btn btn-secondary" onClick={() => openEdit(partner)}>
+                          ✏️ Editar
+                        </button>
+                        <button className="btn btn-ghost" onClick={() => toggleActive(partner)}>
+                          {partner.active ? "Desativar" : "Ativar"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -137,41 +272,173 @@ export default function Revendedores() {
       {showModal && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Novo revendedor</h3>
-            <form onSubmit={handleCreate}>
+            <h3>{editMode === "create" ? "Novo revendedor" : "Editar revendedor"}</h3>
+            <form onSubmit={handleSubmit}>
               <div className="form-group">
                 <label>Nome *</label>
                 <input
                   required
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="Nome do revendedor / marca"
                 />
               </div>
+
               <div className="form-group">
-                <label>URL da logo</label>
-                <input
-                  placeholder="https://site.com/logo.png"
-                  value={form.logo_url}
-                  onChange={(e) => setForm({ ...form, logo_url: e.target.value })}
-                />
-                <small style={{ color: "var(--text-muted)" }}>
-                  Se preencher, o ZIP do instalador tenta incluir essa logo na entrega comercial. Para aparecer dentro da janela do instalador, a forma mais garantida continua sendo usar um arquivo BMP chamado logo-revendedor.bmp ao lado do PrintCollectSetup.exe.
+                <label>
+                  Logo do revendedor{" "}
+                  <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: 13 }}>
+                    (PNG / JPG / WebP / SVG, até {MAX_LOGO_MB}MB — recomendado fundo transparente)
+                  </span>
+                </label>
+
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "0.75rem",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    padding: "0.75rem",
+                    background: "var(--surface-hover)",
+                    borderRadius: 8,
+                    border: "1px dashed var(--border)",
+                  }}
+                >
+                  {logoPreviewSrc ? (
+                    <img
+                      src={logoPreviewSrc}
+                      alt="Prévia da logo"
+                      style={{
+                        width: 140,
+                        height: 64,
+                        objectFit: "contain",
+                        background: "#fff",
+                        border: "1px solid var(--border)",
+                        borderRadius: 8,
+                        padding: 6,
+                      }}
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.opacity = "0.4";
+                      }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        width: 140,
+                        height: 64,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: "var(--text-muted)",
+                        fontSize: 13,
+                        background: "#fff",
+                        border: "1px dashed var(--border)",
+                        borderRadius: 8,
+                      }}
+                    >
+                      Sem logo
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 220 }}>
+                    <label
+                      className="btn btn-secondary"
+                      style={{
+                        cursor: "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        justifyContent: "center",
+                      }}
+                    >
+                      📁 Escolher arquivo do computador
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif"
+                        style={{ display: "none" }}
+                        onChange={handleFileChange}
+                      />
+                    </label>
+
+                    {!showUrlField ? (
+                      <button
+                        type="button"
+                        className="btn btn-link"
+                        style={{ padding: 0, margin: 0, fontSize: 13 }}
+                        onClick={() => setShowUrlField(true)}
+                      >
+                        🔗 Ou colar uma URL da logo (modo avançado)
+                      </button>
+                    ) : (
+                      <div>
+                        <input
+                          placeholder="https://site.com/logo.png"
+                          value={form.logo_url}
+                          onChange={(e) => setForm({ ...form, logo_url: e.target.value })}
+                          style={{ marginBottom: 4 }}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-link"
+                          style={{ padding: 0, margin: 0, fontSize: 12 }}
+                          onClick={() => {
+                            setShowUrlField(false);
+                            setForm((curr) => ({ ...curr, logo_url: "" }));
+                          }}
+                        >
+                          ✕ Cancelar URL (usar arquivo)
+                        </button>
+                      </div>
+                    )}
+
+                    {logoPreviewSrc && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={handleRemoveLogo}
+                        style={{ color: "var(--danger)", padding: "0.35rem 0.75rem" }}
+                      >
+                        🗑️ Remover logo
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <small style={{ color: "var(--text-muted)", marginTop: 6, display: "block" }}>
+                  A logo é incluída automaticamente no ZIP do instalador para os clientes do revendedor.
+                  Para aparecer DENTRO da janela do Inno Setup, continue podendo colocar um arquivo{" "}
+                  <code>logo-revendedor.bmp</code> ao lado do <code>PrintCollectSetup.exe</code>.
                 </small>
               </div>
-              {form.logo_url && (
-                <div style={{ marginBottom: "1rem" }}>
-                  <img
-                    src={form.logo_url}
-                    alt="Prévia da logo"
-                    style={{ maxWidth: "220px", maxHeight: "80px", objectFit: "contain", background: "#fff", padding: "0.5rem", borderRadius: "8px" }}
-                  />
+
+              {editMode !== "create" && (
+                <div className="form-group">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={form.active}
+                      onChange={(e) => setForm({ ...form, active: e.target.checked })}
+                      style={{ marginRight: 6 }}
+                    />
+                    Revendedor ativo
+                  </label>
                 </div>
               )}
+
               {error && <div style={{ color: "var(--danger)", marginBottom: "1rem" }}>{error}</div>}
               <div className="modal-actions">
-                <button type="button" className="btn btn-ghost" onClick={() => setShowModal(false)}>Cancelar</button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    setShowModal(false);
+                    resetForm();
+                  }}
+                >
+                  Cancelar
+                </button>
                 <button type="submit" className="btn btn-primary" disabled={saving}>
-                  {saving ? "Salvando..." : "Criar"}
+                  {saving ? "Salvando..." : editMode === "create" ? "Criar" : "Salvar"}
                 </button>
               </div>
             </form>
