@@ -1,16 +1,14 @@
 import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
-import { LOGO_URL as DEFAULT_LOGO_URL } from "../assets/placeholder-logo";
-
-const DEFAULT_BRANDING_NAME = "C&A Soluções em Copiadoras";
+import { PRINT_COLLECT_LOGO } from "../assets/placeholder-logo";
 
 export function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const { login, branding } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
 
   async function handleSubmit(e: React.FormEvent) {
@@ -27,60 +25,35 @@ export function Login() {
     }
   }
 
-  const isBrandingDefault =
-    !branding ||
-    !branding.display_name ||
-    branding.display_name === DEFAULT_BRANDING_NAME ||
-    (branding.partner_id === null && branding.client_id === null);
-
   return (
     <div className="login-page">
       <div className="login-container">
-        {isBrandingDefault ? (
-          <div style={{ textAlign: "center", marginBottom: "2rem" }}>
-            <img
-              src={DEFAULT_LOGO_URL}
-              alt={DEFAULT_BRANDING_NAME}
-              style={{
-                width: "320px",
-                height: "auto",
-                borderRadius: "0",
-                objectFit: "contain",
-                maxWidth: "100%",
-              }}
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).src = DEFAULT_LOGO_URL;
-              }}
-            />
-          </div>
-        ) : (
-          <div style={{ textAlign: "center", marginBottom: "2rem" }}>
-            <img
-              src={branding?.logo_src || DEFAULT_LOGO_URL}
-              alt={branding?.display_name || DEFAULT_BRANDING_NAME}
-              style={{
-                width: "280px",
-                height: "auto",
-                objectFit: "contain",
-                maxWidth: "100%",
-                marginBottom: "1rem",
-                background: "#fff",
-                padding: 10,
-                borderRadius: 10,
-                border: "1px solid var(--border)",
-              }}
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).src = DEFAULT_LOGO_URL;
-              }}
-            />
-            <h1 style={{ marginBottom: "0.5rem" }}>
-              {branding?.display_name || DEFAULT_BRANDING_NAME}
-            </h1>
-            <p style={{ color: "var(--text-muted)" }}>
-              {branding?.tagline || "Painel de Monitoramento de Impressoras"}
-            </p>
-          </div>
-        )}
+        <div style={{ textAlign: "center", marginBottom: "2rem" }}>
+          <img
+            src={PRINT_COLLECT_LOGO}
+            alt="Print Collect - Monitoramento Automático"
+            style={{
+              width: "380px",
+              height: "auto",
+              borderRadius: "0",
+              objectFit: "contain",
+              maxWidth: "100%",
+            }}
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).src = PRINT_COLLECT_LOGO;
+            }}
+          />
+          <p
+            style={{
+              color: "var(--text-muted)",
+              fontSize: "0.95rem",
+              marginTop: "0.5rem",
+              marginBottom: 0,
+            }}
+          >
+            Painel de Monitoramento Automático de Contadores de Impressoras
+          </p>
+        </div>
 
         <form className="login-form" onSubmit={handleSubmit}>
           <div className="form-group">
