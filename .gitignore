@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 .venv/
+.venv*/
 venv/
 env/
 ENV/
@@ -20,12 +21,15 @@ node_modules/
 web/dist/
 web/.vite/
 web/build/
+web/tsconfig.tsbuildinfo
 
 # NÃO subir builds grandes do agente PyInstaller / Inno
 agent/build/
 agent/dist/
 agent/__pycache__/
 agent/*.egg-info/
+agent/windows/*.exe
+agent/windows/Output/
 # (Se quiser disponibilizar .exe no GitHub Release, é melhor do que commitá-los)
 
 # NÃO subir arquivos temporarios agente de teste

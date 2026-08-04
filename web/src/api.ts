@@ -209,6 +209,33 @@ export const api = {
     request<{ status: string }>(`/api/clients/${clientId}`, { method: "DELETE" }),
   getLocations: (clientId: number) =>
     request<import("./types").Location[]>(`/api/clients/${clientId}/locations`),
+  createLocation: (data: {
+    client_id: number;
+    name: string;
+    sector?: string | null;
+    responsible?: string | null;
+    address?: string | null;
+  }) =>
+    request<import("./types").Location>("/api/locations", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updatePrinter: (
+    printerId: number,
+    data: Partial<{
+      ip_address: string;
+      mac_address: string;
+      serial_number: string;
+      model: string;
+      manufacturer: string;
+      location_id: number | null;
+      status: string;
+    }>,
+  ) =>
+    request<import("./types").Printer>(`/api/printers/${printerId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
   getPrinters: (clientId?: number) =>
     request<import("./types").Printer[]>(
       clientId ? `/api/printers?client_id=${clientId}` : "/api/printers",

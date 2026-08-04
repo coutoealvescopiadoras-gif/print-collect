@@ -19,6 +19,7 @@ export default function Clientes() {
   const { user, loading: authLoading } = useAuth();
   const effectiveRole = user?.role || "superadmin";
   const canManageClients = effectiveRole === "superadmin" || effectiveRole === "partner_admin";
+  const canEditSector = effectiveRole === "superadmin" || effectiveRole === "partner_admin" || effectiveRole === "client_manager";
   const [clients, setClients] = useState<Client[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ name: "", cnpj: "", contact_name: "", contact_email: "" });
@@ -27,6 +28,8 @@ export default function Clientes() {
   const [clientPrinters, setClientPrinters] = useState<Record<number, Printer[]>>({});
   const [clientLocations, setClientLocations] = useState<Record<number, Location[]>>({});
   const [loadingPrintersClientId, setLoadingPrintersClientId] = useState<number | null>(null);
+  const [editingSectorPrinterId, setEditingSectorPrinterId] = useState<number | null>(null);
+  const [savingSectorPrinterId, setSavingSectorPrinterId] = useState<number | null>(null);
 
   // Modal pareamento
   const [pairingClientId, setPairingClientId] = useState<number | null>(null);
@@ -70,6 +73,53 @@ export default function Clientes() {
     if (!printer.location_id) return "—";
     const location = (clientLocations[clientId] || []).find((item) => item.id === printer.location_id);
     return location ? (location.sector || location.name || "—") : "—";
+  };
+
+  const handleChangeSector = async (
+    clientId: number,
+    printer: Printer,
+    rawValue: string,
+  ) => {
+    try {
+      setSavingSectorPrinterId(printer.id);
+
+      let targetLocationId: number | null = null;
+
+      if (rawValue === "") {
+        targetLocationId = null;
+      } else if (rawValue.startsWith("new:")) {
+        const sectorName = rawValue.slice(4).trim();
+        if (!sectorName) return;
+        const created = await api.createLocation({
+          client_id: clientId,
+          name: sectorName,
+          sector: sectorName,
+        });
+        setClientLocations((current) => {
+          const list = current[clientId] || [];
+          return { ...current, [clientId]: [...list, created] };
+        });
+        targetLocationId = created.id;
+      } else {
+        targetLocationId = Number(rawValue) || null;
+      }
+
+      const updatedPrinter = await api.updatePrinter(printer.id, {
+        location_id: targetLocationId,
+      });
+      setClientPrinters((current) => {
+        const list = current[clientId] || [];
+        return {
+          ...current,
+          [clientId]: list.map((p) => (p.id === printer.id ? { ...p, ...updatedPrinter } : p)),
+        };
+      });
+    } catch (e: any) {
+      window.alert("Erro ao salvar setor: " + String(e?.message || e));
+    } finally {
+      setEditingSectorPrinterId(null);
+      setSavingSectorPrinterId(null);
+    }
   };
 
   const toggleClientPrinters = async (clientId: number) => {
@@ -347,26 +397,107 @@ export default function Clientes() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {(clientPrinters[c.id] || []).map((printer) => (
-                                  <tr key={printer.id}>
-                                    <td>
-                                      <div>{printer.model || "—"}</div>
-                                      {printer.manufacturer && (
-                                        <small style={{ color: "var(--text-muted)" }}>{printer.manufacturer}</small>
-                                      )}
-                                    </td>
-                                    <td>{getPrinterSector(c.id, printer)}</td>
-                                    <td>{printer.ip_address}</td>
-                                    <td>{printer.serial_number || "—"}</td>
-                                    <td>
-                                      <span className={`badge ${printer.status}`}>{printer.status}</span>
-                                    </td>
-                                    <td>{formatNumberBrasil(printer.pages_total)}</td>
-                                    <td>
-                                      {formatDateTimeBrasil(printer.last_seen)}
-                                    </td>
-                                  </tr>
-                                ))}
+                                {(clientPrinters[c.id] || []).map((printer) => {
+                                  const isEditingSector = editingSectorPrinterId === printer.id;
+                                  const isSavingSector = savingSectorPrinterId === printer.id;
+                                  const currentSectorLabel = getPrinterSector(c.id, printer);
+
+                                  return (
+                                    <tr key={printer.id}>
+                                      <td>
+                                        <div>{printer.model || "—"}</div>
+                                        {printer.manufacturer && (
+                                          <small style={{ color: "var(--text-muted)" }}>{printer.manufacturer}</small>
+                                        )}
+                                      </td>
+                                      <td style={{ minWidth: 220 }}>
+                                        {isEditingSector ? (
+                                          <select
+                                            autoFocus
+                                            disabled={isSavingSector}
+                                            defaultValue={printer.location_id ? String(printer.location_id) : ""}
+                                            style={{
+                                              width: "100%",
+                                              padding: "0.35rem 0.5rem",
+                                              borderRadius: 6,
+                                              border: "1px solid var(--primary)",
+                                              background: "var(--surface)",
+                                              color: "var(--text)",
+                                              fontSize: 13.5,
+                                              outline: "none",
+                                            }}
+                                            onBlur={() => setEditingSectorPrinterId(null)}
+                                            onChange={async (evt) => {
+                                              const value = evt.target.value;
+                                              if (value === "prompt:new") {
+                                                const nome = window.prompt("Digite o nome do novo setor / local:", "");
+                                                if (!nome) {
+                                                  setEditingSectorPrinterId(null);
+                                                  return;
+                                                }
+                                                await handleChangeSector(c.id, printer, `new:${nome}`);
+                                              } else {
+                                                await handleChangeSector(c.id, printer, value);
+                                              }
+                                            }}
+                                          >
+                                            <option value="">❌ Sem setor / não definido</option>
+                                            <optgroup label="Setores existentes">
+                                              {(clientLocations[c.id] || []).map((loc) => (
+                                                <option key={loc.id} value={String(loc.id)}>
+                                                  {loc.sector || loc.name}
+                                                </option>
+                                              ))}
+                                            </optgroup>
+                                            <optgroup label="Ações">
+                                              <option value="prompt:new">➕ Criar novo setor…</option>
+                                            </optgroup>
+                                          </select>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            disabled={isSavingSector || !canEditSector}
+                                            title={canEditSector ? "Clique para alterar o setor" : "Você não tem permissão para editar"}
+                                            onClick={() => setEditingSectorPrinterId(printer.id)}
+                                            style={{
+                                              width: "100%",
+                                              textAlign: "left",
+                                              padding: "0.25rem 0.5rem",
+                                              borderRadius: 6,
+                                              border: "1px dashed transparent",
+                                              background: "transparent",
+                                              cursor: canEditSector ? "pointer" : "default",
+                                              color: "var(--text)",
+                                              fontSize: 13.5,
+                                              transition: "border-color .15s, background .15s",
+                                            }}
+                                            onMouseEnter={(e) => {
+                                              if (canEditSector && !isSavingSector) {
+                                                (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border)";
+                                                (e.currentTarget as HTMLButtonElement).style.background = "var(--surface)";
+                                              }
+                                            }}
+                                            onMouseLeave={(e) => {
+                                              (e.currentTarget as HTMLButtonElement).style.borderColor = "transparent";
+                                              (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                                            }}
+                                          >
+                                            {isSavingSector ? "💾 Salvando…" : currentSectorLabel}
+                                          </button>
+                                        )}
+                                      </td>
+                                      <td>{printer.ip_address}</td>
+                                      <td>{printer.serial_number || "—"}</td>
+                                      <td>
+                                        <span className={`badge ${printer.status}`}>{printer.status}</span>
+                                      </td>
+                                      <td>{formatNumberBrasil(printer.pages_total)}</td>
+                                      <td>
+                                        {formatDateTimeBrasil(printer.last_seen)}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                             </table>
                           )}
