@@ -9,8 +9,6 @@
       "maxDuration": 60
     }
   },
-  "cleanUrls": true,
-  "trailingSlash": false,
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api/index" },
     { "source": "/health", "destination": "/api/index" },
