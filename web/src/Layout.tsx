@@ -17,8 +17,10 @@ export default function Layout() {
   const [passwordSuccess, setPasswordSuccess] = useState("");
   const effectiveRole = user ? (user.role || "superadmin") : null;
   const isSuperadmin = effectiveRole === "superadmin";
+  const isPartnerAdmin = effectiveRole === "partner_admin";
   const canManageResources = effectiveRole === "superadmin" || effectiveRole === "partner_admin" || effectiveRole === "client_manager";
   const canManageUsers = canManageResources;
+  const canManageInstaller = isSuperadmin || isPartnerAdmin;
   const roleLabel =
     effectiveRole === "superadmin"
       ? "Superadmin"
@@ -55,7 +57,7 @@ export default function Layout() {
           <NavLink to="/" end>Dashboard</NavLink>
           {isSuperadmin && <NavLink to="/revendedores">Revendedores</NavLink>}
           {canManageResources && <NavLink to="/clientes">Clientes</NavLink>}
-          <NavLink to="/instalador">📦 Instalador</NavLink>
+          {canManageInstaller && <NavLink to="/instalador">📦 Instalador</NavLink>}
           <NavLink to="/impressoras">Impressoras</NavLink>
           <NavLink to="/alertas">Alertas</NavLink>
           {canManageResources && <NavLink to="/agentes">Agentes</NavLink>}
