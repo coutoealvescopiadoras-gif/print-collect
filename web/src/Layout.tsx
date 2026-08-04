@@ -47,7 +47,7 @@ export default function Layout() {
       return;
     }
     try {
-      await api.changePassword(passwordForm.current, passwordForm.new);
+      await api.changeOwnPassword(passwordForm.current, passwordForm.new);
       window.alert("Senha alterada com sucesso!");
       setShowPasswordModal(false);
       setPasswordForm({ current: "", new: "", confirm: "" });
@@ -74,7 +74,6 @@ export default function Layout() {
               style={{
                 width: "160px",
                 height: "auto",
-                borderRadius: "0",
                 objectFit: "contain",
                 maxWidth: "100%",
                 marginBottom: "0.5rem",
