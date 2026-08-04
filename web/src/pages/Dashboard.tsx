@@ -31,7 +31,6 @@ export default function Dashboard() {
           justifyContent: "flex-start",
           alignItems: "stretch",
           gap: "1rem",
-          marginBottom: "2rem",
           width: "100%",
           maxWidth: "100%",
           boxSizing: "border-box",
