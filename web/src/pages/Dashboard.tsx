@@ -23,28 +23,28 @@ export default function Dashboard() {
     <>
       <h1 className="page-title">Dashboard</h1>
 
-      <div className="stats-grid">
-        <div className="stat-card">
+      <div className="dashboard-stats-row">
+        <div className="dashboard-stat-col">
           <div className="label">Clientes ativos</div>
           <div className="value">{stats.total_clients}</div>
         </div>
-        <div className="stat-card">
+        <div className="dashboard-stat-col">
           <div className="label">Impressoras</div>
           <div className="value">{stats.total_printers}</div>
         </div>
-        <div className="stat-card success">
+        <div className="dashboard-stat-col success">
           <div className="label">Online</div>
           <div className="value">{stats.online_printers}</div>
         </div>
-        <div className="stat-card danger">
+        <div className="dashboard-stat-col danger">
           <div className="label">Offline</div>
           <div className="value">{stats.offline_printers}</div>
         </div>
-        <div className="stat-card warning">
+        <div className="dashboard-stat-col warning">
           <div className="label">Alertas ativos</div>
           <div className="value">{stats.active_alerts}</div>
         </div>
-        <div className="stat-card warning">
+        <div className="dashboard-stat-col warning">
           <div className="label">Toner baixo</div>
           <div className="value">{stats.low_toner_count}</div>
         </div>
