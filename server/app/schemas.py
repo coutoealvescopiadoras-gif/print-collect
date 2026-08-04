@@ -1,7 +1,47 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+def _clean_str(value: Any, max_len: Optional[int] = None) -> Optional[str]:
+    """Limpa strings: None -> None, strip, remove control chars, trunca.
+    Se ficar vazio após limpeza, retorna None."""
+    if value is None:
+        return None
+    s = str(value).replace("\r", " ").replace("\n", " ").replace("\t", " ")
+    s = " ".join(s.split())  # múltiplos espaços vira 1
+    s = s.strip()
+    if not s:
+        return None
+    if max_len is not None and len(s) > max_len:
+        s = s[:max_len]
+    return s
+
+
+def _clean_ip(value: Any) -> str:
+    """Limpa IP: sempre retorna uma string NÃO VAZIA.
+    Trunca 45 chars (IPv6 max + zone). Valor inválido/vazio -> placeholder seguro."""
+    if value is None:
+        cleaned = None
+    else:
+        s = str(value).strip().replace("\r", "").replace("\n", "").replace("\t", "")
+        s = s.strip().strip("[]")  # alguns agentes mandam [::1]
+        s = s.split("%")[0]  # tira zone id de IPv6: fe80::1%eth0
+        s = s.strip()
+        cleaned = s if s else None
+    if cleaned is None:
+        # Placeholder SEGURO NÃO NULO (não causa NotNullViolation, e é único se não tem serial)
+        # O usuário pode corrigir depois manualmente pelo painel.
+        return "0.0.0.0"
+    if len(cleaned) > 45:
+        cleaned = cleaned[:45]
+    return cleaned
+
+
+def _clean_mac(value: Any) -> Optional[str]:
+    """Limpa MAC: sempre 20 chars max, None se vazio."""
+    return _clean_str(value, max_len=20)
 
 
 class ClientBase(BaseModel):
@@ -98,6 +138,31 @@ class PrinterBase(BaseModel):
     manufacturer: Optional[str] = None
     location_id: Optional[int] = None
 
+    @field_validator("ip_address", mode="before")
+    @classmethod
+    def _v_ip(cls, v: Any) -> str:
+        return _clean_ip(v)
+
+    @field_validator("mac_address", mode="before")
+    @classmethod
+    def _v_mac(cls, v: Any) -> Optional[str]:
+        return _clean_mac(v)
+
+    @field_validator("serial_number", mode="before")
+    @classmethod
+    def _v_serial(cls, v: Any) -> Optional[str]:
+        return _clean_str(v, max_len=100)
+
+    @field_validator("model", mode="before")
+    @classmethod
+    def _v_model(cls, v: Any) -> Optional[str]:
+        return _clean_str(v, max_len=200)
+
+    @field_validator("manufacturer", mode="before")
+    @classmethod
+    def _v_manufacturer(cls, v: Any) -> Optional[str]:
+        return _clean_str(v, max_len=100)
+
 
 class PrinterCreate(PrinterBase):
     client_id: int
@@ -111,6 +176,38 @@ class PrinterUpdate(BaseModel):
     manufacturer: Optional[str] = None
     location_id: Optional[int] = None
     status: Optional[str] = None
+
+    @field_validator("ip_address", mode="before")
+    @classmethod
+    def _v_ip(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        return _clean_ip(v)
+
+    @field_validator("mac_address", mode="before")
+    @classmethod
+    def _v_mac(cls, v: Any) -> Optional[str]:
+        return _clean_mac(v)
+
+    @field_validator("serial_number", mode="before")
+    @classmethod
+    def _v_serial(cls, v: Any) -> Optional[str]:
+        return _clean_str(v, max_len=100)
+
+    @field_validator("model", mode="before")
+    @classmethod
+    def _v_model(cls, v: Any) -> Optional[str]:
+        return _clean_str(v, max_len=200)
+
+    @field_validator("manufacturer", mode="before")
+    @classmethod
+    def _v_manufacturer(cls, v: Any) -> Optional[str]:
+        return _clean_str(v, max_len=100)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _v_status(cls, v: Any) -> Optional[str]:
+        return _clean_str(v, max_len=50)
 
 
 class PrinterOut(PrinterBase):
@@ -230,10 +327,60 @@ class PrinterReading(BaseModel):
     toner_yellow: Optional[float] = None
     alerts: list[str] = Field(default_factory=list)
 
+    @field_validator("ip_address", mode="before")
+    @classmethod
+    def _v_ip(cls, v: Any) -> str:
+        return _clean_ip(v)
+
+    @field_validator("mac_address", mode="before")
+    @classmethod
+    def _v_mac(cls, v: Any) -> Optional[str]:
+        return _clean_mac(v)
+
+    @field_validator("serial_number", mode="before")
+    @classmethod
+    def _v_serial(cls, v: Any) -> Optional[str]:
+        return _clean_str(v, max_len=100)
+
+    @field_validator("model", mode="before")
+    @classmethod
+    def _v_model(cls, v: Any) -> Optional[str]:
+        return _clean_str(v, max_len=200)
+
+    @field_validator("manufacturer", mode="before")
+    @classmethod
+    def _v_manufacturer(cls, v: Any) -> Optional[str]:
+        return _clean_str(v, max_len=100)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _v_status(cls, v: Any) -> str:
+        cleaned = _clean_str(v, max_len=50)
+        return cleaned or "unknown"
+
+    @field_validator("alerts", mode="before")
+    @classmethod
+    def _v_alerts(cls, v: Any) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        cleaned: list[str] = []
+        for item in v:
+            if item is None:
+                continue
+            s = _clean_str(item, max_len=200)
+            if s:
+                cleaned.append(s)
+        return cleaned
+
 
 class AgentReport(BaseModel):
     agent_version: Optional[str] = None
     readings: list[PrinterReading]
+
+    @field_validator("agent_version", mode="before")
+    @classmethod
+    def _v_agent_version(cls, v: Any) -> Optional[str]:
+        return _clean_str(v, max_len=50)
 
 
 class DashboardStats(BaseModel):
