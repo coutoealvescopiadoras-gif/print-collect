@@ -30,6 +30,7 @@ from app.schemas import (
     AgentClientCodeExchangeResponse,
     AgentReport,
     AlertOut,
+    BrandingOut,
     PartnerBillingStats,
     ClientCreate,
     ClientOut,
