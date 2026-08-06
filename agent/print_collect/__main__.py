@@ -113,7 +113,8 @@ def _pair_and_save(server_url: str, code: str, config_path: Path,
         server_url=returned_url,
         agent_token=agent_token,
         agent_version=version,
-        interval_minutes=720,
+        interval_minutes=60,
+        log_file=str(__import__("print_collect.config", fromlist=["default_log_file_path"]).default_log_file_path()),
         snmp=SnmpConfig(
             community=community or "public",
             timeout=2,
@@ -181,17 +182,24 @@ def cmd_scan(args: argparse.Namespace, _return_list: bool = False) -> int | list
     - Quando _return_list=True (usado por wizard!): retorna a LISTA de impressoras (não imprime a tabela no stdout do wizard de pareamento)."""
     import logging
 
+    from print_collect.collector import setup_logging
+    from print_collect.config import default_log_file_path
     from print_collect.snmp import (
         collect_targets,
         discover_local_subnets,
         scan_subnet,
     )
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        force=True,
-    )
+    # SEMPRE grava log em arquivo (mesmo em scan) para diagnosticar se tarefa agendada ou atalho tiver erro
+    try:
+        setup_logging(str(default_log_file_path()))
+    except Exception:
+        # Em ultimo caso cai no basicConfig default (so stdout/stderr)
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            force=True,
+        )
 
     community = args.community or "public"
     timeout = int(args.timeout or 2)

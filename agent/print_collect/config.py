@@ -54,12 +54,18 @@ class AgentConfig:
         if not agent_token:
             raise ValueError("agent_token e obrigatorio — crie um agente no painel web ou use o codigo de pareamento")
 
+        log_file_raw = data.get("log_file")
+        if not log_file_raw:
+            # CRITICO: SEMPRE grava log em arquivo, mesmo que usuario nao configurou.
+            # A tarefa agendada nao abre janela, sem log_file erros sao INVISIVEIS.
+            log_file_raw = str(default_log_file_path())
+
         return cls(
             server_url=server_url.rstrip("/"),
             agent_token=agent_token,
             agent_version=data.get("agent_version", "0.3.0"),
             interval_minutes=int(data.get("interval_minutes", 60)),
-            log_file=data.get("log_file"),
+            log_file=log_file_raw,
             snmp=snmp,
         )
 
@@ -77,7 +83,7 @@ class AgentConfig:
 
 
 def default_writable_config_path() -> Path:
-    """
+    r"""
     Retorna o PATH PADRAO do config.yaml onde o agente SEMPRE consegue ESCREVER
     (mesmo sem permissao de administrador).
     - Windows: %PROGRAMDATA%\PrintCollect\config.yaml
@@ -92,6 +98,24 @@ def default_writable_config_path() -> Path:
         folder = Path.home() / ".print_collect"
     folder.mkdir(parents=True, exist_ok=True)
     return folder / "config.yaml"
+
+
+def default_log_file_path() -> Path:
+    r"""
+    Retorna o caminho PADRAO do agent.log (SEMPRE GRAVA LOG EM ARQUIVO!).
+    Isso e CRITICO porque a tarefa agendada nao abre janela CMD, portanto
+    qualquer erro seria INVISIVEL se nao tivesse log em arquivo.
+    - Windows: %PROGRAMDATA%\PrintCollect\agent.log
+    - Linux/macOS: ~/.print_collect/agent.log
+    """
+    system = platform.system().lower()
+    if system == "windows":
+        base = os.environ.get("PROGRAMDATA") or r"C:\ProgramData"
+        folder = Path(base) / "PrintCollect"
+    else:
+        folder = Path.home() / ".print_collect"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / "agent.log"
 
 
 def is_path_writable(path: Path) -> bool:
