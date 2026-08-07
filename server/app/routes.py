@@ -1602,33 +1602,65 @@ def _get_agent(x_agent_token: str, db: Session) -> Agent:
 #   → QUALQUER OUTRO CASO → MONOCROMÁTICA (PB) → FECHA TODOS alertas coloridos!
 # -----------------------------------------------------------------------------
 def _is_color_printer_real(printer) -> bool:
-    """Retorna True se a impressora é REALMENTE colorida (evita falsos PB)."""
-    # Critério A: páginas coloridas já impressas >= 1?
-    try:
-        has_color_pages = bool(printer.pages_color is not None and int(printer.pages_color) > 0)
-    except Exception:
-        has_color_pages = False
+    """Retorna True se a impressora é REALMENTE colorida (evita falsos PB).
 
-    # Critério B: algum toner colorido REALMENTE > 0 (não nulo, não zero, não negativo!)
+    ⚠️ BONUS: se detectar que pages_color estava com valor FALSO/ERRADO
+    (ex: impressora PB que reportou pages_color=1 uma vez por engano e
+    ficou marcada como colorida eternamente pq contador é monotônico),
+    ELA JA RESETA printer.pages_color PARA None aqui dentro, na hora!"""
+    # Critério B primeiro (antes de A para verificar suspeita de pages_color bugado!)
+    toners_color = [
+        printer.toner_cyan,
+        printer.toner_magenta,
+        printer.toner_yellow,
+    ]
+    has_color_toners = False
     try:
-        toners_color = [
-            printer.toner_cyan,
-            printer.toner_magenta,
-            printer.toner_yellow,
-        ]
-        has_color_toners = False
         for t in toners_color:
             if t is None:
                 continue
             try:
                 v = float(t)
-                if v > 0:
+                if v > 0 and v <= 100:
                     has_color_toners = True
                     break
             except Exception:
                 continue
     except Exception:
         has_color_toners = False
+
+    # Critério A: páginas coloridas já impressas >= 1?
+    has_color_pages = False
+    pages_color_suspeito = False
+    try:
+        p_color = printer.pages_color
+        p_bw = printer.pages_bw
+        p_total = printer.pages_total
+        p_color_int = int(p_color) if p_color is not None else 0
+        p_bw_int = int(p_bw) if p_bw is not None else 0
+        p_total_int = int(p_total) if p_total is not None else 0
+
+        if p_color_int > 0:
+            # ===== DETECCAO DE pages_color FALSO =====
+            # Se impressora NAO tem toners coloridos (has_color_toners = False)
+            # E: pages_bw >= pages_total OU pages_bw >= pages_total - pages_color
+            # (ou seja, pages_bw cobre quase tudo, pages_color NAO EXISTIA de verdade)
+            if not has_color_toners and (
+                (p_bw_int >= p_total_int and p_total_int > 0)
+                or (p_total_int > 0 and (p_total_int - p_bw_int) <= max(1, p_color_int * 0.3))
+                or (p_total_int == 0 and p_bw_int == 0)
+            ):
+                pages_color_suspeito = True
+                # RESETA AGORA! (impede que fique marcada como colorida eternamente!)
+                try:
+                    printer.pages_color = None
+                except Exception:
+                    pass
+                has_color_pages = False
+            else:
+                has_color_pages = True
+    except Exception:
+        has_color_pages = False
 
     return has_color_pages or has_color_toners
 
@@ -1942,6 +1974,17 @@ async def agent_report(
         agent.last_heartbeat = _now()
         agent.version = payload.agent_version
         now = _now()
+
+        # ==========================================================
+        # 🧹 LIMPEZA AUTOMATICA GLOBAL DE ALERTAS FALSOS DE TONER COLORIDO
+        # Roda SEMPRE que QUALQUER agente bater (nao precisa abrir dashboard!)
+        # Fecha alertas coloridos falsos de TODAS as impressoras PB cadastradas,
+        # inclusive as que NAO foram reportadas nesta coleta.
+        # ==========================================================
+        try:
+            _cleanup_false_color_alerts(db)
+        except Exception:
+            pass
 
         warnings: list[str] = []
         processed_ok = 0

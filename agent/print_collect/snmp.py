@@ -107,22 +107,36 @@ def _parse_int(value: Optional[str]) -> int:
     try:
         return int(value)
     except ValueError:
-        digits = "".join(c for c in value if c.isdigit())
-        return int(digits) if digits else 0
+        s = str(value).strip()
+        is_negative = False
+        for ch in s:
+            if ch == "-":
+                is_negative = True
+                break
+            if ch == "+":
+                break
+            if ch.isdigit():
+                break
+        digits = "".join(c for c in s if c.isdigit())
+        if not digits:
+            return 0
+        num = int(digits)
+        return -num if is_negative else num
 
 
 def _toner_percent(level: Optional[str], maximum: Optional[str]) -> Optional[float]:
     lvl = _parse_int(level)
     mx = _parse_int(maximum)
-    if mx <= 0:
-        # Alguns fabricantes retornam -1 para "infinito"
-        if lvl >= 0 and lvl <= 100:
-            return float(lvl)
+    if lvl < 0:
         return None
-    # Se o level vier em percentual diretamente (menor que mx e menor que 100)
+    if mx <= 0:
+        return None
     if mx == 100:
-        return round(float(lvl), 1)
-    pct = round((lvl / mx) * 100, 1)
+        pct = float(lvl)
+    else:
+        if lvl > mx * 2:
+            return None
+        pct = round((lvl / mx) * 100, 1)
     return pct if 0 <= pct <= 100 else None
 
 
