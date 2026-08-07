@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 import bcrypt
-from sqlalchemy import or_
+from sqlalchemy import or_, false as sql_false
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -1909,11 +1909,15 @@ async def agent_report(
                 r_toner_yellow = _safe_float(reading.toner_yellow)
 
                 # ----- PASSO 1: busca impressora por IP OU serial -----
+                #   NOTA: usamos ILIKE (case-insensitive) no serial e no IP para nao
+                #   duplicar impressoras por diferenca maiuscula/minuscula no SNMP.
+                #   (ex: serial ABC123 na primeira coleta, abc123 na segunda -> 2 impressoras!)
+                _ip_filter = Printer.ip_address.ilike(r_ip) if r_ip else sql_false()
                 printer = (
                     db.query(Printer)
                     .filter(
                         Printer.client_id == agent.client_id,
-                        Printer.ip_address == r_ip,
+                        _ip_filter,
                     )
                     .first()
                 )
@@ -1922,7 +1926,7 @@ async def agent_report(
                         db.query(Printer)
                         .filter(
                             Printer.client_id == agent.client_id,
-                            Printer.serial_number == r_serial,
+                            Printer.serial_number.ilike(r_serial),
                         )
                         .first()
                     )
@@ -1941,8 +1945,8 @@ async def agent_report(
                                 Printer.client_id == agent.client_id,
                                 Printer.ignored == True,
                                 or_(
-                                    Printer.ip_address == r_ip,
-                                    Printer.serial_number == r_serial,
+                                    _ip_filter,
+                                    Printer.serial_number.ilike(r_serial),
                                 ),
                             )
                             .first()
@@ -1953,7 +1957,7 @@ async def agent_report(
                             .filter(
                                 Printer.client_id == agent.client_id,
                                 Printer.ignored == True,
-                                Printer.ip_address == r_ip,
+                                _ip_filter,
                             )
                             .first()
                         )
@@ -1967,6 +1971,10 @@ async def agent_report(
                     db.add(printer)
 
                 # ----- PASSO 3: APLICA ATUALIZACOES -----
+                #   REGRA CRITICA DE CONTADORES MONOTONICOS (NUNCA DIMINUEM!):
+                #   Impressoras reiniciam/firmware bug/erro SNMP reportam 0 ou valor antigo
+                #   de tempos em tempos. Se o valor novo for MENOR que o salvo no banco,
+                #   MANTER o valor MAIOR. Nunca sobreescrever contador para baixo.
                 printer.ip_address = r_ip
                 if r_mac:
                     printer.mac_address = r_mac
@@ -1977,13 +1985,31 @@ async def agent_report(
                 if r_manufacturer:
                     printer.manufacturer = r_manufacturer
                 printer.status = r_status
-                printer.pages_total = r_pages_total
-                printer.pages_bw = r_pages_bw
-                printer.pages_color = r_pages_color
+
+                # --- CONTADORES: MANTEM SEMPRE O MAXIMO (monotonico nao-negativo) ---
+                try:
+                    if r_pages_total and r_pages_total > int(printer.pages_total or 0):
+                        printer.pages_total = r_pages_total
+                except Exception:
+                    pass
+                try:
+                    if r_pages_bw and r_pages_bw > int(printer.pages_bw or 0):
+                        printer.pages_bw = r_pages_bw
+                except Exception:
+                    pass
+                try:
+                    if r_pages_color and r_pages_color > int(printer.pages_color or 0):
+                        printer.pages_color = r_pages_color
+                except Exception:
+                    pass
+
+                # --- TONERS: sao niveis entao podem subir/descer normal (troca do toner!) ---
                 printer.toner_black = r_toner_black
                 printer.toner_cyan = r_toner_cyan
                 printer.toner_magenta = r_toner_magenta
                 printer.toner_yellow = r_toner_yellow
+
+                # --- TIMESTAMPS: SEMPRE atualiza estes ---
                 printer.last_seen = now
                 printer.updated_at = now
 
