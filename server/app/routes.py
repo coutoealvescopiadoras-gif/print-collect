@@ -1633,6 +1633,75 @@ def _is_color_printer_real(printer) -> bool:
     return has_color_pages or has_color_toners
 
 
+# -----------------------------------------------------------------------------
+# TOKENS UNIFICADOS DE COR (30+ variações! Usado em sync alertas + cleanup global
+# + limpeza individual. Agora captura QUALQUER menção a toner colorido,
+# maiúsculas, acentos, abreviações, inglês, sinonimos, "C", "M", "Y" isolados!)
+# -----------------------------------------------------------------------------
+_COLOR_TOKEN_MASTER = (
+    # Portugues - palavras completas (com e sem acento, com variacoes de case)
+    "ciano", " ciano", "ciano ", "cian",
+    "amarelo", " amarelo", "amarelo ", "amarel",
+    "magenta", " magenta", "magenta ",
+    # Ingles - palavras completas
+    "cyan", " cyan", "cyan ",
+    "yellow", " yellow", "yellow ",
+    # Sinonimos: toners coloridos em geral (cartucho/suprimento + cor)
+    "cartucho ciano", "cartucho amarelo", "cartucho magenta",
+    "cartucho cyan", "cartucho yellow",
+    "suprimento ciano", "suprimento amarelo", "suprimento magenta",
+    "toner ciano", "toner amarelo", "toner magenta",
+    "toner cyan", "toner yellow",
+    # Abreviacoes (muito comum fabricante usar C/M/Y! Ex: "Toner C baixo")
+    "toner c ", "toner m ", "toner y ",
+    " cartucho c ", " cartucho m ", " cartucho y ",
+)
+
+
+def _is_color_message_any(msg: str) -> bool:
+    """Verifica se mensagem tem QUALQUER menção a cor. Usa .lower() ANTES de checar.
+    Captura ate 30+ variacoes de nomes de toners coloridos."""
+    low = " " + str(msg or "").lower().strip() + " "
+    for tok in _COLOR_TOKEN_MASTER:
+        if tok in low:
+            return True
+    # Fallback extra: verifica se tem pelo menos uma das cores-base em substring
+    # (ex: "Nível Ciano: 3%" mesmo sem espaço antes/depois)
+    low2 = str(msg or "").lower()
+    return any(base in low2 for base in ("ciano", "amarelo", "magenta", "cyan", "yellow"))
+
+
+def _close_color_alerts_for_printer(db: Session, printer_id: int) -> int:
+    """Fecha TODOS os alertas coloridos ATIVOS de UMA impressora específica.
+    Chamado toda vez que agente faz POST /agent/report para impressora PB.
+    (evita ter que esperar usuario abrir o dashboard)."""
+    closed = 0
+    try:
+        actives = (
+            db.query(Alert)
+            .filter(Alert.printer_id == printer_id, Alert.resolved == False)
+            .all()
+        )
+        ts = _now()
+        for a in actives:
+            try:
+                if _is_color_message_any(a.message):
+                    a.resolved = True
+                    a.resolved_at = ts
+                    closed += 1
+            except Exception:
+                continue
+        if closed > 0:
+            try:
+                db.flush()
+            except Exception:
+                db.rollback()
+                closed = 0
+    except Exception:
+        closed = 0
+    return closed
+
+
 def _sync_alerts(db: Session, printer: Printer, alert_messages: list[str]) -> None:
     """Sincroniza alertas. TUDO envolto em try/except para NUNCA crashar
     (mesmo que um alerta tenha caractere proibido, ou SQL engasgue).
@@ -1644,37 +1713,36 @@ def _sync_alerts(db: Session, printer: Printer, alert_messages: list[str]) -> No
         # ---------------------------------------------------------------------
         is_color_printer = _is_color_printer_real(printer)
 
-        # Palavras-chave de toner colorido (usado para BLOQUEAR alertas em PB)
-        COLOR_TOKENS = ("ciano", "cyan", "magenta", "amarelo", "yellow")
-
-        def _is_color_alerta(msg: str) -> bool:
-            low = str(msg or "").lower()
-            return any(token in low for token in COLOR_TOKENS)
-
         # -------------------------------------------------------------------
-        # LIMPEZA: fecha (resolved=True) alertas COLORIDOS já existentes, se PB
+        # IMPRESSORA PB: fecha alertas coloridos existentes e LIMPA os toners CMY
+        # (mesmo que agente mande 0 → vira None, nao aparece no campo)
         # -------------------------------------------------------------------
         if not is_color_printer:
-            existing_active = (
-                db.query(Alert)
-                .filter(Alert.printer_id == printer.id, Alert.resolved == False)
-                .all()
-            )
-            ts = _now()
-            for a in existing_active:
-                try:
-                    if _is_color_alerta(a.message) and not a.resolved:
-                        a.resolved = True
-                        a.resolved_at = ts
-                except Exception:
-                    continue
+            # Passo 1: fecha alertas coloridos da impressora (defesa em profundidade!)
+            _close_color_alerts_for_printer(db, printer.id)
+            # Passo 2: garante que toners coloridos nao aparecem no dashboard
             try:
-                db.flush()
+                changed = False
+                if printer.toner_cyan is not None:
+                    printer.toner_cyan = None
+                    changed = True
+                if printer.toner_magenta is not None:
+                    printer.toner_magenta = None
+                    changed = True
+                if printer.toner_yellow is not None:
+                    printer.toner_yellow = None
+                    changed = True
+                if changed:
+                    try:
+                        db.flush()
+                    except Exception:
+                        db.rollback()
             except Exception:
-                db.rollback()
+                pass
 
         # -------------------------------------------------------------------
         # FILTRAGEM: ignora alertas coloridos recebidos do agente, se PB
+        # (usa tokens master unificados!)
         # -------------------------------------------------------------------
         filtered_messages: list[str] = []
         for msg_raw in alert_messages or []:
@@ -1682,7 +1750,7 @@ def _sync_alerts(db: Session, printer: Printer, alert_messages: list[str]) -> No
                 msg = _s_strn(msg_raw, 200)
                 if not msg:
                     continue
-                if not is_color_printer and _is_color_alerta(msg):
+                if not is_color_printer and _is_color_message_any(msg):
                     continue
                 filtered_messages.append(msg)
             except Exception:
@@ -1706,7 +1774,7 @@ def _sync_alerts(db: Session, printer: Printer, alert_messages: list[str]) -> No
                     severity = "critical"
                 else:
                     severity = "warning"
-                alert_type = "supply" if "toner" in low else "device"
+                alert_type = "supply" if ("toner" in low or "cartucho" in low or "suprimento" in low) else "device"
                 alert = Alert(
                     printer_id=printer.id,
                     alert_type=_s_strn(alert_type, 100) or "device",
@@ -1733,13 +1801,8 @@ def _sync_alerts(db: Session, printer: Printer, alert_messages: list[str]) -> No
 # LIMPEZA GLOBAL: fecha alertas FALSOS de toner colorido EM TODAS AS
 # IMPRESSORAS MONOCROMATICAS (PB) DO BANCO, MESMO SEM NOVA LEITURA.
 # Chamado automaticamente ao carregar o Dashboard e via endpoint explicito.
+# Usa TOKENS MASTER unificados (30+ variações!)
 # -----------------------------------------------------------------------------
-COLOR_TOKENS_GLOBAL = ("ciano", "cyan", "magenta", "amarelo", "yellow")
-
-
-def _is_color_msg(msg: str) -> bool:
-    low = msg.lower()
-    return any(token in low for token in COLOR_TOKENS_GLOBAL)
 
 
 def _cleanup_false_color_alerts(db: Session, partner_id: int | None = None, client_id: int | None = None) -> int:
@@ -1760,14 +1823,33 @@ def _cleanup_false_color_alerts(db: Session, partner_id: int | None = None, clie
         if _is_color_printer_real(printer):
             continue
 
-        # Impressora 100% confirmada PB: fecha QUALQUER alerta colorido ativo!
+        # Impressora 100% confirmada PB: fecha QUALQUER alerta colorido ativo + apaga toners CMY!
+        try:
+            changed = False
+            if printer.toner_cyan is not None:
+                printer.toner_cyan = None
+                changed = True
+            if printer.toner_magenta is not None:
+                printer.toner_magenta = None
+                changed = True
+            if printer.toner_yellow is not None:
+                printer.toner_yellow = None
+                changed = True
+            if changed:
+                try:
+                    db.flush()
+                except Exception:
+                    db.rollback()
+        except Exception:
+            pass
+
         actives = (
             db.query(Alert)
             .filter(Alert.printer_id == printer.id, Alert.resolved == False)
             .all()
         )
         for a in actives:
-            if _is_color_msg(a.message) and not a.resolved:
+            if _is_color_message_any(a.message) and not a.resolved:
                 a.resolved = True
                 a.resolved_at = ts
                 total_closed += 1
@@ -2008,6 +2090,19 @@ async def agent_report(
                 printer.toner_cyan = r_toner_cyan
                 printer.toner_magenta = r_toner_magenta
                 printer.toner_yellow = r_toner_yellow
+
+                # --- TONERS PB: ⛔ DEFESA EM PROFUNDIDADE (Julio pediu 10x!!!) ---
+                # Depois de escrever os valores recebidos, checamos se e PB REAL:
+                # Se for PB, APAGA toner_cyan/magenta/yellow (forca None, nao grava 0!)
+                # Muitas impressoras PB Ricoh SP 3710SF etc reportam 0 via SNMP, mas
+                # zero nao = existente. Isso era a causa #1 dos "alertas ciano baixo" em PB!
+                try:
+                    if not _is_color_printer_real(printer):
+                        printer.toner_cyan = None
+                        printer.toner_magenta = None
+                        printer.toner_yellow = None
+                except Exception:
+                    pass
 
                 # --- TIMESTAMPS: SEMPRE atualiza estes ---
                 printer.last_seen = now

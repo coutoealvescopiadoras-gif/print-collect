@@ -340,13 +340,35 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 2) -> Opt
     )
 
     # Determina se a impressora é MONOCROMÁTICA (Preto & Branco)
-    # Regra: NÃO possui páginas coloridas totais impressas OU
-    #       NÃO retorna níveis de toner coloridos (todos são None).
+    # ⚠️ REGRA CRÍTICA ANTI-FALSO-POSITIVO (Julio pediu várias vezes!):
+    #   Muitas impressoras PB (ex: Ricoh SP 3710SF) reportam OID de ciano/magenta/amarelo
+    #   com VALOR 0 (não None) via SNMP! "Nenhum = 0"
+    #   ANTES: has_color_toners = any(t is not None) → interpretava 0 como "EXISTE" ❌
+    #   DEPOIS: has_color_toners = any(t is not None and float(t) > 0) → só >0 conta como EXISTE ✅
     has_color_pages = bool(pages_color and pages_color > 0)
-    has_color_toners = any(t is not None for t in (toner_cyan, toner_magenta, toner_yellow))
+    has_color_toners = False
+    for _t in (toner_cyan, toner_magenta, toner_yellow):
+        if _t is None:
+            continue
+        try:
+            if float(_t) > 0:
+                has_color_toners = True
+                break
+        except Exception:
+            continue
     is_color_printer = has_color_pages or has_color_toners
 
-    # Alertas básicos de toner (SOMENTE para toners EXISTENTES!)
+    # ⛔ IMPRESSORA PB CONFIRMADA: NÃO EXISTEM toners ciano/magenta/amarelo de verdade.
+    # Apaga QUALQUER valor reportado como 0 ou None → deixa None (nao manda dado mentiroso para o backend)
+    if not is_color_printer:
+        toner_cyan = None
+        toner_magenta = None
+        toner_yellow = None
+        data.toner_cyan = None
+        data.toner_magenta = None
+        data.toner_yellow = None
+
+    # Alertas básicos de toner (SOMENTE para toners EXISTENTES CONFIRMADOS!)
     alerts: list[str] = []
     toners_to_check: list[tuple[str, Optional[float]]] = [("preto", toner_black)]
     if is_color_printer:
@@ -364,6 +386,13 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 2) -> Opt
         elif pct <= 15:
             alerts.append(f"Toner {color} baixo: {pct}%")
     data.alerts = alerts
+
+    # Atualiza os dados no PrinterData (apos correcoes de PB acima)
+    data.toner_cyan = toner_cyan
+    data.toner_magenta = toner_magenta
+    data.toner_yellow = toner_yellow
+    data.pages_bw = pages_bw
+    data.pages_color = pages_color
 
     return data
 
