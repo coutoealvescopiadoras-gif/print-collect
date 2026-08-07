@@ -207,6 +207,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  updateClient: (
+    clientId: number,
+    data: Partial<Pick<import("./types").Client, "name" | "cnpj" | "contact_name" | "contact_email" | "active">>,
+  ) =>
+    request<import("./types").Client>(`/api/clients/${clientId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
   deleteClient: (clientId: number) =>
     request<{ status: string }>(`/api/clients/${clientId}`, { method: "DELETE" }),
   getLocations: (clientId: number) =>

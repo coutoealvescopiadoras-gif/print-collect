@@ -22,6 +22,7 @@ export default function Clientes() {
   const canEditSector = effectiveRole === "superadmin" || effectiveRole === "partner_admin" || effectiveRole === "client_manager";
   const [clients, setClients] = useState<Client[]>([]);
   const [showModal, setShowModal] = useState(false);
+  const [editingClientId, setEditingClientId] = useState<number | null>(null);
   const [form, setForm] = useState({ name: "", cnpj: "", contact_name: "", contact_email: "" });
   const [deletingClientId, setDeletingClientId] = useState<number | null>(null);
   const [expandedClientId, setExpandedClientId] = useState<number | null>(null);
@@ -46,11 +47,37 @@ export default function Clientes() {
     load();
   }, [authLoading, user]);
 
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await api.createClient(form);
-    setShowModal(false);
+  const handleOpenCreate = () => {
+    setEditingClientId(null);
     setForm({ name: "", cnpj: "", contact_name: "", contact_email: "" });
+    setShowModal(true);
+  };
+
+  const handleOpenEdit = (client: Client) => {
+    setEditingClientId(client.id);
+    setForm({
+      name: client.name || "",
+      cnpj: client.cnpj || "",
+      contact_name: client.contact_name || "",
+      contact_email: client.contact_email || "",
+    });
+    setShowModal(true);
+  };
+
+  const handleCloseModal = () => {
+    setShowModal(false);
+    setEditingClientId(null);
+    setForm({ name: "", cnpj: "", contact_name: "", contact_email: "" });
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (editingClientId !== null) {
+      await api.updateClient(editingClientId, form);
+    } else {
+      await api.createClient(form);
+    }
+    handleCloseModal();
     load();
   };
 
@@ -242,7 +269,7 @@ export default function Clientes() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
         <h1 className="page-title" style={{ marginBottom: 0 }}>Clientes</h1>
         {canManageClients && (
-          <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Novo cliente</button>
+          <button className="btn btn-primary" onClick={handleOpenCreate}>+ Novo cliente</button>
         )}
       </div>
 
@@ -331,6 +358,13 @@ export default function Clientes() {
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       {canManageClients && (
                         <>
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => handleOpenEdit(c)}
+                            style={{ marginRight: "0.35rem" }}
+                          >
+                            ✏️ Editar
+                          </button>
                           <button
                             className="btn btn-secondary"
                             onClick={() => openPairing(c)}
@@ -571,10 +605,10 @@ export default function Clientes() {
       </div>
 
       {showModal && canManageClients && (
-        <div className="modal-overlay" onClick={() => setShowModal(false)}>
+        <div className="modal-overlay" onClick={handleCloseModal}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Novo cliente</h3>
-            <form onSubmit={handleCreate}>
+            <h3>{editingClientId !== null ? "Editar cliente" : "Novo cliente"}</h3>
+            <form onSubmit={handleSave}>
               <div className="form-group">
                 <label>Nome *</label>
                 <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
@@ -592,7 +626,7 @@ export default function Clientes() {
                 <input type="email" value={form.contact_email} onChange={(e) => setForm({ ...form, contact_email: e.target.value })} />
               </div>
               <div className="modal-actions">
-                <button type="button" className="btn btn-ghost" onClick={() => setShowModal(false)}>Cancelar</button>
+                <button type="button" className="btn btn-ghost" onClick={handleCloseModal}>Cancelar</button>
                 <button type="submit" className="btn btn-primary">Salvar</button>
               </div>
             </form>
