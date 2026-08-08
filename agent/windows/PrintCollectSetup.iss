@@ -55,6 +55,7 @@ Name: "{autoprograms}\Print Collect Agent\Testar conexao"; Filename: "{app}\test
 Name: "{autoprograms}\Print Collect Agent\Executar coleta unica"; Filename: "{app}\run-once.bat"
 Name: "{autoprograms}\Print Collect Agent\Editar configuracao"; Filename: "{app}\open-config.bat"
 Name: "{autoprograms}\Print Collect Agent\Reinstalar inicializacao"; Filename: "{app}\register-startup-task.bat"
+Name: "{autoprograms}\Print Collect Agent\Diagnosticar agendamento (v6)"; Filename: "{app}\diagnosticar-agendamento-completo.bat"
 Name: "{autoprograms}\Print Collect Agent\Desinstalar inicializacao"; Filename: "{app}\unregister-startup-task.bat"
 Name: "{autoprograms}\Print Collect Agent\Abrir pasta"; Filename: "{app}"
 Name: "{autodesktop}\Print Collect - Wizard"; Filename: "{app}\WizardPareamento.exe"; IconFilename: "{app}\WizardPareamento.exe"; Tasks: desktopicon

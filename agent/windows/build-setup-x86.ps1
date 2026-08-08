@@ -230,10 +230,15 @@ foreach ($file in $RuntimeFiles) {
     Copy-Item $file $DistDir -Force
 }
 # Copia os 3 executaveis principais (agente + wizard nativo + search nativo)
-Copy-Item $ExeAgent $DistDir -Force
-Copy-Item $ExeWizard $DistDir -Force
-Copy-Item $ExeSearch $DistDir -Force
-# Tambem copia para agent\windows\ (para testes locais rapidos)
+# CORRECAO BUG SELF-COPY: Se $ExeAgent ja ESTA em $DistDir (Join-Path mesmo) Copy-Item daria
+# erro "Nao pode substituir item por ele mesmo". Pulamos se SourcePath == DestinationPath.
+$copyExeAgentDest = Join-Path $DistDir (Split-Path -Leaf $ExeAgent)
+if ([string]$ExeAgent -ne [string]$copyExeAgentDest) { Copy-Item $ExeAgent $DistDir -Force }
+$copyExeWizardDest = Join-Path $DistDir (Split-Path -Leaf $ExeWizard)
+if ([string]$ExeWizard -ne [string]$copyExeWizardDest) { Copy-Item $ExeWizard $DistDir -Force }
+$copyExeSearchDest = Join-Path $DistDir (Split-Path -Leaf $ExeSearch)
+if ([string]$ExeSearch -ne [string]$copyExeSearchDest) { Copy-Item $ExeSearch $DistDir -Force }
+# Tambem copia para agent\windows\ (para testes locais rapidos) - esses SAO pastas diferentes, sempre OK!
 Copy-Item $ExeAgent $WindowsDir -Force
 Copy-Item $ExeWizard $WindowsDir -Force
 Copy-Item $ExeSearch $WindowsDir -Force
