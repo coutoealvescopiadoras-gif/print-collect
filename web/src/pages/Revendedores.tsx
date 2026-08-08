@@ -33,6 +33,7 @@ export default function Revendedores() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [showUrlField, setShowUrlField] = useState(false);
+  const [deletingPartnerId, setDeletingPartnerId] = useState<number | null>(null);
   const [form, setForm] = useState({
     name: "",
     logo_url: "",
@@ -148,6 +149,49 @@ export default function Revendedores() {
     await load();
   };
 
+  const handleDelete = async (partner: Partner) => {
+    const stats = partnerStats.find((item) => item.partner_id === partner.id);
+    const totalClients = stats?.total_clients ?? 0;
+
+    let extraMsg = "";
+    if (totalClients > 0) {
+      extraMsg = `\n\n⚠️ IMPORTANTE: este revendedor ainda tem ${totalClients} cliente(s) vinculado(s). O sistema NÃO permitirá excluir enquanto houver clientes — primeiro remova ou reatribua esses clientes.`;
+    } else {
+      extraMsg = `\n\nEste revendedor não tem clientes vinculados — a exclusão será direta e irreversível.`;
+    }
+
+    const ok = window.confirm(
+      `Confirma EXCLUIR o revendedor "${partner.name}"?${extraMsg}\n\nTem certeza absoluta que deseja continuar?`,
+    );
+    if (!ok) return;
+
+    try {
+      setDeletingPartnerId(partner.id);
+      await api.deletePartner(partner.id);
+      setPartners((current) => current.filter((p) => p.id !== partner.id));
+      setPartnerStats((current) => current.filter((s) => s.partner_id !== partner.id));
+    } catch (e: any) {
+      const msg = String(e?.message || e || "Erro ao excluir revendedor");
+      // Tenta extrair "detail" da resposta HTTP (FastAPI retorna {"detail":"..."})
+      let detail = msg;
+      try {
+        if (typeof e?.response?.json === "function") {
+          const obj = await e.response.json();
+          if (obj?.detail) detail = String(obj.detail);
+        } else if (typeof e?.data?.detail === "string") {
+          detail = String(e.data.detail);
+        } else if (typeof e?.detail === "string") {
+          detail = String(e.detail);
+        }
+      } catch {
+        // ignora
+      }
+      window.alert("Não foi possível excluir:\n\n" + detail);
+    } finally {
+      setDeletingPartnerId(null);
+    }
+  };
+
   if (!isSuperadmin) {
     return (
       <>
@@ -258,6 +302,15 @@ export default function Revendedores() {
                         </button>
                         <button className="btn btn-ghost" onClick={() => toggleActive(partner)}>
                           {partner.active ? "Desativar" : "Ativar"}
+                        </button>
+                        <button
+                          className="btn btn-ghost"
+                          onClick={() => handleDelete(partner)}
+                          disabled={deletingPartnerId === partner.id}
+                          style={{ color: "var(--danger)" }}
+                          title="Excluir este revendedor (só é permitido se não tiver clientes vinculados)"
+                        >
+                          {deletingPartnerId === partner.id ? "Excluindo..." : "🗑️ Excluir"}
                         </button>
                       </div>
                     </td>

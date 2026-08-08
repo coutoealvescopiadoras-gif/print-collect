@@ -321,6 +321,13 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+  deletePartner: (partnerId: number) =>
+    request<{
+      status: string;
+      message: string;
+      partner_id: number;
+      partner_name: string;
+    }>(`/api/partners/${partnerId}`, { method: "DELETE" }),
   createAgent: (clientId: number, name: string) =>
     request<import("./types").Agent>("/api/agents", {
       method: "POST",

@@ -709,6 +709,48 @@ def update_partner(
     return partner
 
 
+@router.delete("/partners/{partner_id}")
+def delete_partner(
+    partner_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    if not _is_superadmin(current_user):
+        raise HTTPException(status_code=403, detail="Somente superadmin pode excluir revendedores")
+
+    partner = db.query(Partner).filter(Partner.id == partner_id).first()
+    if not partner:
+        raise HTTPException(status_code=404, detail="Revendedor não encontrado")
+
+    # Proteção ANTI-DESASTRE: NUNCA deleta revendedor que tiver clientes vinculados.
+    # Melhor Julio remover/transferir clientes primeiro (para não apagar dados de cliente, impressoras, agentes e contadores por engano!)
+    clientes_vinculados_q = db.query(Client).filter(Client.partner_id == partner_id)
+    total_clientes = clientes_vinculados_q.count()
+    if total_clientes > 0:
+        nomes_clientes = [c.name for c in clientes_vinculados_q.order_by(Client.name).limit(10).all()]
+        sufixo = ""
+        if total_clientes > 10:
+            sufixo = f" (e mais {total_clientes - 10} outros)"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Não é possível excluir o revendedor \"{partner.name}\" pois ele ainda tem {total_clientes} cliente(s) vinculado(s): "
+                f"{', '.join(nomes_clientes)}{sufixo}. "
+                "Primeiro remova esses clientes (ou reatribua-os para outro revendedor / sem parceiro) e tente novamente."
+            ),
+        )
+
+    db.delete(partner)
+    db.commit()
+
+    return {
+        "status": "excluido",
+        "message": f"Revendedor \"{partner.name}\" excluído com sucesso.",
+        "partner_id": partner_id,
+        "partner_name": partner.name,
+    }
+
+
 @router.get("/partners/stats", response_model=list[PartnerBillingStats])
 def list_partner_stats(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     if not _is_superadmin(current_user):
