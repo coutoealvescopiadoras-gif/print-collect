@@ -876,13 +876,60 @@ def dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(
 
 
 @router.get("/clients", response_model=list[ClientOut])
-def list_clients(db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+def list_clients(
+    search: Optional[str] = None,
+    partner_id: Optional[int] = None,
+    own_only: Optional[bool] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
     query = db.query(Client)
+    # Join com Partner para poder popular partner_name e filtrar por parceiro
+    try:
+        from server.app.database import Partner
+        query = query.outerjoin(Partner, Partner.id == Client.partner_id)
+    except Exception:
+        Partner = None
+
     if _is_partner_admin(current_user):
         query = query.filter(Client.partner_id == _required_partner_id(current_user))
-    elif not _is_superadmin(current_user):
+    elif _is_superadmin(current_user):
+        # Opção C: own_only default True = clientes diretos (sem parceiro)
+        if own_only is None or own_only == True:
+            query = query.filter(Client.partner_id.is_(None))
+        if partner_id is not None:
+            query = query.filter(Client.partner_id == partner_id)
+    else:
         query = query.filter(Client.id == _required_client_id(current_user))
+
+    if search:
+        _s = f"%{search.strip()}%"
+        query = query.filter(Client.name.ilike(_s))
+
     clients = query.order_by(Client.name).all()
+
+    # Preenche partner_name para exibir no front
+    partners_cache: dict[int, str] = {}
+    for cli in clients:
+        try:
+            if cli.partner_id:
+                try:
+                    part = cli.partner
+                    if part:
+                        cli.partner_name = part.name
+                except Exception:
+                    pass
+                if not getattr(cli, "partner_name", None) and Partner is not None:
+                    if cli.partner_id in partners_cache:
+                        cli.partner_name = partners_cache[cli.partner_id]
+                    else:
+                        _p = db.query(Partner).filter(Partner.id == cli.partner_id).first()
+                        cli.partner_name = _p.name if _p else None
+                        partners_cache[cli.partner_id] = cli.partner_name or ""
+        except Exception:
+            if not getattr(cli, "partner_name", None):
+                cli.partner_name = None
+
     _ensure_client_codes_for_all(db)
     return clients
 

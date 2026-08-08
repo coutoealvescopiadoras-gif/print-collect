@@ -1,6 +1,7 @@
 export interface Client {
   id: number;
   partner_id?: number | null;
+  partner_name?: string | null;
   name: string;
   cnpj: string | null;
   contact_name: string | null;

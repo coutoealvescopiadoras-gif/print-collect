@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { api, getPublicApiUrl } from "../api";
-import type { AgentPairingCode, Client, Location, Printer } from "../types";
+import type { AgentPairingCode, Client, Location, Partner, Printer } from "../types";
 import { useAuth } from "../context/AuthContext";
 import { formatDateTimeBrasil, formatNumberBrasil } from "../utils";
 
@@ -18,8 +18,12 @@ function copyText(text: string) {
 export default function Clientes() {
   const { user, loading: authLoading } = useAuth();
   const effectiveRole = user?.role || "superadmin";
-  const canManageClients = effectiveRole === "superadmin" || effectiveRole === "partner_admin";
-  const canEditSector = effectiveRole === "superadmin" || effectiveRole === "partner_admin" || effectiveRole === "client_manager";
+  const isSuperadmin = effectiveRole === "superadmin";
+  const isPartnerAdmin = effectiveRole === "partner_admin";
+  const canManageClients = isSuperadmin || isPartnerAdmin;
+  const canEditSector = isSuperadmin || isPartnerAdmin || effectiveRole === "client_manager";
+
+  const [partners, setPartners] = useState<Partner[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [editingClientId, setEditingClientId] = useState<number | null>(null);
@@ -32,6 +36,12 @@ export default function Clientes() {
   const [editingSectorPrinterId, setEditingSectorPrinterId] = useState<number | null>(null);
   const [savingSectorPrinterId, setSavingSectorPrinterId] = useState<number | null>(null);
 
+  // Filtros (igual aba Impressoras)
+  const [ownOnly, setOwnOnly] = useState<boolean>(true);
+  const [partnerId, setPartnerId] = useState<number | null>(null);
+  const [searchText, setSearchText] = useState<string>("");
+  const [searchDebounced, setSearchDebounced] = useState<string>("");
+
   // Modal pareamento
   const [pairingClientId, setPairingClientId] = useState<number | null>(null);
   const [pairingAgentName, setPairingAgentName] = useState("");
@@ -41,11 +51,48 @@ export default function Clientes() {
   const [pairingResult, setPairingResult] = useState<AgentPairingCode | null>(null);
   const [pairingCopied, setPairingCopied] = useState(false);
 
-  const load = () => api.getClients().then(setClients);
+  // Debounce pesquisa
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setSearchDebounced(searchText);
+    }, 400);
+    return () => clearTimeout(id);
+  }, [searchText]);
+
+  // Carrega parceiros (se superadmin)
+  useEffect(() => {
+    if (!isSuperadmin) return;
+    api.getPartners().then(setPartners).catch(() => setPartners([]));
+  }, [isSuperadmin]);
+
+  const load = async () => {
+    if (authLoading || !user) return;
+    const params: Parameters<typeof api.getClients>[0] = {};
+    if (isSuperadmin) {
+      params.own_only = ownOnly;
+      if (!ownOnly && partnerId !== null) params.partner_id = partnerId;
+    }
+    if (searchDebounced.trim()) params.search = searchDebounced.trim();
+    const data = await api.getClients(params);
+    setClients(data);
+  };
+
   useEffect(() => {
     if (authLoading || !user) return;
     load();
-  }, [authLoading, user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, user, ownOnly, partnerId, searchDebounced]);
+
+  const hasAnyPartnerVisible = clients.some((c) => c.partner_name && c.partner_id);
+  const temFiltroAplicado =
+    !ownOnly || partnerId !== null || searchDebounced.trim().length > 0;
+
+  const limparFiltros = () => {
+    setOwnOnly(true);
+    setPartnerId(null);
+    setSearchText("");
+    setSearchDebounced("");
+  };
 
   const handleOpenCreate = () => {
     setEditingClientId(null);
@@ -266,21 +313,180 @@ export default function Clientes() {
 
   return (
     <>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
-        <h1 className="page-title" style={{ marginBottom: 0 }}>Clientes</h1>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "1rem",
+          flexWrap: "wrap",
+          gap: "1rem",
+        }}
+      >
+        <h1 className="page-title" style={{ marginBottom: 0 }}>
+          Clientes
+        </h1>
         {canManageClients && (
-          <button className="btn btn-primary" onClick={handleOpenCreate}>+ Novo cliente</button>
+          <button className="btn btn-primary" onClick={handleOpenCreate}>
+            + Novo cliente
+          </button>
         )}
+      </div>
+
+      <div
+        className="card"
+        style={{
+          marginBottom: "1rem",
+          padding: "0.75rem 1rem",
+          background: "var(--surface-2)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            gap: "1.25rem",
+          }}
+        >
+          {isSuperadmin && (
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  fontWeight: 600,
+                  fontSize: "0.85rem",
+                  marginBottom: 4,
+                  color: "var(--text-muted)",
+                }}
+              >
+                Mostrar
+              </label>
+              <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
+                <label
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="scope_own"
+                    checked={ownOnly}
+                    onChange={() => {
+                      setOwnOnly(true);
+                      setPartnerId(null);
+                    }}
+                  />
+                  <span>
+                    <strong>Apenas meus clientes</strong> (diretos, sem parceiro)
+                  </span>
+                </label>
+                <label
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="scope_own"
+                    checked={!ownOnly}
+                    onChange={() => {
+                      setOwnOnly(false);
+                    }}
+                  />
+                  <span>Todos os clientes</span>
+                </label>
+              </div>
+            </div>
+          )}
+
+          {isSuperadmin && !ownOnly && partners.length > 0 && (
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  fontWeight: 600,
+                  fontSize: "0.85rem",
+                  marginBottom: 4,
+                  color: "var(--text-muted)",
+                }}
+              >
+                🤝 Parceiro
+              </label>
+              <select
+                className="input"
+                value={partnerId === null ? "" : String(partnerId)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setPartnerId(v === "" ? null : Number(v));
+                }}
+                style={{ minWidth: 180 }}
+              >
+                <option value="">Todos os parceiros</option>
+                {partners.map((pt) => (
+                  <option key={pt.id} value={pt.id}>
+                    {pt.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div style={{ flex: "1 1 200px", minWidth: 200, maxWidth: 480 }}>
+            <label
+              style={{
+                display: "block",
+                fontWeight: 600,
+                fontSize: "0.85rem",
+                marginBottom: 4,
+                color: "var(--text-muted)",
+              }}
+            >
+              🔍 Pesquisar cliente
+            </label>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <input
+                className="input"
+                type="search"
+                placeholder="Digite o nome do cliente..."
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              {temFiltroAplicado && (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={limparFiltros}
+                  title="Limpar filtros"
+                >
+                  Limpar
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="card">
         {clients.length === 0 ? (
-          <div className="empty">Nenhum cliente cadastrado</div>
+          <div className="empty">
+            {temFiltroAplicado
+              ? "Nenhum cliente encontrado com estes filtros. Tente limpar os filtros."
+              : "Nenhum cliente cadastrado."}
+          </div>
         ) : (
           <table>
             <thead>
               <tr>
                 <th>Nome</th>
+                {(isSuperadmin || hasAnyPartnerVisible) && <th>Parceiro</th>}
                 <th style={{ width: 165 }}>🎫 Código Cliente</th>
                 <th>CNPJ</th>
                 <th>Contato</th>
@@ -312,6 +518,11 @@ export default function Clientes() {
                         </button>
                       </div>
                     </td>
+                    {(isSuperadmin || hasAnyPartnerVisible) && (
+                      <td style={{ color: "var(--text-muted)" }}>
+                        {c.partner_name || <span style={{ opacity: 0.6 }}>—</span>}
+                      </td>
+                    )}
                     <td>
                       <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", flexWrap: "wrap" }}>
                         <span
@@ -386,7 +597,7 @@ export default function Clientes() {
                   </tr>
                   {expandedClientId === c.id && (
                     <tr key={`details-${c.id}`}>
-                      <td colSpan={8} style={{ background: "var(--surface-hover)" }}>
+                      <td colSpan={(isSuperadmin || hasAnyPartnerVisible) ? 9 : 8} style={{ background: "var(--surface-hover)" }}>
                         <div style={{ padding: "1rem 0" }}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap", marginBottom: "0.75rem" }}>
                             <div style={{ fontWeight: 600 }}>

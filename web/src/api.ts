@@ -201,7 +201,24 @@ export const api = {
   deleteUser: (userId: number) =>
     request<{ status: string; message: string; user_id: number; email: string }>(`/api/users/${userId}`, { method: "DELETE" }),
   getStats: () => request<import("./types").DashboardStats>("/api/dashboard/stats"),
-  getClients: () => request<import("./types").Client[]>("/api/clients"),
+  getClients: (params?: {
+    search?: string;
+    partner_id?: number;
+    own_only?: boolean;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params) {
+      if (params.search) qs.set("search", params.search);
+      if (params.partner_id !== undefined && params.partner_id !== null)
+        qs.set("partner_id", String(params.partner_id));
+      if (params.own_only !== undefined && params.own_only !== null)
+        qs.set("own_only", params.own_only ? "1" : "0");
+    }
+    const q = qs.toString();
+    return request<import("./types").Client[]>(
+      q ? `/api/clients?${q}` : "/api/clients",
+    );
+  },
   createClient: (data: Partial<import("./types").Client>) =>
     request<import("./types").Client>("/api/clients", {
       method: "POST",

@@ -71,6 +71,7 @@ class ClientUpdate(BaseModel):
 class ClientOut(ClientBase):
     id: int
     partner_id: Optional[int] = None
+    partner_name: Optional[str] = None
     client_code: Optional[str] = None
     created_at: datetime
 
