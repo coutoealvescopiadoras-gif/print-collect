@@ -182,7 +182,7 @@ export default function Clientes() {
     try {
       setLoadingPrintersClientId(clientId);
       const [printers, locations] = await Promise.all([
-        api.getPrinters(clientId),
+        api.getPrinters({ client_id: clientId }),
         api.getLocations(clientId),
       ]);
       setClientPrinters((current) => ({ ...current, [clientId]: printers }));

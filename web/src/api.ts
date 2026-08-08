@@ -250,10 +250,27 @@ export const api = {
     request<import("./types").Printer>(`/api/printers/${printerId}/ignore`, {
       method: "POST",
     }),
-  getPrinters: (clientId?: number) =>
-    request<import("./types").Printer[]>(
-      clientId ? `/api/printers?client_id=${clientId}` : "/api/printers",
-    ),
+  getPrinters: (params?: {
+    client_id?: number;
+    partner_id?: number;
+    search?: string;
+    own_only?: boolean;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params) {
+      if (params.client_id !== undefined && params.client_id !== null)
+        qs.set("client_id", String(params.client_id));
+      if (params.partner_id !== undefined && params.partner_id !== null)
+        qs.set("partner_id", String(params.partner_id));
+      if (params.search) qs.set("search", params.search);
+      if (params.own_only !== undefined && params.own_only !== null)
+        qs.set("own_only", params.own_only ? "1" : "0");
+    }
+    const q = qs.toString();
+    return request<import("./types").Printer[]>(
+      q ? `/api/printers?${q}` : "/api/printers",
+    );
+  },
   getAlerts: (resolved?: boolean) =>
     request<import("./types").Alert[]>(
       resolved !== undefined ? `/api/alerts?resolved=${resolved}` : "/api/alerts",

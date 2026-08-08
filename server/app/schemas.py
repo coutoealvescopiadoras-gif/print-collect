@@ -226,6 +226,9 @@ class PrinterOut(PrinterBase):
     updated_at: datetime
     active: bool = True
     ignored: bool = False
+    client_name: str = ""
+    partner_id: Optional[int] = None
+    partner_name: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

@@ -954,7 +954,14 @@ def create_location(payload: LocationCreate, db: Session = Depends(get_db), curr
 
 
 @router.get("/printers", response_model=list[PrinterOut])
-def list_printers(client_id: Optional[int] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+def list_printers(
+    client_id: Optional[int] = None,
+    partner_id: Optional[int] = None,
+    search: Optional[str] = None,
+    own_only: Optional[bool] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
     _ensure_printer_ignored_column(db)
 
     # ⛔ LIMPEZA AUTOMATICA: fecha alertas falsos de toner colorido em impressoras PB
@@ -972,14 +979,57 @@ def list_printers(client_id: Optional[int] = None, db: Session = Depends(get_db)
 
     scoped_client_id = _scoped_client_id(current_user, client_id)
     query = db.query(Printer).filter(Printer.ignored == False)
+    # Join com Client para poder filtrar por partner_id / search / own_only e tambem para exibir nome cliente/parceiro no front
+    query = query.join(Client, Client.id == Printer.client_id, isouter=False)
+
     if _is_partner_admin(current_user):
-        partner_id = _required_partner_id(current_user)
-        query = query.join(Client).filter(Client.partner_id == partner_id)
+        partner_id_forced = _required_partner_id(current_user)
+        query = query.filter(Client.partner_id == partner_id_forced)
         if client_id is not None:
             _assert_partner_owns_client(db, current_user, client_id)
+    elif _is_superadmin(current_user):
+        # Opção C: own_only = True (ou None por default para superadmin) = mostra SOMENTE clientes diretos (sem parceiro)
+        if own_only is None or own_only == True:
+            query = query.filter(Client.partner_id.is_(None))
+        # Filtro por parceiro específico (só se own_only=False e passou partner_id)
+        if partner_id is not None:
+            query = query.filter(Client.partner_id == partner_id)
+
+    # Pesquisa por NOME do cliente (ILIKE case-insensitive)
+    if search:
+        _s = f"%{search.strip()}%"
+        query = query.filter(Client.name.ilike(_s))
+
     if scoped_client_id is not None:
         query = query.filter(Printer.client_id == scoped_client_id)
-    return query.order_by(Printer.model).all()
+
+    printers = query.order_by(Client.name, Printer.model).all()
+
+    # Preenche os campos novos client_name / partner_id / partner_name para exibir no front
+    partners_cache: dict[int, str] = {}
+    try:
+        from server.app.database import Partner
+    except Exception:
+        Partner = None
+    for p in printers:
+        try:
+            cli = p.client
+            if cli:
+                p.client_name = cli.name or ""
+                p.partner_id = cli.partner_id
+                if cli.partner_id and cli.partner:
+                    p.partner_name = cli.partner.name or None
+                elif cli.partner_id and Partner is not None:
+                    if cli.partner_id in partners_cache:
+                        p.partner_name = partners_cache[cli.partner_id]
+                    else:
+                        _p = db.query(Partner).filter(Partner.id == cli.partner_id).first()
+                        p.partner_name = _p.name if _p else None
+                        partners_cache[cli.partner_id] = p.partner_name or ""
+        except Exception:
+            if not getattr(p, "client_name", ""):
+                p.client_name = ""
+    return printers
 
 
 @router.post("/printers", response_model=PrinterOut, status_code=201)

@@ -29,6 +29,13 @@ export interface Printer {
   toner_magenta: number | null;
   toner_yellow: number | null;
   last_seen: string | null;
+  active: boolean;
+  ignored: boolean;
+  created_at: string;
+  updated_at: string;
+  client_name: string;
+  partner_id: number | null;
+  partner_name: string | null;
 }
 
 export interface Location {
