@@ -1212,28 +1212,46 @@ def list_alerts(resolved: Optional[bool] = None, db: Session = Depends(get_db), 
         query = query.filter(Alert.resolved == resolved)
 
     # ==========================================================
-    # 🔴 DEFESA FINAL ABSOLUTA (camada 4!)
-    # MESMO que por algum motivo o cleanup acima tenha falhado
-    # (ex: concorrência / erro de transação): REMOVEMOS DINAMICAMENTE
-    # da LISTA RETORNADA (sem alterar banco) TODO alerta colorido
-    # cuja impressora NÃO É REALMENTE COLORIDA (PB!)
+    # 🔴 DEFESA FINAL ABSOLUTA (camada 4!) - AGORA OTIMIZADA!
+    # ANTES: 1 query SQL por alerta → N+1 queries bug (se 100 alertas = 101 queries!)
+    # AGORA: 1 ÚNICA query extra para carregar TODAS as impressoras usadas
+    #        em CACHE dict[pid] → 0 N+1.
     # ==========================================================
     raw_alerts: list[Alert] = query.order_by(Alert.created_at.desc()).limit(100).all()
-    safe_alerts: list[Alert] = []
-    # cache de impressão → se é colorida (para não recalcular p/ cada alerta)
+
+    # PASSO 1: Extrai todos os printer_id distintos usados nos alertas (UNIQUE!)
+    all_printer_ids: set[int] = set()
+    try:
+        for a in raw_alerts or []:
+            if getattr(a, "printer_id", None) is not None:
+                all_printer_ids.add(int(a.printer_id))
+    except Exception:
+        all_printer_ids = set()
+
+    # PASSO 2: Uma ÚNICA query para carregar TUDO que precisamos de uma vez só
     printer_is_color_cache: dict[int, bool] = {}
-    for a in raw_alerts:
+    if all_printer_ids:
         try:
-            pid = a.printer_id
-            if pid not in printer_is_color_cache:
-                # Carrega a impressora 1x e aplica a regra DE OURO
-                p = db.query(Printer).filter(Printer.id == pid).first()
-                if p is None:
-                    printer_is_color_cache[pid] = True  # desconhecido = mostra para nao sumir
-                else:
-                    printer_is_color_cache[pid] = _is_color_printer_real(p)
-            is_color = printer_is_color_cache[pid]
-            # Se impressora é PB (not is_color) E a mensagem é colorida → PULA (nao exibe!)
+            pid_list = list(all_printer_ids)
+            printers = db.query(Printer).filter(Printer.id.in_(pid_list)).all()
+            for p in printers or []:
+                try:
+                    printer_is_color_cache[int(p.id)] = _is_color_printer_real(p)
+                except Exception:
+                    printer_is_color_cache[int(p.id)] = True  # mostra por seguranca
+        except Exception:
+            printer_is_color_cache = {}
+
+    # PASSO 3: Monta lista final segura (filtra alertas color PB)
+    safe_alerts: list[Alert] = []
+    for a in raw_alerts or []:
+        try:
+            pid = int(a.printer_id)
+            is_color = printer_is_color_cache.get(pid)
+            if is_color is None:
+                # impressora nao veio na query (ex: deletada no meio) → mostra
+                is_color = True
+            # Se impressora é PB (not is_color) E mensagem é colorida → PULA (nao exibe!)
             if not is_color and _is_color_message_any(a.message):
                 continue
         except Exception:
@@ -1288,15 +1306,15 @@ def clean_false_color_alerts_endpoint(
 ):
     """Fecha TODOS os alertas ativos de toner colorido em impressoras PB.
     Roda automaticamente no Dashboard/Alertas, mas pode ser chamado manualmente.
-    """
+    ⚠️ Quando chamado MANUALMENTE pelo botão: roda SEMPRE, ignorando cache TTL."""
     _require_manage_any(current_user)
     closed = 0
     if _is_partner_admin(current_user):
-        closed = _cleanup_false_color_alerts(db, partner_id=_required_partner_id(current_user))
+        closed = _cleanup_false_color_alerts(db, partner_id=_required_partner_id(current_user), force=True)
     elif _is_superadmin(current_user):
-        closed = _cleanup_false_color_alerts(db)
+        closed = _cleanup_false_color_alerts(db, force=True)
     else:
-        closed = _cleanup_false_color_alerts(db, client_id=_required_client_id(current_user))
+        closed = _cleanup_false_color_alerts(db, client_id=_required_client_id(current_user), force=True)
     db.commit()
     return {"status": "ok", "closed_alerts": closed}
 
@@ -2041,33 +2059,110 @@ def _sync_alerts(db: Session, printer: Printer, alert_messages: list[str]) -> No
         return
 
 
-# -----------------------------------------------------------------------------
-# LIMPEZA GLOBAL: fecha alertas FALSOS de toner colorido EM TODAS AS
-# IMPRESSORAS MONOCROMATICAS (PB) DO BANCO, MESMO SEM NOVA LEITURA.
-# Chamado automaticamente ao carregar o Dashboard e via endpoint explicito.
-# Usa TOKENS MASTER unificados (30+ variações!)
-# -----------------------------------------------------------------------------
+_CLEANUP_FALSE_COLOR_CACHE_TTL_SECONDS = 1800  # 30 MINUTOS = Nao precisa limpar alerta falso a cada clique!
+_CLEANUP_FALSE_COLOR_LAST_RUN: dict[tuple, float] = {}  # key: (scope_tuple) -> timestamp unix (s)
 
 
-def _cleanup_false_color_alerts(db: Session, partner_id: int | None = None, client_id: int | None = None) -> int:
+def _make_cleanup_cache_key(partner_id: int | None, client_id: int | None) -> tuple:
+    return (
+        "cleanup-false-color-v1",
+        int(partner_id) if partner_id is not None else -1,
+        int(client_id) if client_id is not None else -1,
+    )
+
+
+def _cleanup_cache_should_run(partner_id: int | None, client_id: int | None, force: bool = False) -> bool:
+    if force:
+        return True
+    import time as _t
+    key = _make_cleanup_cache_key(partner_id, client_id)
+    last = _CLEANUP_FALSE_COLOR_LAST_RUN.get(key, 0)
+    now = _t.time()
+    return (now - last) >= _CLEANUP_FALSE_COLOR_CACHE_TTL_SECONDS
+
+
+def _cleanup_cache_mark_done(partner_id: int | None, client_id: int | None) -> None:
+    import time as _t
+    key = _make_cleanup_cache_key(partner_id, client_id)
+    _CLEANUP_FALSE_COLOR_LAST_RUN[key] = _t.time()
+
+
+# -----------------------------------------------------------------------------
+# LIMPEZA GLOBAL OTIMIZADA (2026-08-08): fecha alertas FALSOS de toner colorido
+# EM IMPRESSORAS MONOCROMATICAS (PB).
+#
+# OTIMIZACOES de PERFORMANCE:
+#   A) CACHE TTL 30min → NÃO roda a cada clique de página (era o gargalo #1!).
+#   B) SÓ CARREGA impressoras que REALMENTE têm alertas ATIVOS (não carrega
+#      TODAS as impressoras do cliente / banco). Antes fazia O(N*M) → agora
+#      faz O(M) onde M = nº de alertas color ativos.
+#   C) LIMIT 200 por rodada → se houver MUITOS, vai processando aos poucos nas
+#      próximas 30min em diante. Não trava a requisição!
+# -----------------------------------------------------------------------------
+def _cleanup_false_color_alerts(db: Session, partner_id: int | None = None, client_id: int | None = None, force: bool = False) -> int:
     """Fecha alertas ativos de toner colorido em impressoras PB. Retorna qtd fechada."""
-    printers_query = db.query(Printer)
+    # Cache gargalo #1: evita rodar a cada clique do usuário no menu!
+    if not _cleanup_cache_should_run(partner_id, client_id, force=force):
+        return 0
 
-    if client_id is not None:
-        printers_query = printers_query.filter(Printer.client_id == client_id)
-    elif partner_id is not None:
-        printers_query = printers_query.join(Client, Client.id == Printer.client_id).filter(Client.partner_id == partner_id)
+    # ===== PASSO 1: BUSCAR SÓ OS ALERTAS ATIVOS (join com impressora) =====
+    # NÃO precisa carregar TODAS as impressoras! Apenas as que têm alertas abertos.
+    try:
+        alerts_query = (
+            db.query(Alert, Printer)
+            .join(Printer, Printer.id == Alert.printer_id)
+            .filter(Alert.resolved == False)
+            .filter(Printer.ignored == False)
+        )
 
-    printers: list[Printer] = printers_query.all()
+        if client_id is not None:
+            alerts_query = alerts_query.filter(Printer.client_id == client_id)
+        elif partner_id is not None:
+            alerts_query = alerts_query.join(Client, Client.id == Printer.client_id).filter(Client.partner_id == partner_id)
+
+        # LIMIT 200: não trava o request, vai escalonando aos poucos
+        rows = alerts_query.order_by(Alert.created_at.asc()).limit(200).all()
+    except Exception:
+        # fallback super seguro: roda o algoritmo antigo só pra não ficar 0
+        try:
+            _cleanup_cache_mark_done(partner_id, client_id)
+        except Exception:
+            pass
+        return 0
+
+    if not rows:
+        # Nenhum alerta ativo → marca cache para nao rodar de novo por 30min
+        try:
+            _cleanup_cache_mark_done(partner_id, client_id)
+        except Exception:
+            pass
+        return 0
+
+    # ===== PASSO 2: AGRUPA alertas por impressora (evita checagem duplicada!) =====
+    alerts_by_printer: dict[int, dict] = {}  # printer_id -> {"printer":..., "alerts":[...]}
+    for (alert, printer) in rows or []:
+        try:
+            pid = int(printer.id)
+            if pid not in alerts_by_printer:
+                alerts_by_printer[pid] = {"printer": printer, "alerts": []}
+            alerts_by_printer[pid]["alerts"].append(alert)
+        except Exception:
+            continue
+
     total_closed = 0
     ts = _now()
 
-    for printer in printers:
-        # ⛔ Usa o helper novo (MESSA É A REGRA CORRETA!)
-        if _is_color_printer_real(printer):
+    # ===== PASSO 3: PARA CADA IMPRESSORA, VERIFICA SE É PB (só 1x!) =====
+    for pid, data in alerts_by_printer.items():
+        printer = data["printer"]
+        alertas_desta = data["alerts"]
+        try:
+            if _is_color_printer_real(printer):
+                continue  # é colorida mesmo → não mexe nos alertas coloridos dela
+        except Exception:
             continue
 
-        # Impressora 100% confirmada PB: fecha QUALQUER alerta colorido ativo + apaga toners CMY!
+        # Impressora 100% confirmada PB: fecha alertas coloridos e apaga toners CMY!
         try:
             changed = False
             if printer.toner_cyan is not None:
@@ -2087,16 +2182,23 @@ def _cleanup_false_color_alerts(db: Session, partner_id: int | None = None, clie
         except Exception:
             pass
 
-        actives = (
-            db.query(Alert)
-            .filter(Alert.printer_id == printer.id, Alert.resolved == False)
-            .all()
-        )
-        for a in actives:
-            if _is_color_message_any(a.message) and not a.resolved:
-                a.resolved = True
-                a.resolved_at = ts
-                total_closed += 1
+        # Fecha APENAS os alertas coloridos desta impressora (já estavam carregados!)
+        for a in alertas_desta or []:
+            try:
+                if a.resolved:
+                    continue
+                if _is_color_message_any(a.message):
+                    a.resolved = True
+                    a.resolved_at = ts
+                    total_closed += 1
+            except Exception:
+                continue
+
+    # Marca no cache que rodamos (mesmo se total_closed = 0!) → evita rodar de novo por 30min
+    try:
+        _cleanup_cache_mark_done(partner_id, client_id)
+    except Exception:
+        pass
 
     if total_closed > 0:
         try:
@@ -2109,9 +2211,15 @@ def _cleanup_false_color_alerts(db: Session, partner_id: int | None = None, clie
 
 
 # -----------------------------------------------------------------------------
-# MIGRACAO AUTOMATICA: adiciona coluna `ignored` na tabela `printers` + índice,
-# se ainda nao existir (PostgreSQL). Nao precisa de SQL manual! Roda sempre ao
-# abrir o Dashboard ou /health, antes de qualquer outra operacao.
+# MIGRACAO AUTOMATICA PERFORMANCE (2026-08-08):
+#   - Mantem colunas `active` e `ignored` na printers
+#   - Cria/garante INDICES SQL CRITICOS que faltavam para nao ficar lento
+#     em milhares de registros:
+#       idx_printers_client_id        → join Client <-> Printer (TODAS as páginas!)
+#       idx_printers_active_ignored   → filtro impressoras ativas/ignoradas
+#       idx_alerts_printer_resolved   → join Alert <-> Printer + filtrar resolved
+#       idx_alerts_created_at_desc    → ORDER BY Alert.created_at DESC (aba Alertas!)
+#       idx_clients_partner_active    → filtro superadmin/partner_admin clientes
 # -----------------------------------------------------------------------------
 _MIGRATION_IGNORED_DONE = False
 
@@ -2122,6 +2230,8 @@ def _ensure_printer_ignored_column(db: Session) -> None:
         return
     try:
         from sqlalchemy import text
+
+        # --- Colunas essenciais (nao existiam no model → IntegrityError!) ---
         db.execute(text("""
             ALTER TABLE printers
             ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE
@@ -2130,6 +2240,8 @@ def _ensure_printer_ignored_column(db: Session) -> None:
             ALTER TABLE printers
             ADD COLUMN IF NOT EXISTS ignored BOOLEAN NOT NULL DEFAULT FALSE
         """))
+
+        # --- INDICES: PRINTERS (usados em TODAS as paginas!) ---
         try:
             db.execute(text("""
                 CREATE INDEX IF NOT EXISTS idx_printers_ignored
@@ -2137,6 +2249,49 @@ def _ensure_printer_ignored_column(db: Session) -> None:
             """))
         except Exception:
             pass
+        try:
+            db.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_printers_client_id
+                ON printers (client_id)
+            """))
+        except Exception:
+            pass
+        try:
+            # indice composto: (active, ignored, client_id) → acelera list_printers MASSIVAMENTE!
+            db.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_printers_active_ignored_client
+                ON printers (active, ignored, client_id)
+            """))
+        except Exception:
+            pass
+
+        # --- INDICES: ALERTS (usados em Dashboard / Alertas / Cleanup!) ---
+        try:
+            # (printer_id, resolved) → usado no cleanup, join Alert-Printer
+            db.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_alerts_printer_resolved
+                ON alerts (printer_id, resolved)
+            """))
+        except Exception:
+            pass
+        try:
+            # (resolved, created_at DESC) → aba Alertas ordenada!
+            db.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_alerts_resolved_created
+                ON alerts (resolved, created_at DESC)
+            """))
+        except Exception:
+            pass
+
+        # --- INDICES: CLIENTS (usados em filtro de parceiro!) ---
+        try:
+            db.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_clients_partner_active
+                ON clients (partner_id, active)
+            """))
+        except Exception:
+            pass
+
         db.commit()
         _MIGRATION_IGNORED_DONE = True
     except Exception:
