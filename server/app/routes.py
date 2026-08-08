@@ -1207,10 +1207,40 @@ def list_alerts(resolved: Optional[bool] = None, db: Session = Depends(get_db), 
     if _is_partner_admin(current_user):
         query = query.join(Client, Client.id == Printer.client_id).filter(Client.partner_id == _required_partner_id(current_user))
     elif not _is_superadmin(current_user):
-        query = query.filter(Printer.client_id == _required_client_id(current_user))
+        query = query.filter(Alert.printer_id == Printer.id).filter(Printer.client_id == _required_client_id(current_user))
     if resolved is not None:
         query = query.filter(Alert.resolved == resolved)
-    return query.order_by(Alert.created_at.desc()).limit(100).all()
+
+    # ==========================================================
+    # 🔴 DEFESA FINAL ABSOLUTA (camada 4!)
+    # MESMO que por algum motivo o cleanup acima tenha falhado
+    # (ex: concorrência / erro de transação): REMOVEMOS DINAMICAMENTE
+    # da LISTA RETORNADA (sem alterar banco) TODO alerta colorido
+    # cuja impressora NÃO É REALMENTE COLORIDA (PB!)
+    # ==========================================================
+    raw_alerts: list[Alert] = query.order_by(Alert.created_at.desc()).limit(100).all()
+    safe_alerts: list[Alert] = []
+    # cache de impressão → se é colorida (para não recalcular p/ cada alerta)
+    printer_is_color_cache: dict[int, bool] = {}
+    for a in raw_alerts:
+        try:
+            pid = a.printer_id
+            if pid not in printer_is_color_cache:
+                # Carrega a impressora 1x e aplica a regra DE OURO
+                p = db.query(Printer).filter(Printer.id == pid).first()
+                if p is None:
+                    printer_is_color_cache[pid] = True  # desconhecido = mostra para nao sumir
+                else:
+                    printer_is_color_cache[pid] = _is_color_printer_real(p)
+            is_color = printer_is_color_cache[pid]
+            # Se impressora é PB (not is_color) E a mensagem é colorida → PULA (nao exibe!)
+            if not is_color and _is_color_message_any(a.message):
+                continue
+        except Exception:
+            # Qualquer erro de checagem: mostra o alerta (nunca esconde coisa por erro!)
+            pass
+        safe_alerts.append(a)
+    return safe_alerts
 
 
 @router.post("/printers/{printer_id}/ignore", response_model=PrinterOut)
@@ -1732,22 +1762,44 @@ def _get_agent(x_agent_token: str, db: Session) -> Agent:
 # -----------------------------------------------------------------------------
 # DETECÇÃO UNIFICADA DE IMPRESSORA COLORIDA vs MONOCROMÁTICA (PB)
 # HELPER ÚNICO USADO EM TODOS OS LOCAIS: sync alertas, limpeza global, etc.
-# REGRA AGRESSIVA ANTI-FALSOS POSITIVOS:
-#   → SÓ é IMPRESSORA COLORIDA se tiver ALGUMA COISA REALMENTE COLORIDA:
-#       A) pages_color >= 1 (imprimiu pelo menos 1 página colorida na vida)
-#       OU
-#       B) PELO MENOS UM dos toners coloridos (cyan/magenta/yellow) tem valor > 0
-#          (mesmo que venha reportado 0 ou null → PB!)
-#   → QUALQUER OUTRO CASO → MONOCROMÁTICA (PB) → FECHA TODOS alertas coloridos!
+#
+# ⚠️⚠️ REGRA DEFINITIVA (2026-08-08 Julio / NENHUMA impressora PB como colorida!)
+# ⚠️ PROBLEMA ANTERIOR: impressoras PB reportavam toner_cyan/mag/yellow = 100
+# (mesmo sem ter esses cartuchos!) → has_color_toners virava True → marcava
+# impressora PB como colorida → criava ALERTAS DE TONER COLORIDO FALSOS!
+#
+# SOLUÇÃO: O CONTADOR pages_color É O REI DA DECISÃO (é monotônico e NÃO mente!).
+#   1) 🔴 SE pages_color <= 0 OU pages_color is None
+#          → IMPRESSORA É 100% PB (não importa se ciano/mag/yellow = 100!).
+#          (até zera os toners CMY no banco aqui dentro de brinde!)
+#   2) 🟢 SOMENTE SE pages_color >= 1:
+#          → AÍ SIM checamos has_color_toners OR has_color_pages.
 # -----------------------------------------------------------------------------
 def _is_color_printer_real(printer) -> bool:
     """Retorna True se a impressora é REALMENTE colorida (evita falsos PB).
 
-    ⚠️ BONUS: se detectar que pages_color estava com valor FALSO/ERRADO
-    (ex: impressora PB que reportou pages_color=1 uma vez por engano e
-    ficou marcada como colorida eternamente pq contador é monotônico),
-    ELA JA RESETA printer.pages_color PARA None aqui dentro, na hora!"""
-    # Critério B primeiro (antes de A para verificar suspeita de pages_color bugado!)
+    ⚠️ BONUS: se detectar que toners coloridos estão com valores FALSOS
+    (ex: impressora PB que reportou ciano=100), ELES JA SAO SETADOS PARA None
+    AQUI DENTRO, para não ficar aparecendo nos paineis de suprimentos!"""
+
+    # ===== PASSO 1: Ler valores numéricos (com proteção total!) =====
+    pages_color_int = 0
+    pages_bw_int = 0
+    pages_total_int = 0
+    try:
+        pages_color_int = int(printer.pages_color) if printer.pages_color is not None else 0
+    except Exception:
+        pages_color_int = 0
+    try:
+        pages_bw_int = int(printer.pages_bw) if printer.pages_bw is not None else 0
+    except Exception:
+        pages_bw_int = 0
+    try:
+        pages_total_int = int(printer.pages_total) if printer.pages_total is not None else 0
+    except Exception:
+        pages_total_int = 0
+
+    # ===== PASSO 2: Verifica toners coloridos =====
     toners_color = [
         printer.toner_cyan,
         printer.toner_magenta,
@@ -1768,36 +1820,57 @@ def _is_color_printer_real(printer) -> bool:
     except Exception:
         has_color_toners = False
 
-    # Critério A: páginas coloridas já impressas >= 1?
-    has_color_pages = False
-    pages_color_suspeito = False
-    try:
-        p_color = printer.pages_color
-        p_bw = printer.pages_bw
-        p_total = printer.pages_total
-        p_color_int = int(p_color) if p_color is not None else 0
-        p_bw_int = int(p_bw) if p_bw is not None else 0
-        p_total_int = int(p_total) if p_total is not None else 0
+    # ====================================================================
+    # 🔴 REGRA DE OURO (ELIMINA 100% DOS FALSOS COLORIDOS!)
+    # SE NUNCA imprimiu página colorida (pages_color == 0 ou None) → É PB!
+    # (mesmo que toners digam 100 — são valores falsos de impressora PB!)
+    # ====================================================================
+    if pages_color_int <= 0:
+        # Apaga também os toners coloridos do banco (não precisa ficar poluindo!)
+        try:
+            changed_toners = False
+            if printer.toner_cyan is not None:
+                printer.toner_cyan = None
+                changed_toners = True
+            if printer.toner_magenta is not None:
+                printer.toner_magenta = None
+                changed_toners = True
+            if printer.toner_yellow is not None:
+                printer.toner_yellow = None
+                changed_toners = True
+        except Exception:
+            pass
+        return False  # 🔴 É PRETO E BRANCO SEM DÚVIDA NENHUMA!
 
-        if p_color_int > 0:
-            # ===== DETECCAO DE pages_color FALSO =====
-            # Se impressora NAO tem toners coloridos (has_color_toners = False)
-            # E: pages_bw >= pages_total OU pages_bw >= pages_total - pages_color
-            # (ou seja, pages_bw cobre quase tudo, pages_color NAO EXISTIA de verdade)
-            if not has_color_toners and (
-                (p_bw_int >= p_total_int and p_total_int > 0)
-                or (p_total_int > 0 and (p_total_int - p_bw_int) <= max(1, p_color_int * 0.3))
-                or (p_total_int == 0 and p_bw_int == 0)
-            ):
-                pages_color_suspeito = True
-                # RESETA AGORA! (impede que fique marcada como colorida eternamente!)
-                try:
-                    printer.pages_color = None
-                except Exception:
-                    pass
-                has_color_pages = False
-            else:
-                has_color_pages = True
+    # ====================================================================
+    # 🟢 SÓ CHEGA AQUI SE pages_color >= 1!
+    # Então tem chances reais de ser colorida. Agora confirmamos:
+    # ====================================================================
+    has_color_pages = False
+    try:
+        # pages_color > 0, mas confere também se pages_bw não cobre tudo
+        # (detecta pages_color errado de impressora PB mesmo > 0, raro!)
+        if (pages_bw_int >= pages_total_int and pages_total_int > 0) or (
+            pages_total_int > 0 and (pages_total_int - pages_bw_int) <= max(1, pages_color_int * 0.3)
+        ):
+            # pages_color aparentemente bugado: apaga ele por segurança
+            try:
+                printer.pages_color = None
+            except Exception:
+                pass
+            # E zera toners coloridos tb → marca como PB
+            try:
+                if printer.toner_cyan is not None:
+                    printer.toner_cyan = None
+                if printer.toner_magenta is not None:
+                    printer.toner_magenta = None
+                if printer.toner_yellow is not None:
+                    printer.toner_yellow = None
+            except Exception:
+                pass
+            has_color_pages = False
+        else:
+            has_color_pages = True
     except Exception:
         has_color_pages = False
 
@@ -2338,6 +2411,16 @@ async def agent_report(
                 except Exception:
                     pass
                 continue
+
+        # ===== LIMPEZA ANTI-FALSO COLORIDO GLOBAL (para este cliente!) =====
+        # Roda OBRIGATORIAMENTE a cada coleta de agente: fecha alertas coloridos
+        # falsos de TODAS as impressoras PB do cliente, mesmo que esta coleta
+        # específica não tenha pegado essas impressoras.
+        try:
+            if agent and getattr(agent, "client_id", None):
+                _cleanup_false_color_alerts(db, client_id=int(agent.client_id))
+        except Exception:
+            pass
 
         # ----- COMMIT FINAL DE TUDO -----
         try:
