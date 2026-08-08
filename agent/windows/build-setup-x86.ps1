@@ -222,9 +222,26 @@ $RuntimeFiles = @(
     (Join-Path $RuntimeDir "list-printers.bat"),
     (Join-Path $RuntimeDir "register-startup-task.bat"),
     (Join-Path $RuntimeDir "register-startup-task-silent.bat"),
+    (Join-Path $RuntimeDir "register-startup-task-superv5.bat"),
+    (Join-Path $RuntimeDir "diagnosticar-agendamento-completo.bat"),
     (Join-Path $RuntimeDir "unregister-startup-task.bat"),
     (Join-Path $RuntimeDir "run-wizard.bat")
 )
+Write-Host "   [Pre-processamento BATs] Convertendo TODOS os .bat para CRLF (Windows line endings) e Encoding ANSI/CP1252..."
+foreach ($file in $RuntimeFiles) {
+    if (Test-Path $file) {
+        try {
+            $content = [System.IO.File]::ReadAllText($file)
+            $content = $content -replace "`r`n","`n" -replace "`n","`r`n"  # Força CRLF
+            [System.IO.File]::WriteAllText($file, $content, [System.Text.Encoding]::GetEncoding(1252))
+            Write-Host "     OK: $(Split-Path -Leaf $file)"
+        } catch {
+            Write-Warning "     (aviso) Nao foi possivel converter encoding/CRLF de $(Split-Path -Leaf $file): $_"
+        }
+    }
+}
+Write-Host "   [OK] Todos BATs convertidos (CRLF + CP1252)."
+
 foreach ($file in $RuntimeFiles) {
     if (-not (Test-Path $file)) { throw "Arquivo runtime faltando: $file" }
     Copy-Item $file $DistDir -Force
@@ -245,7 +262,7 @@ Copy-Item $ExeSearch $WindowsDir -Force
 foreach ($file in $RuntimeFiles) {
     Copy-Item $file $WindowsDir -Force
 }
-Write-OK "Arquivos copiados para $DistDir e $WindowsDir"
+Write-OK "Arquivos copiados para $DistDir e $WindowsDir (BATs em CRLF/ANSI)"
 
 # =============================================================================
 # PASSO 6: Inno Setup

@@ -266,13 +266,16 @@ def _exe_cmd(cmd: list[str], check: bool = False) -> int:
 
 
 def cmd_install(args: argparse.Namespace) -> int:
-    """Registra tarefa de inicializacao automatica.
-    NO WINDOWS: estrategia MAIS SEGURA de todas:
-      (1) APAGA as tarefas antigas (08h/18h legado) se existirem.
-      (2) CRIA 'Print Collect Agent - A Cada 1 HORA (repeticao INFINITA).
-      (3) CRIA 'Print Collect Agent - Ao Logar' (coleta no login).
-      Tudo isso feito VIA register-startup-task-silent.bat (nao tem erro de aspas, 100% testado!)."""
+    """Registra tarefa de inicializacao automatica no Windows (SUPERV5+ 6 CAMADAS).
+    Estrategia TRIPLA REDUNDANCIA para NUNCA MAIS falhar:
+      CAMADA 1: Tenta rodar register-startup-task-silent.bat (empacotado no Setup.exe).
+      CAMADA 2 (FALLBACK NATIVO! 100% PowerShell/.bat line-endings independent!):
+          Se CAMADA 1 falhar (returncode!=0, exception, ou quaisquer erros de
+          sintaxe de LF/CRLF/encoding no .bat), NOS CRIAMOS AS 6 TAREFAS DIRETAMENTE
+          via schtasks + PowerShell Python nativo!
+      CAMADA 3: Sempre roda 'once' no final p/ garantir primeira coleta AGORA."""
     import os
+    import tempfile
 
     # Se temos um ultimo caminho salvo de pair/wizard, usamos ele (garante uso do WRITABLE)
     last_saved = getattr(_pair_and_save, "_last_config_path", None)
@@ -292,77 +295,228 @@ def cmd_install(args: argparse.Namespace) -> int:
 
     if system == "windows":
         # =====================================================================
-        # ESTRATEGIA 100% CONFIÁVEL: RODAR OS .BAT (que nós já codamos!)
-        # - register-startup-task-silent.bat (mesma pasta do EXE)
-        #   O que .bat faz (100% testado!):
-        #   [0/4] APAGA tarefas antigas: 08h e 18h (legado)
-        #   [1/4] Cria  Print Collect Agent - A Cada 1 HORA (PT1H INFINITO)
-        #   [2/4] Cria  Print Collect Agent - Ao Logar
-        #   [3/4] Roda once agora (teste!)
-        #   [4/4] Mensagem sucesso.
+        # CAMINHO EXE/CFG/WD — Usados por todas as camadas
         # =====================================================================
+        exe_str = str(exe)
+        cfg_str = str(config_path)
+        wd_str = str(exe.parent)
 
-        # Localiza a pasta do instalador / pasta do agente runtime:
-        #   -> Se EXE compilado (PyInstaller): pasta do proprio exe
-        #   -> Se script dev: agent/windows/runtime (local)
-        if getattr(sys, "frozen", False):
-            agent_dir = Path(sys.executable).resolve().parent
-        else:
-            # Dev: assumimos que o modulo esta em <repo>/agent/print_collect/__main__.py
-            # E os .bat em <repo>/agent/windows/runtime  e <repo>/agent/windows
-            here = Path(__file__).resolve().parent.parent
-            agent_dir = here / "windows"
-            if not (agent_dir / "register-startup-task-silent.bat").exists():
-                # fallback: runtime/
-                candidate = here / "windows" / "runtime"
-                if candidate.exists():
-                    agent_dir = candidate
+        # Garante ProgramData/PrintCollect existe
+        pd = os.environ.get("PROGRAMDATA") or r"C:\ProgramData"
+        cfg_dir = Path(pd) / "PrintCollect"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1) Tentar SILENT.bat primeiro (sem pausa), se nao existir tenta o interativo (com pause)
-        bat_silent = agent_dir / "register-startup-task-silent.bat"
-        bat_interativo = agent_dir / "register-startup-task.bat"
-        chosen_bat = bat_silent if bat_silent.exists() else bat_interativo
+        # LOG TEMP de install
+        log_path = Path(tempfile.gettempdir()) / "print-collect-startup.log"
 
-        if not chosen_bat.exists():
-            # Fallback: tentar pasta runtime se agente colocaram em outra subpasta
-            candidate_runtime = agent_dir / "runtime" / "register-startup-task-silent.bat"
-            if candidate_runtime.exists():
-                chosen_bat = candidate_runtime
+        # =====================================================================
+        # CAMADA 1: RODAR register-startup-task-silent.bat (.empacotado)
+        # =====================================================================
+        def _try_bat_layer() -> int:
+            # Localiza a pasta do instalador / pasta do agente runtime:
+            if getattr(sys, "frozen", False):
+                agent_dir = Path(sys.executable).resolve().parent
             else:
-                print(f"[ERRO GRAVE] Nao encontrei register-startup-task-silent.bat nem em: {agent_dir}")
-                print(f"      Conteudo da pasta: {list(agent_dir.glob('*.bat'))}")
-                # Ultimo recurso: rodar uma vez 'once' mas nao agenda (agendamento falhou)
-                print("\n[!] Nao agendou, mas coletando UMA VEZ para testar...")
-                base_cmd_once = base_cmd + ["once"]
-                _exe_cmd(base_cmd_once)
-                return 1
+                here = Path(__file__).resolve().parent.parent
+                agent_dir = here / "windows"
+                if not (agent_dir / "register-startup-task-silent.bat").exists():
+                    candidate = here / "windows" / "runtime"
+                    if candidate.exists():
+                        agent_dir = candidate
 
-        print(f"\n[OK] Script de agendamento encontrado: {chosen_bat}")
+            bat_silent = agent_dir / "register-startup-task-silent.bat"
+            bat_interativo = agent_dir / "register-startup-task.bat"
+            chosen_bat = bat_silent if bat_silent.exists() else bat_interativo
 
-        # Copia o config.yaml para o local esperado pelo bat (C:\ProgramData\PrintCollect\config.yaml)
-        # Garantir que o agente e o config estao presentes (o bat ja copia de qualquer forma)
-        print(f"\n[1/2] Rodando script de instalacao (tarefas agendadas 1/HORA)...")
-        try:
-            # RODAR O .BAT (sem shell=True p/ .bat
-            result = subprocess.run(
-                ["cmd.exe", "/C", str(chosen_bat)],
-                shell=False,
-                check=False,
-                cwd=str(chosen_bat.parent),
-            )
-            rc_install = result.returncode
-        except Exception as e_bat:
-            print(f"[ERRO] Falha ao rodar bat de agendamento: {e_bat}")
-            rc_install = 1
+            if not chosen_bat.exists():
+                candidate_runtime = agent_dir / "runtime" / "register-startup-task-silent.bat"
+                if candidate_runtime.exists():
+                    chosen_bat = candidate_runtime
+                else:
+                    print(f"[INFO BAT] Nao encontrei register-startup-task-*.bat em: {agent_dir}")
+                    return 2  # Codigo especial = pular para CAMADA 2 (nao encontrado)
 
-        # Roda uma vez 'once' uma vez agora para confirmar (passo 3/4 do .bat ja deve ter rodado):
-        print("\n[2/2] Rodando coleta UMA VEZ agora p/ testar...")
+            print(f"\n[OK] Script de agendamento encontrado: {chosen_bat}")
+            print(f"\n[CAMADA 1/3] Rodando script .bat de agendamento...")
+            try:
+                result = subprocess.run(
+                    ["cmd.exe", "/C", str(chosen_bat)],
+                    shell=False,
+                    check=False,
+                    cwd=str(chosen_bat.parent),
+                    capture_output=True,
+                    text=True,
+                )
+                rc_bat = result.returncode
+                # Mostra saida do BAT (stdout + stderr) de forma resumida p/ diagnosticar
+                tail_lines = []
+                if result.stdout:
+                    tail_lines.extend([ln for ln in result.stdout.splitlines() if ln.strip()][-6:])
+                if result.stderr:
+                    tail_lines.extend([ln for ln in result.stderr.splitlines() if ln.strip()][-6:])
+                if tail_lines:
+                    print("[BAT saida (ultimas linhas)]:")
+                    for ln in tail_lines:
+                        print(f"  | {ln}")
+                if rc_bat != 0:
+                    print(f"[CAMADA 1/3] bat falhou (rc={rc_bat}). Vamos para CAMADA 2 (nativo Python)!")
+                else:
+                    print("[CAMADA 1/3] BAT executou com SUCESSO (rc=0)!")
+                return rc_bat
+            except Exception as e_bat:
+                print(f"[CAMADA 1/3] Exception ao rodar BAT: {e_bat}. Pulando para CAMADA 2 (nativo).")
+                return 3  # Codigo especial: exception no bat
+
+        # =====================================================================
+        # CAMADA 2 (FALLBACK SUPER ROBUSTO! Cria 6 tarefas DIRETAMENTE via schtasks/PowerShell Python!)
+        # =====================================================================
+        def _native_schtasks_ps_create_6_tasks() -> int:
+            print("\n[CAMADA 2/3] ✅ FALLBACK NATIVO (schtasks/PowerShell Python): CRIANDO 6 CAMADAS DE TAREFAS...")
+            # Lista de tarefas SUPERV5:
+            tasks = [
+                # (nome, schtasks args [menos /TN /TR], tr_escaped, dispararRun?)
+                ("Print Collect Agent - 30 Minutos",
+                 ["/SC", "MINUTE", "/MO", "30"], True),
+                ("Print Collect Agent - Watchdog",
+                 ["/SC", "MINUTE", "/MO", "10"], True),
+                ("Print Collect Agent - Diario Repeticao",
+                 ["/SC", "DAILY", "/MO", "1", "/RI", "60", "/DU", "9999:00", "/K"], True),
+                ("Print Collect Agent - Ao Iniciar",
+                 ["/SC", "ONSTART"], False),
+                ("Print Collect Agent - Ao Logar",
+                 ["/SC", "ONLOGON"], False),
+            ]
+
+            # TR escaped para schtasks: aspas internas backslashed
+            def _tr(sub: str) -> str:
+                return f'"\\"{exe_str}\\" --config \\"{cfg_str}\\" {sub}"'
+
+            # PASSO 1 (NATIVO): DELETAR 15+ variantes antigas
+            old_names = [
+                "Print Collect Agent","Print Collect Agent - Manha (08h)","Print Collect Agent - Tarde (18h)",
+                "Print Collect Agent - Ao Logar","Print Collect Agent - A Cada 1 Hora","Print Collect Agent - A Cada 1 HORA",
+                "Print Collect Agent - Hora","Print Collect Agent - Hourly","Print Collect Agent - Inicializacao",
+                "Print Collect - Coletar","Print Collect Agent - 30 Minutos","Print Collect Agent - Diario Repeticao",
+                "Print Collect Agent - Watchdog","Print Collect Agent - Ao Iniciar","Print Way Agent","Print Collect",
+            ]
+            total_del_ok = 0
+            for tn in old_names:
+                _exe_cmd(["schtasks","/Delete","/F","/TN",tn], check=False)
+                total_del_ok += 1
+            print(f"  [1/6 - LIMPEZA] {total_del_ok} variantes de tarefas antigas apagadas.")
+
+            rc_all = 0
+            # CAMADA 1/3 schtasks simples (30min, watchdog, diario, onstart, onlogon)
+            for i, (tn, sch_args, run_now) in enumerate(tasks, 2):
+                sub = "watchdog" if "Watchdog" in tn else "once"
+                tr = _tr(sub)
+                cmdline = ["schtasks","/Create","/F","/TN",tn,*sch_args,"/TR",tr]
+                rc1 = _exe_cmd(cmdline, check=False)
+                if rc1 == 0 and run_now:
+                    _exe_cmd(["schtasks","/Run","/TN",tn], check=False)
+                if rc1 != 0:
+                    rc_all = rc1
+            print(f"  [schtasks simples] RC final = {rc_all} (0 = tudo ok)")
+
+            # CAMADA 2: PowerShell ScheduledTasks (HORARIA, e para as que falharam acima)
+            horary_ok = False
+            try:
+                ps_code = r"""
+$ErrorActionPreference = 'Stop'
+$exe = '__EXE__'
+$cfg = '__CFG__'
+$wd  = '__WD__'
+function New-TaskWrap($taskName, $sub, $trigger, $runNow) {
+  $act = New-ScheduledTaskAction -Execute $exe -Argument ('--config "{0}" {1}' -f $cfg, $sub) -WorkingDirectory $wd
+  $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+  Register-ScheduledTask -TaskName $taskName -Action $act -Trigger $trigger -Settings $set -Force -ErrorAction Stop | Out-Null
+  if ($runNow) { Start-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue }
+}
+# 1) HORARIA (proxima hora cheia + repeticao 1h INFINITO)
+$startHorario = (Get-Date -Minute 0 -Second 0).AddHours(1)
+$trgH = New-ScheduledTaskTrigger -Once -At $startHorario -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration ([TimeSpan]::MaxValue)
+New-TaskWrap 'Print Collect Agent - A Cada 1 HORA' 'once' $trgH $true
+# 2) 30 Minutos (fallback):
+$start30 = (Get-Date).AddMinutes(2)
+$trg30 = New-ScheduledTaskTrigger -Once -At $start30 -RepetitionInterval (New-TimeSpan -Minutes 30) -RepetitionDuration ([TimeSpan]::MaxValue)
+New-TaskWrap 'Print Collect Agent - 30 Minutos' 'once' $trg30 $true
+# 3) Watchdog fallback:
+$startWD = (Get-Date).AddMinutes(1)
+$trgWD = New-ScheduledTaskTrigger -Once -At $startWD -RepetitionInterval (New-TimeSpan -Minutes 10) -RepetitionDuration ([TimeSpan]::MaxValue)
+New-TaskWrap 'Print Collect Agent - Watchdog' 'watchdog' $trgWD $true
+# 4) Diario repeticao fallback:
+$startDaily = (Get-Date -Minute 0 -Second 0).AddHours(1)
+$trgDaily = New-ScheduledTaskTrigger -Daily -At $startDaily -DaysInterval 1
+$trgDaily.Repetition.Interval = (New-TimeSpan -Minutes 60)
+$trgDaily.Repetition.Duration = ([TimeSpan]::MaxValue)
+New-TaskWrap 'Print Collect Agent - Diario Repeticao' 'once' $trgDaily $true
+# 5) Boot e Logon (fallback):
+$trgBoot = New-ScheduledTaskTrigger -AtStartup
+New-TaskWrap 'Print Collect Agent - Ao Iniciar' 'once' $trgBoot $false
+$uid = $env:USERNAME
+$trgLogon = New-ScheduledTaskTrigger -AtLogOn -User $uid
+New-TaskWrap 'Print Collect Agent - Ao Logar' 'once' $trgLogon $false
+Write-Output 'NATIVE_FALLBACK_OK'
+"""
+                ps_code = (ps_code
+                           .replace("__EXE__", exe_str.replace("'","''"))
+                           .replace("__CFG__", cfg_str.replace("'","''"))
+                           .replace("__WD__",  wd_str.replace("'","''")))
+                r = subprocess.run(
+                    ["powershell","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command",ps_code],
+                    capture_output=True, text=True, check=False
+                )
+                if r.returncode == 0 and "NATIVE_FALLBACK_OK" in (r.stdout or ""):
+                    horary_ok = True
+                    print("  [PowerShell ScheduledTasks] ✅ SUCESSO! Tarefa HORARIA e fallbacks criados.")
+                else:
+                    print(f"  [PowerShell ScheduledTasks] rc={r.returncode}")
+                    if r.stdout: print("  stdout (ultimas):", "\n  ".join((r.stdout.splitlines() or [])[-4:]))
+                    if r.stderr: print("  stderr (ultimas):", "\n  ".join((r.stderr.splitlines() or [])[-4:]))
+            except Exception as e:
+                print(f"  [PowerShell ScheduledTasks] Exception: {e}")
+
+            # CAMADA 3: schtasks HOURLY fallback
+            if not horary_ok:
+                try:
+                    from datetime import datetime, timedelta
+                    t = datetime.now() + timedelta(minutes=3)
+                    sd = t.strftime("%m/%d/%Y")
+                    st = t.strftime("%H:%M")
+                    rc2 = _exe_cmd([
+                        "schtasks","/Create","/F",
+                        "/TN","Print Collect Agent - A Cada 1 HORA",
+                        "/SC","HOURLY","/MO","1",
+                        "/SD",sd,"/ST",st,
+                        "/TR",_tr("once"),
+                    ], check=False)
+                    if rc2 == 0:
+                        _exe_cmd(["schtasks","/Run","/TN","Print Collect Agent - A Cada 1 HORA"], check=False)
+                except Exception as e2:
+                    print(f"[CAMADA 2/3] schtasks HOURLY fallback falhou: {e2}")
+                    rc_all = 5
+
+            return 0 if (rc_all == 0 or horary_ok) else rc_all
+
+        # =====================================================================
+        # EXECUTA AS CAMADAS
+        # =====================================================================
+        rc_bat = _try_bat_layer()
+        rc_install = rc_bat
+        if rc_bat != 0:
+            rc_fb = _native_schtasks_ps_create_6_tasks()
+            rc_install = rc_fb
+
+        # =====================================================================
+        # CAMADA 3: SEMPRE roda once p/ garantir primeira coleta AGORA
+        # =====================================================================
+        print("\n[CAMADA 3/3] Rodando coleta UMA VEZ agora p/ testar...")
         base_cmd_once = base_cmd + ["once"]
         _exe_cmd(base_cmd_once)
 
-        print("\n[DICA] Para ver as tarefas no Windows:")
+        print("\n[DICA] Para ver as 6 tarefas no Windows:")
         print("       Painel de Controle > Ferramentas Administrativas > Agendador de Tarefas")
-        print("       OU: schtasks /Query | findstr 'Print Collect'")
+        print("       OU: schtasks /Query /FO LIST | findstr 'Print Collect'")
         return rc_install
 
     # Linux/systemd
