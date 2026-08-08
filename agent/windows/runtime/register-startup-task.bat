@@ -86,6 +86,8 @@ set "TASK_HOURLY=Print Collect Agent - A Cada 1 HORA"
 set "TR_ESCAPED=\"%EXE%\" --config \"%CFG%\" once"
 
 REM === TENTATIVA 1: PowerShell ScheduledTasks (WorkingDirectory + StartWhenAvailable!) ===
+REM === CORRECAO v5 CRITICA: $start NÃO PODE SER HOJE 00:00 (que já passou quando instala ao meio-dia!) ===
+REM ===                    Agora: $start = PRÓXIMA HORA CHEIA. Logo após registrar, Start-ScheduledTask AGORA MESMO! ===
 echo         Tentativa 1/3: PowerShell ScheduledTasks (mais robusto)...
 powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference='Stop';" ^
@@ -94,21 +96,38 @@ powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ^
   "$taskName='%TASK_HOURLY:'='%';" ^
   "$wd='%~dp0';" ^
   "$act = New-ScheduledTaskAction -Execute $exe -Argument ('--config \"{0}\" once' -f $cfg) -WorkingDirectory $wd;" ^
-  "$start = (Get-Date).Date;" ^
+  "$start = (Get-Date -Minute 0 -Second 0).AddHours(1);" ^
   "$trg = New-ScheduledTaskTrigger -Once -At $start -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration ([TimeSpan]::MaxValue);" ^
   "$set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 1);" ^
-  "Register-ScheduledTask -TaskName $taskName -Action $act -Trigger $trg -Settings $set -Force | Out-Null;" >nul 2>> "%LOG%"
+  "Register-ScheduledTask -TaskName $taskName -Action $act -Trigger $trg -Settings $set -Force | Out-Null;" ^
+  "Start-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue | Out-Null;" >nul 2>> "%LOG%"
 set RC1=%ERRORLEVEL%
-echo [%date% %time%]   Tentativa 1 PowerShell ScheduledTasks -> RC=%RC1% >> "%LOG%"
+echo [%date% %time%]   Tentativa 1 PowerShell ScheduledTasks v5 -> RC=%RC1% (proxima hora cheia + disparado agora) >> "%LOG%"
 if %RC1% EQU 0 goto :hourly_ok
 
-REM === FALLBACK 2: schtasks /SC HOURLY /MO 1 (COM /ST 00:00 /SD) ===
-echo         Tentativa 1 falhou. Tentativa 2/3: schtasks HOURLY /ST 00:00 ...
+REM === FALLBACK 2: schtasks /SC HOURLY /MO 1 (COM /ST HORA_ATUAL_MINUTO_SEGUINTE /SD!) ===
+REM === CORRECAO v5: /ST 00:00 é horario PASSADO se instalar ao meio-dia! Agora usa /ST HH:mm (agora +2min) ===
+echo         Tentativa 1 falhou. Tentativa 2/3: schtasks HOURLY /ST HH:mm ...
 for /f "tokens=1-3 delims=/ " %%a in ("%date%") do set _SD=%%a/%%b/%%c
 if "%_SD%"=="" set _SD=%date%
-schtasks /Create /F /TN "%TASK_HOURLY%" /SC HOURLY /MO 1 /ST 00:00 /SD %_SD% /TR "%TR_ESCAPED%" >nul 2>> "%LOG%"
+REM Formata HORA para /ST no formato HH:mm (agora + 2 minutos de seguranca para nao ja ter passado!)
+for /f "tokens=1-3 delims=:., " %%h in ("%time: =0%") do set _HH=%%h&set _MM=%%i&set _SS=%%j
+set /A _MM_MIN_ADJ=100%_MM% %% 100 + 2
+if %_MM_MIN_ADJ% GEQ 60 (
+  set /A _HH_MIN_ADJ=100%_HH% %% 100 + 1
+  set /A _MM=0
+  set _HH=00%_HH_MIN_ADJ%
+  set _HH=%_HH:~-2%
+) else (
+  set _MM=00%_MM_MIN_ADJ%
+  set _MM=%_MM:~-2%
+)
+set _ST=%_HH%:%_MM%
+schtasks /Create /F /TN "%TASK_HOURLY%" /SC HOURLY /MO 1 /ST %_ST% /SD %_SD% /TR "%TR_ESCAPED%" >nul 2>> "%LOG%"
 set RC1=%ERRORLEVEL%
-echo [%date% %time%]   Tentativa 2 HOURLY/ST 00:00 SD %_SD% -> RC=%RC1% >> "%LOG%"
+echo [%date% %time%]   Tentativa 2 HOURLY/ST %_ST% SD %_SD% -> RC=%RC1% >> "%LOG%"
+REM Forca executar AGORA, caso o /ST seja no futuro
+if %RC1% EQU 0 schtasks /Run /TN "%TASK_HOURLY%" >nul 2>> "%LOG%"
 if %RC1% EQU 0 goto :hourly_ok
 
 REM === FALLBACK 3: MINUTE /MO 60 ===
@@ -116,6 +135,8 @@ echo         Tentativa 2 falhou. Tentativa 3/3: schtasks MINUTE /MO 60 ...
 schtasks /Create /F /TN "%TASK_HOURLY%" /SC MINUTE /MO 60 /TR "%TR_ESCAPED%" >nul 2>> "%LOG%"
 set RC1=%ERRORLEVEL%
 echo [%date% %time%]   Tentativa 3 MINUTE/MO 60 -> RC=%RC1% >> "%LOG%"
+REM Forca executar AGORA (MINUTE nao tem /ST futuro, comeca contar de agora)
+if %RC1% EQU 0 schtasks /Run /TN "%TASK_HOURLY%" >nul 2>> "%LOG%"
 
 :hourly_ok
 if %RC1% EQU 0 (
