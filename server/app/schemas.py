@@ -224,6 +224,7 @@ class PrinterOut(PrinterBase):
     last_seen: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+    active: bool = True
     ignored: bool = False
 
     model_config = {"from_attributes": True}

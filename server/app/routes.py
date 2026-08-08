@@ -1912,6 +1912,10 @@ def _ensure_printer_ignored_column(db: Session) -> None:
         from sqlalchemy import text
         db.execute(text("""
             ALTER TABLE printers
+            ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE
+        """))
+        db.execute(text("""
+            ALTER TABLE printers
             ADD COLUMN IF NOT EXISTS ignored BOOLEAN NOT NULL DEFAULT FALSE
         """))
         try:
