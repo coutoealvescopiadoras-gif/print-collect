@@ -9,7 +9,8 @@ Subcomandos:
     networks          Descobre e lista sub-redes locais detectadas.
     install           Registra tarefa de inicializacao (Windows schtasks / Linux systemd).
     uninstall         Remove tarefa de inicializacao.
-    config            Abre o config.yaml no editor padrao do sistema.
+    config            Abre config.yaml no editor padrao do sistema.
+    watchdog          Verifica se coletas rodaram nas ultimas 75min; se NAO dispara 'once' automaticamente.
 """
 
 from __future__ import annotations
@@ -689,6 +690,81 @@ def cmd_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_watchdog(args: argparse.Namespace) -> int:
+    """Watchdog SUPERPODER! Verifica se as coletas estao rodando de hora em hora.
+
+    Se NAO houver NENHUMA linha nova no agent.log nos ultimos ~75 minutos, ou
+    seja, as 5 tarefas agendadas NAO funcionaram, WATCHDOG DISPARA UMA COLETA
+    IMEDIATA ele mesmo! Garante que NUNCA mais fique horas sem atualizar.
+    """
+    import re
+    import time
+    from datetime import datetime, timedelta
+    from print_collect.config import load_config
+
+    config_path = resolve_config_path(args.config)
+    cfg = load_config(config_path)
+
+    LOG_DIR = getattr(cfg, "log_dir", None) or (
+        os.environ.get("PROGRAMDATA", "/var/log") + (
+            "\\PrintCollect" if platform.system().lower() == "windows" else "/print-collect"
+        )
+    )
+    log_path = Path(LOG_DIR) / "agent.log"
+    print(f"[Watchdog] Verificando: {log_path}")
+
+    MAX_IDLE = timedelta(minutes=75)
+    now = datetime.now()
+    last_ts: datetime | None = None
+
+    if log_path.exists():
+        try:
+            # Leitura com encoding tolerante; ultimas 400 linhas (mais leve):
+            txt = ""
+            with log_path.open("r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+                if lines:
+                    txt = "".join(lines[-400:])
+
+            # Tenta varios formatos de data/hora usados em log do agente:
+            patterns = [
+                # ISO: 2026-08-08 12:26:00,123
+                (re.compile(r"(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?)"),
+                 lambda s: datetime.strptime(
+                     s.replace("T", " ").split(",")[0].split(".")[0],
+                     "%Y-%m-%d %H:%M:%S"
+                 )),
+                # Log antigo: [dd/mm/aaaa hh:mm:ss]
+                (re.compile(r"\[(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2})\]"),
+                 lambda s: datetime.strptime(s, "%d/%m/%Y %H:%M:%S")),
+            ]
+
+            for regex, parse in patterns:
+                for m in regex.findall(txt):
+                    try:
+                        ts = parse(m[0] if isinstance(m, tuple) else m)
+                        if last_ts is None or ts > last_ts:
+                            last_ts = ts
+                    except Exception:
+                        continue
+        except Exception as e:
+            print(f"[Watchdog] Aviso ao ler log: {e}")
+
+    idle_str = f"{(now - last_ts).total_seconds()/60:.0f} minutos" if last_ts else "NUNCA"
+    print(f"[Watchdog] Ultima coleta detectada: {last_ts or 'JAMAIS'}. Inativo = {idle_str}. Max permitido = {MAX_IDLE.total_seconds()/60:.0f} min.")
+
+    # Sem log / log MUITO velho → Dispara coleta AGORA MESMO!
+    if last_ts is None or (now - last_ts) > MAX_IDLE:
+        print("[Watchdog] >>> IDLE LIMITE ULTRAPASSADO! Disparando run_once() IMEDIATAMENTE! <<<")
+        t0 = time.time()
+        rc = run_once(config_path) or 0
+        print(f"[Watchdog] run_once() terminou em {time.time() - t0:.1f}s. Exit={rc}")
+        return rc
+
+    print("[Watchdog] OK. Ultima coleta recente. Nao preciso fazer nada.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="print-collect",
@@ -697,6 +773,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-c", "--config", default="config.yaml",
                         help="Caminho do config.yaml (padrão: config.yaml)")
     parser.add_argument("--once", action="store_true", dest="legacy_once",
+
                         help="Legacy — igual a subcomando 'once'")
     parser.add_argument("--test", action="store_true", dest="legacy_test",
                         help="Legacy — igual a subcomando 'test'")
@@ -743,6 +820,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_cfg = sub.add_parser("config", help="Abre config.yaml no editor padrao.")
     p_cfg.set_defaults(func=cmd_config)
+
+    p_wd = sub.add_parser("watchdog",
+                          help="Verifica se as coletas estao atualizadas; se NAO, dispara coleta imediata.")
+    p_wd.set_defaults(func=cmd_watchdog)
 
     p_pair = sub.add_parser("pair", help="Pareamento por codigo curto (estilo Print Way).",
                             description="Faz pareamento com o servidor usando um codigo curto de 8 chars.")
