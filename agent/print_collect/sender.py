@@ -14,7 +14,7 @@ logger = logging.getLogger("print-collect-agent")
 
 
 class ApiSender:
-    def __init__(self, server_url: str, agent_token: str, timeout: int = 30, retries: int = 3):
+    def __init__(self, server_url: str, agent_token: str, timeout: int = 60, retries: int = 5):
         self.server_url = server_url.rstrip("/")
         self.agent_token = agent_token
         self.timeout = timeout
@@ -78,13 +78,24 @@ class ApiSender:
 
     def test_connection(self) -> bool:
         try:
-            response = requests.get(f"{self.server_url}/health", timeout=10)
-            response.raise_for_status()
-            logger.info("Servidor acessível: %s", response.json())
-            self.heartbeat()
-            return True
-        except requests.RequestException as exc:
-            logger.error("Servidor inacessível: %s", exc)
+            # Usa timeout e retries padroes do proprio sender para consistencia:
+            last_exc: Exception | None = None
+            for attempt in range(1, self.retries + 1):
+                try:
+                    response = requests.get(f"{self.server_url}/health", timeout=self.timeout)
+                    response.raise_for_status()
+                    logger.info("Servidor acessível: %s", response.json())
+                    self.heartbeat()
+                    return True
+                except requests.RequestException as exc:
+                    last_exc = exc
+                    logger.warning("test_connection tentativa %d/%d falhou: %s", attempt, self.retries, exc)
+                    if attempt < self.retries:
+                        time.sleep(2 ** attempt)
+            logger.error("Servidor inacessível (apos %d tentativas): %s", self.retries, last_exc)
+            return False
+        except Exception as exc_global:
+            logger.error("Servidor inacessível: %s", exc_global)
             return False
 
 

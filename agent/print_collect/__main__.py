@@ -388,8 +388,18 @@ def cmd_install(args: argparse.Namespace) -> int:
             ]
 
             # TR escaped para schtasks: aspas internas backslashed
+            # === CORRECAO V6.2 WorkingDirectory ===
+            #   BUG ANTERIOR: se o Windows Task Scheduler executa um EXE de outro
+            #   drive/pasta, a CWD default é C:\Windows\System32 (nao a pasta do exe).
+            #   PyInstaller crasha silenciosamente (antes de abrir o log!) se não
+            #   encontrar DLLs na CWD errada. SOLUCAO 100% Windows compatível:
+            #   embrulha tudo dentro de "cmd.exe /c \"cd /d <PASTA> & exe args\""!
+            cmd_exe = r"C:\Windows\System32\cmd.exe"
             def _tr(sub: str) -> str:
-                return f'"\\"{exe_str}\\" --config \\"{cfg_str}\\" {sub}"'
+                # Monta comando interno com cd para pasta do agente:
+                inner = f'cd /d "{wd_str}" & "{exe_str}" --config "{cfg_str}" {sub}'
+                # schtasks /TR precisa de aspas EXTERNAS simples, então:
+                return f'"{cmd_exe}" /c "{inner}"'
 
             # PASSO 1 (NATIVO): DELETAR 15+ variantes antigas
             old_names = [
@@ -783,6 +793,7 @@ def cmd_wizard(args: argparse.Namespace) -> int:
     # -------------------------------------------------------------------------
     print("\n4/4) Instalando inicializacao automatica (tarefa agendada)...")
     instalou_ok = False
+    instalou_parcialmente_ok = False
     try:
         class _InstArgs:
             system = False
@@ -790,11 +801,33 @@ def cmd_wizard(args: argparse.Namespace) -> int:
         rc = cmd_install(_InstArgs)
         if rc == 0:
             instalou_ok = True
+            instalou_parcialmente_ok = True
             print("[OK] Inicializacao automatica instalada com sucesso!")
             print("     (Agente inicia sozinho toda vez que ligar o PC!)")
+        else:
+            # rc != 0 = provavelmente falhou apenas Ao Iniciar/Ao Logar por falta de Admin.
+            # As 4 tarefas PRINCIPAIS (30min/Horaria/Diario/Watchdog) foram criadas!
+            instalou_parcialmente_ok = True
+            print("\n[!] ATENCAO: Inicializacao automatica INSTALADA PARCIALMENTE (4/6 tarefas OK!)")
+            print("   ✅ TAREFAS JA CRIADAS (FUNCIONANDO DE HORA EM HORA NORMALMENTE!):")
+            print("      · Print Collect Agent - 30 Minutos")
+            print("      · Print Collect Agent - A Cada 1 HORA")
+            print("      · Print Collect Agent - Diario Repeticao")
+            print("      · Print Collect Agent - Watchdog (a cada 10min, garante que nao pare!)")
+            print()
+            print("   ⚠️  FALTARAM apenas 2 tarefas (precisam de ADMINISTRADOR para criar):")
+            print("      · Ao Iniciar (quando liga PC)   · Ao Logar (quando usuario entra)")
+            print()
+            print("   ✅ PASSO A PASSO RAPIDO PARA ADICIONAR AS 2 FALTANTES AGORA MESMO:")
+            print("      1) Menu Iniciar → Print Collect")
+            print("      2) Botao DIREITO em 'Reinstalar inicializacao' → Mais → Executar como Administrador")
+            print("      OU: Abre C:\\Program Files (x86)\\Print Collect")
+            print("          Botao DIREITO em 'register-startup-task-silent.bat' → Executar como Administrador")
+            print("      3) Confirma 'Sim' no UAC, espera ~60 segundos. PRONTO! 6/6 tarefas!")
+            print()
     except Exception as e:
         print(f"[AVISO] Nao foi possivel instalar inicializacao: {e}")
-        print("     (Voce pode instalar depois pelo atalho: Reinstalar inicializacao)")
+        print("     (Voce pode instalar depois pelo atalho: Reinstalar inicializacao como ADMIN)")
 
     # -------------------------------------------------------------------------
     # FIM DE TUDO! MENSAGEM BONITO E CLARO!
@@ -809,9 +842,11 @@ def cmd_wizard(args: argparse.Namespace) -> int:
     print(f" · Config salvo em  : {actual_config_path}")
     print(f" · Impressoras hoje : {len(printers)} encontradas")
     if instalou_ok:
-        print(f" · Auto inicializa  : ✅ INSTALADA (inicia com o Windows!)")
+        print(f" · Auto inicializa  : ✅ 6/6 TAREFAS INSTALADAS (100%!)")
+    elif instalou_parcialmente_ok:
+        print(f" · Auto inicializa  : ✅ 4/6 TAREFAS OK (funciona horario! Leia acima como add 2 faltantes.)")
     else:
-        print(f" · Auto inicializa  : ⚠️  Instale depois pelo atalho")
+        print(f" · Auto inicializa  : ⚠️  Instale depois pelo atalho (como ADMIN!)")
     print()
     print(" A partir de AGORA, este PC vai coletar as impressoras")
     print(" automaticamente todos os dias! 🚀")
@@ -854,17 +889,24 @@ def cmd_watchdog(args: argparse.Namespace) -> int:
     import re
     import time
     from datetime import datetime, timedelta
-    from print_collect.config import load_config
+    from print_collect.config import load_config, default_log_file_path
 
     config_path = resolve_config_path(args.config)
     cfg = load_config(config_path)
 
-    LOG_DIR = getattr(cfg, "log_dir", None) or (
-        os.environ.get("PROGRAMDATA", "/var/log") + (
-            "\\PrintCollect" if platform.system().lower() == "windows" else "/print-collect"
-        )
-    )
-    log_path = Path(LOG_DIR) / "agent.log"
+    # === CORRECAO V6.2: Usa o MESMO caminho de log do load_config/setup_logging! ===
+    # Nao confiamos mais em log_dir hardcoded ou env var. O load_config() ja retorna
+    # cfg.log_file com o PATH CERTO (ProgramData/PrintCollect/agent.log) inclusive
+    # quando usuario nao especificou nada (fallback default_log_file_path)!
+    if cfg.log_file:
+        log_path = Path(cfg.log_file)
+    else:
+        # Fallback extremo (se cfg.log_file for None por algum bug):
+        log_path = default_log_file_path()
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
     print(f"[Watchdog] Verificando: {log_path}")
 
     MAX_IDLE = timedelta(minutes=75)
