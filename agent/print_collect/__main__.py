@@ -265,6 +265,125 @@ def _exe_cmd(cmd: list[str], check: bool = False) -> int:
     return rc
 
 
+def _windows_is_admin() -> bool:
+    """Retorna True se o processo atual estiver rodando COMO ADMINISTRADOR no Windows.
+    Usa ctypes + CheckTokenMembership com SID do grupo Administradores.
+    Fallback rapido: tenta abrir a chave HKLM\\SECURE (so admin consegue ler).
+    """
+    if platform.system().lower() != "windows":
+        return True  # No Linux/macOS consideramos que o usuario sabe o que faz
+    try:
+        import ctypes
+        import ctypes.wintypes as wintypes
+
+        SECURITY_MAX_SID_SIZE = 68
+        WinBuiltinAdministratorsSid = 26  # Well-known SID alias para Administradores locais
+
+        def _get_sid():
+            cbSid = wintypes.DWORD(SECURITY_MAX_SID_SIZE)
+            pSid = ctypes.create_string_buffer(SECURITY_MAX_SID_SIZE)
+            if not ctypes.windll.advapi32.CreateWellKnownSid(WinBuiltinAdministratorsSid, None, pSid, ctypes.byref(cbSid)):
+                return None
+            return pSid
+
+        pSid = _get_sid()
+        if pSid is None:
+            # Fallback se a funcao acima falhar: tenta abrir chave protegida do reg
+            try:
+                import winreg  # type: ignore
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SECURE", 0, winreg.KEY_READ):
+                    return True
+            except OSError:
+                return False
+        is_admin = wintypes.BOOL()
+        if not ctypes.windll.advapi32.CheckTokenMembership(None, pSid, ctypes.byref(is_admin)):
+            return False
+        return bool(is_admin.value)
+    except Exception:
+        return False
+
+
+def _windows_relaunch_self_as_admin(args: argparse.Namespace | None = None) -> None:
+    """Se NAO estiver rodando admin no Windows, re-abre o MESMO exe/script com UAC elevado.
+    Transmite TUDO: sys.argv, config, comando (install/wizard etc).
+    Se elevar, esta funcao NAO RETORNA: termina o processo atual (sys.exit).
+    """
+    if platform.system().lower() != "windows":
+        return
+    if _windows_is_admin():
+        return  # ja estamos admin, blz!
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        SW_SHOWNORMAL = 1
+        SEE_MASK_NOASYNC = 0x00000100
+        SEE_MASK_FLAG_NO_UI = 0x00000400
+
+        # Monta argumentos (menos sys.argv[0] que e o caminho do exe/script):
+        params = " ".join(f'"{a}"' if " " in a or '"' in a else a for a in sys.argv[1:])
+
+        # Use ShellExecuteEx para permitir runas em qualquer .exe/.py:
+        class SHELLEXECUTEINFOW(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("fMask", wintypes.ULONG),
+                ("hwnd", wintypes.HWND),
+                ("lpVerb", wintypes.LPCWSTR),
+                ("lpFile", wintypes.LPCWSTR),
+                ("lpParameters", wintypes.LPCWSTR),
+                ("lpDirectory", wintypes.LPCWSTR),
+                ("nShow", ctypes.c_int),
+                ("hInstApp", wintypes.HINSTANCE),
+                ("lpIDList", ctypes.c_void_p),
+                ("lpClass", wintypes.LPCWSTR),
+                ("hkeyClass", wintypes.HKEY),
+                ("dwHotKey", wintypes.DWORD),
+                ("DUMMYUNIONNAME", ctypes.c_ulonglong),
+                ("hProcess", wintypes.HANDLE),
+            ]
+
+        sei = SHELLEXECUTEINFOW()
+        sei.cbSize = ctypes.sizeof(SHELLEXECUTEINFOW)
+        sei.fMask = SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI
+        sei.hwnd = None
+        sei.lpVerb = "runas"  # = Pede UAC Administrador automaticamente!
+        sei.lpFile = sys.executable
+        sei.lpParameters = params
+        sei.lpDirectory = str(Path.cwd())
+        sei.nShow = SW_SHOWNORMAL
+        sei.hInstApp = None
+
+        print("\n[!] Detetamos que voce NAO esta rodando como ADMINISTRADOR.")
+        print("    Para criar as 6 tarefas agendadas corretamente (sem 'Acesso negado')")
+        print("    precisamos de privilegios elevados. Abrindo UAC automaticamente...")
+        print("    -> Clique em 'Sim' na janela do Windows que vai aparecer agora!")
+        import time
+        time.sleep(1.5)
+
+        if not ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(sei)):
+            # Se ShellExecute falhar (muito raro), avisa o usuario e nao crasha.
+            le = ctypes.GetLastError()
+            print(f"\n[ERRO] Nao foi possivel elevar automaticamente (erro {le}).")
+            print("       ================ SOLUCAO MANUAL 1 CLIQUE =================")
+            print("       1) FECHE esta janela do CMD/Prompt.")
+            print("       2) Menu Iniciar → Procure Print Collect → Clique com BOTAO DIREITO em")
+            print("          'Reinstalar inicializacao' OU 'Wizard de pareamento'")
+            print("       3) Clique em 'Mais' → 'Executar como Administrador' → SIM no UAC.")
+            print("       ==============================================================")
+            try:
+                input("\n[Enter para fechar...]")
+            except (EOFError, KeyboardInterrupt):
+                pass
+        # Fecha o processo NAO ADMIN atual. O usuario agora interage com o novo processo ELEVADO:
+        sys.exit(0)
+    except Exception as exc:
+        print(f"[Aviso] Nao foi possivel auto-elevar: {exc}")
+        print("       Execute o Wizard / Install novamente como Administrador manualmente.")
+        return
+
+
 def cmd_install(args: argparse.Namespace) -> int:
     """Registra tarefa de inicializacao automatica no Windows (SUPERV5+ 6 CAMADAS).
     Estrategia TRIPLA REDUNDANCIA para NUNCA MAIS falhar:
@@ -276,6 +395,10 @@ def cmd_install(args: argparse.Namespace) -> int:
       CAMADA 3: Sempre roda 'once' no final p/ garantir primeira coleta AGORA."""
     import os
     import tempfile
+
+    # === CORRECAO V6.3: GARANTE ADMINISTRADOR ANTES DE TENTAR CRIAR/DELETAR TAREFAS ===
+    #   Evita "Acesso negado" em TUDO! Se nao for admin, re-abre automaticamente UAC.
+    _windows_relaunch_self_as_admin(args)
 
     # Se temos um ultimo caminho salvo de pair/wizard, usamos ele (garante uso do WRITABLE)
     last_saved = getattr(_pair_and_save, "_last_config_path", None)
@@ -387,19 +510,23 @@ def cmd_install(args: argparse.Namespace) -> int:
                  ["/SC", "ONLOGON"], False),
             ]
 
-            # TR escaped para schtasks: aspas internas backslashed
-            # === CORRECAO V6.2 WorkingDirectory ===
-            #   BUG ANTERIOR: se o Windows Task Scheduler executa um EXE de outro
-            #   drive/pasta, a CWD default é C:\Windows\System32 (nao a pasta do exe).
-            #   PyInstaller crasha silenciosamente (antes de abrir o log!) se não
-            #   encontrar DLLs na CWD errada. SOLUCAO 100% Windows compatível:
-            #   embrulha tudo dentro de "cmd.exe /c \"cd /d <PASTA> & exe args\""!
+            # TR escaped para schtasks:
+            # === CORRECAO V6.3 Aspas CORRETAS no schtasks /TR ===
+            #   REGRAS OBRIGATORIAS schtasks.exe para /TR com aspas aninhadas:
+            #   1) O argumento /TR deve ser uma UNICA string comecando e terminando com "
+            #   2) Qualquer ASPA DENTRO dessa /TR deve ser ESCAPADA com um BACKSLASH (\") ANTES dela!
+            #   3) O wrapper cmd.exe /c cd pasta & exe garante WorkingDirectory sempre correto.
             cmd_exe = r"C:\Windows\System32\cmd.exe"
             def _tr(sub: str) -> str:
-                # Monta comando interno com cd para pasta do agente:
-                inner = f'cd /d "{wd_str}" & "{exe_str}" --config "{cfg_str}" {sub}'
-                # schtasks /TR precisa de aspas EXTERNAS simples, então:
-                return f'"{cmd_exe}" /c "{inner}"'
+                # 1. Monta o inner (o que vai DENTRO do /c do cmd.exe — NAO tem aspas externas aqui):
+                inner_unquoted = f'cd /d "{wd_str}" & "{exe_str}" --config "{cfg_str}" {sub}'
+                # 2. Monta linha COMPLETA do comando (cmd.exe /c "<inner>"):
+                full_cmd = f'{cmd_exe} /c "{inner_unquoted}"'
+                # 3. ESCAPA aspas internas com \ para schtasks /TR aceitar!
+                escaped = full_cmd.replace('"', '\\"')
+                # 4. Coloca ASPAS EXTERNAS obrigatórias no /TR, que o _run_schtasks já acrescenta no final?
+                #    NÃO — para deixar 100% certo, já devolvemos com aspas EXTERNAS envolvendo.
+                return f'"{escaped}"'
 
             # PASSO 1 (NATIVO): DELETAR 15+ variantes antigas
             old_names = [
@@ -673,6 +800,11 @@ def cmd_wizard(args: argparse.Namespace) -> int:
     1) Abre  2) Cola CODIGO DO CLIENTE  3) Enter  4) PRONTO!
     Tudo o resto (URL servidor, comunidade, sub-redes, inicializacao automatica)
     ja sai de fabrica! Nao precisa de mais nada!"""
+
+    # === CORRECAO V6.3: GARANTE ADMINISTRADOR NO WIZARD TAMBEM! ===
+    #   O usuario clica no atalho do Menu Iniciar (normal user!)
+    #   Auto-eleva para UAC admin ANTES de perguntar o código → Acesso negado ZERO!
+    _windows_relaunch_self_as_admin(args)
 
     print("=" * 62)
     print("   PRINT COLLECT — WIZARD DE INSTALAÇÃO")

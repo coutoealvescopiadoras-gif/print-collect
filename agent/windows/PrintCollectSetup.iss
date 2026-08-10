@@ -64,17 +64,21 @@ Name: "{autodesktop}\Print Collect - Wizard"; Filename: "{app}\WizardPareamento.
 ; === WIZARD NATIVO: Chama WizardPareamento.exe DIRETAMENTE (0 .bat, 0 cmd.exe!) ===
 ; (Abre a janela preta SEMPRE, sem bug de fechar sozinho, sem aspas.)
 ; Sem flag unchecked = vem MARCADO POR PADRAO na ultima tela do setup! Todo mundo clica Finish e abre!
+; === CORRECAO V6.3: Flag "runascurrentuser" OBRIGATORIA em instalacao ADMIN ===
+;   Inno Setup por padrão usa "runasoriginaluser" em postinstall (volta para usuario NAO admin apos
+;   instalacao terminar!). Isso causava bug "Acesso negado" no schtasks dentro do wizard!
+;   runascurrentuser = roda com o MESMO usuario ADMIN que abriu o setup! Elevação mantida!
 Filename: "{app}\WizardPareamento.exe"; \
   WorkingDir: "{app}"; \
   Description: "Executar Wizard de Pareamento (vincular agente ao cliente — RECOMENDADO)"; \
-  Flags: nowait postinstall skipifsilent
+  Flags: nowait postinstall skipifsilent runascurrentuser
 Filename: "{app}\list-printers.bat"; \
   Description: "Procurar impressoras na rede do cliente (primeira busca)"; \
-  Flags: nowait postinstall skipifsilent unchecked
+  Flags: nowait postinstall skipifsilent unchecked runascurrentuser
 Filename: "{app}\register-startup-task-silent.bat"; \
-  Flags: runhidden waituntilterminated skipifdoesntexist; \
+  Flags: runhidden waituntilterminated skipifdoesntexist runascurrentuser; \
   StatusMsg: "Configurando inicializacao automatica..."
-Filename: "{app}\open-config.bat"; Description: "Editar config.yaml manualmente"; Flags: nowait postinstall skipifsilent unchecked
+Filename: "{app}\open-config.bat"; Description: "Editar config.yaml manualmente"; Flags: nowait postinstall skipifsilent unchecked runascurrentuser
 
 [Tasks]
 Name: "desktopicon"; Description: "Criar atalho Wizard na Area de Trabalho"; GroupDescription: "Atalhos adicionais:"; Flags: unchecked
