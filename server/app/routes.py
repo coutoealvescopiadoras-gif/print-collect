@@ -2522,6 +2522,33 @@ async def agent_report(
                 printer.last_seen = now
                 printer.updated_at = now
 
+                # ================================================================
+                # 🔥 CORRECAO V6.4 DASHBOARD HORARIO ATUALIZADO
+                #    SEMPRE cria uma Reading NOVA a cada coleta, MESMO que o
+                #    contador de páginas seja IDENTICO ao anterior.
+                #    Motivo: telas de impressora/cliente mostram a ultima leitura
+                #    inserida em readings, nao apenas printer.last_seen. Sem isso,
+                #    Julio olha o dashboard e pensa "nao coletou" porque o horario
+                #    da ultima linha de leitura nao atualiza, apesar do last_seen sim.
+                # ================================================================
+                try:
+                    reading_row = Reading(
+                        printer_id=printer.id,
+                        pages_total=int(printer.pages_total or 0),
+                        pages_bw=int(printer.pages_bw or 0),
+                        pages_color=int(printer.pages_color or 0),
+                        toner_black=printer.toner_black,
+                        toner_cyan=printer.toner_cyan,
+                        toner_magenta=printer.toner_magenta,
+                        toner_yellow=printer.toner_yellow,
+                        status=_s_strn(r_status, 50) or "unknown",
+                        collected_at=now,
+                    )
+                    db.add(reading_row)
+                except Exception:
+                    # Nunca deixa a falha de insercao da reading matar o loop
+                    pass
+
                 try:
                     db.flush()
                 except Exception:
