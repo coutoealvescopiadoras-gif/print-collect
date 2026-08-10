@@ -384,6 +384,55 @@ def _windows_relaunch_self_as_admin(args: argparse.Namespace | None = None) -> N
         return
 
 
+def _ensure_windows_bat_wrappers(exe_dir: Path) -> tuple[Path, Path]:
+    """v6.4 NOVO! Cria/Atualiza run-once.bat e run-watchdog.bat na pasta do agente,
+    com conteúdo 100% correto (CRLF + ANSI CP1252), SEM wrapper inline.
+    Solucao DEFITIVA para o bug de aspas aninhadas do schtasks /TR que causava
+    erro -2147024894 (arquivo nao encontrado) e tarefas nao disparavam.
+    Retorna (bat_once_path, bat_watchdog_path)
+    """
+    bat_once = exe_dir / "run-once.bat"
+    bat_wd = exe_dir / "run-watchdog.bat"
+    pd = os.environ.get("PROGRAMDATA") or r"C:\ProgramData"
+
+    # Modelo: ja tem EXE_DIR = pasta do agente via %~dp0, WorkingDirectory garantido!
+    once_template = (
+        "@echo off\r\n"
+        "chcp 65001 >nul\r\n"
+        "setlocal EnableExtensions\r\n"
+        "set \"EXE_DIR=%~dp0\"\r\n"
+        "cd /d \"%~dp0\"\r\n"
+        f"if \"%PROGRAMDATA%\"==\"\" set \"PROGRAMDATA={pd}\"\r\n"
+        "set \"CFG_DIR=%PROGRAMDATA%\\PrintCollect\"\r\n"
+        "set \"CFG=%CFG_DIR%\\config.yaml\"\r\n"
+        "set \"EXE=%EXE_DIR%PrintCollectAgent.exe\"\r\n"
+        "if not exist \"%CFG_DIR%\" mkdir \"%CFG_DIR%\" >nul 2>&1\r\n"
+        "\"%EXE%\" --config \"%CFG%\" once\r\n"
+        "exit /b 0\r\n"
+    )
+    wd_template = (
+        "@echo off\r\n"
+        "chcp 65001 >nul\r\n"
+        "setlocal EnableExtensions\r\n"
+        "set \"EXE_DIR=%~dp0\"\r\n"
+        "cd /d \"%~dp0\"\r\n"
+        f"if \"%PROGRAMDATA%\"==\"\" set \"PROGRAMDATA={pd}\"\r\n"
+        "set \"CFG_DIR=%PROGRAMDATA%\\PrintCollect\"\r\n"
+        "set \"CFG=%CFG_DIR%\\config.yaml\"\r\n"
+        "set \"EXE=%EXE_DIR%PrintCollectAgent.exe\"\r\n"
+        "if not exist \"%CFG_DIR%\" mkdir \"%CFG_DIR%\" >nul 2>&1\r\n"
+        "\"%EXE%\" --config \"%CFG%\" watchdog\r\n"
+        "exit /b 0\r\n"
+    )
+    # Escreve com CP1252 (ANSI pt-BR) + CRLF = cmd.exe nativo 100%
+    import codecs
+    with codecs.open(str(bat_once), "w", encoding="cp1252", errors="replace") as f:
+        f.write(once_template)
+    with codecs.open(str(bat_wd), "w", encoding="cp1252", errors="replace") as f:
+        f.write(wd_template)
+    return bat_once, bat_wd
+
+
 def cmd_install(args: argparse.Namespace) -> int:
     """Registra tarefa de inicializacao automatica no Windows (SUPERV5+ 6 CAMADAS).
     Estrategia TRIPLA REDUNDANCIA para NUNCA MAIS falhar:
@@ -423,6 +472,12 @@ def cmd_install(args: argparse.Namespace) -> int:
         exe_str = str(exe)
         cfg_str = str(config_path)
         wd_str = str(exe.parent)
+
+        # v6.4 NOVO! GARANTE run-once.bat / run-watchdog.bat na pasta do agente
+        # (ANTES de qualquer tarefa ser criada!)
+        bat_once_path, bat_wd_path = _ensure_windows_bat_wrappers(exe.parent)
+        bat_once_str = str(bat_once_path)
+        bat_wd_str = str(bat_wd_path)
 
         # Garante ProgramData/PrintCollect existe
         pd = os.environ.get("PROGRAMDATA") or r"C:\ProgramData"
@@ -492,43 +547,34 @@ def cmd_install(args: argparse.Namespace) -> int:
 
         # =====================================================================
         # CAMADA 2 (FALLBACK SUPER ROBUSTO! Cria 6 tarefas DIRETAMENTE via schtasks/PowerShell Python!)
+        # v6.4 CORRECAO DEFITIVA: Usa BATs SEPARADOS (sem wrapper inline) + /RU SYSTEM invisivel!
         # =====================================================================
         def _native_schtasks_ps_create_6_tasks() -> int:
-            print("\n[CAMADA 2/3] ✅ FALLBACK NATIVO (schtasks/PowerShell Python): CRIANDO 6 CAMADAS DE TAREFAS...")
-            # Lista de tarefas SUPERV5:
+            print("\n[CAMADA 2/3] ✅ FALLBACK NATIVO v6.4 (schtasks/PowerShell Python): CRIANDO 6 CAMADAS DE TAREFAS...")
+            # Lista de tarefas SUPERV6 v6.4:
+            #   (nome, schtasks args [menos /TN /TR], dispararRun?, run_as_system?)
             tasks = [
-                # (nome, schtasks args [menos /TN /TR], tr_escaped, dispararRun?)
                 ("Print Collect Agent - 30 Minutos",
-                 ["/SC", "MINUTE", "/MO", "30"], True),
+                 ["/SC", "MINUTE", "/MO", "30"], True, True),
                 ("Print Collect Agent - Watchdog",
-                 ["/SC", "MINUTE", "/MO", "10"], True),
+                 ["/SC", "MINUTE", "/MO", "10"], True, True),
                 ("Print Collect Agent - Diario Repeticao",
-                 ["/SC", "DAILY", "/MO", "1", "/RI", "60", "/DU", "9999:00", "/K"], True),
+                 ["/SC", "DAILY", "/MO", "1", "/RI", "60", "/DU", "9999:00", "/K"], True, True),
                 ("Print Collect Agent - Ao Iniciar",
-                 ["/SC", "ONSTART"], False),
+                 ["/SC", "ONSTART"], False, False),
                 ("Print Collect Agent - Ao Logar",
-                 ["/SC", "ONLOGON"], False),
+                 ["/SC", "ONLOGON"], False, False),
             ]
 
-            # TR escaped para schtasks:
-            # === CORRECAO V6.3 Aspas CORRETAS no schtasks /TR ===
-            #   REGRAS OBRIGATORIAS schtasks.exe para /TR com aspas aninhadas:
-            #   1) O argumento /TR deve ser uma UNICA string comecando e terminando com "
-            #   2) Qualquer ASPA DENTRO dessa /TR deve ser ESCAPADA com um BACKSLASH (\") ANTES dela!
-            #   3) O wrapper cmd.exe /c cd pasta & exe garante WorkingDirectory sempre correto.
-            cmd_exe = r"C:\Windows\System32\cmd.exe"
+            # === CORRECAO V6.4: _tr() APENAS aponta para o .bat (1 nivel de aspas só!) ===
+            #   NÃO usa mais wrapper cmd.exe inline — ACABA o bug -2147024894!
+            #   Regra schtasks /TR: aspas INTERNAS escapadas com \, aspas EXTERNAS obrigatorias.
             def _tr(sub: str) -> str:
-                # 1. Monta o inner (o que vai DENTRO do /c do cmd.exe — NAO tem aspas externas aqui):
-                inner_unquoted = f'cd /d "{wd_str}" & "{exe_str}" --config "{cfg_str}" {sub}'
-                # 2. Monta linha COMPLETA do comando (cmd.exe /c "<inner>"):
-                full_cmd = f'{cmd_exe} /c "{inner_unquoted}"'
-                # 3. ESCAPA aspas internas com \ para schtasks /TR aceitar!
-                escaped = full_cmd.replace('"', '\\"')
-                # 4. Coloca ASPAS EXTERNAS obrigatórias no /TR, que o _run_schtasks já acrescenta no final?
-                #    NÃO — para deixar 100% certo, já devolvemos com aspas EXTERNAS envolvendo.
+                bat_path = bat_wd_str if sub == "watchdog" else bat_once_str
+                escaped = bat_path.replace('"', '\\"')
                 return f'"{escaped}"'
 
-            # PASSO 1 (NATIVO): DELETAR 15+ variantes antigas
+            # PASSO 1 (NATIVO): DELETAR 16 variantes antigas
             old_names = [
                 "Print Collect Agent","Print Collect Agent - Manha (08h)","Print Collect Agent - Tarde (18h)",
                 "Print Collect Agent - Ao Logar","Print Collect Agent - A Cada 1 Hora","Print Collect Agent - A Cada 1 HORA",
@@ -544,10 +590,12 @@ def cmd_install(args: argparse.Namespace) -> int:
 
             rc_all = 0
             # CAMADA 1/3 schtasks simples (30min, watchdog, diario, onstart, onlogon)
-            for i, (tn, sch_args, run_now) in enumerate(tasks, 2):
+            for i, (tn, sch_args, run_now, run_as_system) in enumerate(tasks, 2):
                 sub = "watchdog" if "Watchdog" in tn else "once"
                 tr = _tr(sub)
-                cmdline = ["schtasks","/Create","/F","/TN",tn,*sch_args,"/TR",tr]
+                # v6.4 NOVO: /RU "SYSTEM" = roda invisivel em 2o plano SEM tela preta!
+                system_args = ["/RL", "HIGHEST", "/RU", "SYSTEM"] if run_as_system else []
+                cmdline = ["schtasks","/Create","/F","/TN",tn,*sch_args,*system_args,"/TR",tr]
                 rc1 = _exe_cmd(cmdline, check=False)
                 if rc1 == 0 and run_now:
                     _exe_cmd(["schtasks","/Run","/TN",tn], check=False)
@@ -556,64 +604,71 @@ def cmd_install(args: argparse.Namespace) -> int:
             print(f"  [schtasks simples] RC final = {rc_all} (0 = tudo ok)")
 
             # CAMADA 2: PowerShell ScheduledTasks (HORARIA, e para as que falharam acima)
+            # v6.4: Usa BATs + Principal SYSTEM para tarefas periodicas
             horary_ok = False
             try:
                 ps_code = r"""
 $ErrorActionPreference = 'Stop'
-$exe = '__EXE__'
-$cfg = '__CFG__'
-$wd  = '__WD__'
-function New-TaskWrap($taskName, $sub, $trigger, $runNow) {
-  $act = New-ScheduledTaskAction -Execute $exe -Argument ('--config "{0}" {1}' -f $cfg, $sub) -WorkingDirectory $wd
+$batOnce = '__BAT_ONCE__'
+$batWd   = '__BAT_WD__'
+$cmdExe  = 'C:\Windows\System32\cmd.exe'
+function New-TaskWrap($taskName, $useWatchdog, $trigger, $runNow, $useSystem) {
+  $bat = if ($useWatchdog) { $batWd } else { $batOnce }
+  $act = New-ScheduledTaskAction -Execute $cmdExe -Argument ('/c ""{0}""' -f $bat)
   $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 1)
-  Register-ScheduledTask -TaskName $taskName -Action $act -Trigger $trigger -Settings $set -Force -ErrorAction Stop | Out-Null
+  if ($useSystem) {
+    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    Register-ScheduledTask -TaskName $taskName -Action $act -Trigger $trigger -Settings $set -Principal $principal -Force -ErrorAction Stop | Out-Null
+  } else {
+    Register-ScheduledTask -TaskName $taskName -Action $act -Trigger $trigger -Settings $set -Force -ErrorAction Stop | Out-Null
+  }
   if ($runNow) { Start-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue }
 }
-# 1) HORARIA (proxima hora cheia + repeticao 1h INFINITO)
+# 1) HORARIA (proxima hora cheia + repeticao 1h INFINITO) — SYSTEM invisivel
 $startHorario = (Get-Date -Minute 0 -Second 0).AddHours(1)
 $trgH = New-ScheduledTaskTrigger -Once -At $startHorario -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration ([TimeSpan]::MaxValue)
-New-TaskWrap 'Print Collect Agent - A Cada 1 HORA' 'once' $trgH $true
-# 2) 30 Minutos (fallback):
+New-TaskWrap 'Print Collect Agent - A Cada 1 HORA' $false $trgH $true $true
+# 2) 30 Minutos (fallback) — SYSTEM
 $start30 = (Get-Date).AddMinutes(2)
 $trg30 = New-ScheduledTaskTrigger -Once -At $start30 -RepetitionInterval (New-TimeSpan -Minutes 30) -RepetitionDuration ([TimeSpan]::MaxValue)
-New-TaskWrap 'Print Collect Agent - 30 Minutos' 'once' $trg30 $true
-# 3) Watchdog fallback:
+New-TaskWrap 'Print Collect Agent - 30 Minutos' $false $trg30 $true $true
+# 3) Watchdog fallback — SYSTEM
 $startWD = (Get-Date).AddMinutes(1)
 $trgWD = New-ScheduledTaskTrigger -Once -At $startWD -RepetitionInterval (New-TimeSpan -Minutes 10) -RepetitionDuration ([TimeSpan]::MaxValue)
-New-TaskWrap 'Print Collect Agent - Watchdog' 'watchdog' $trgWD $true
-# 4) Diario repeticao fallback:
+New-TaskWrap 'Print Collect Agent - Watchdog' $true $trgWD $true $true
+# 4) Diario repeticao fallback — SYSTEM
 $startDaily = (Get-Date -Minute 0 -Second 0).AddHours(1)
 $trgDaily = New-ScheduledTaskTrigger -Daily -At $startDaily -DaysInterval 1
 $trgDaily.Repetition.Interval = (New-TimeSpan -Minutes 60)
 $trgDaily.Repetition.Duration = ([TimeSpan]::MaxValue)
-New-TaskWrap 'Print Collect Agent - Diario Repeticao' 'once' $trgDaily $true
-# 5) Boot e Logon (fallback):
+New-TaskWrap 'Print Collect Agent - Diario Repeticao' $false $trgDaily $true $true
+# 5) Boot (fallback) — interativo (sem SYSTEM, p/ ter rede disponivel)
 $trgBoot = New-ScheduledTaskTrigger -AtStartup
-New-TaskWrap 'Print Collect Agent - Ao Iniciar' 'once' $trgBoot $false
+New-TaskWrap 'Print Collect Agent - Ao Iniciar' $false $trgBoot $false $false
+# 6) Logon (fallback) — interativo
 $uid = $env:USERNAME
 $trgLogon = New-ScheduledTaskTrigger -AtLogOn -User $uid
-New-TaskWrap 'Print Collect Agent - Ao Logar' 'once' $trgLogon $false
+New-TaskWrap 'Print Collect Agent - Ao Logar' $false $trgLogon $false $false
 Write-Output 'NATIVE_FALLBACK_OK'
 """
                 ps_code = (ps_code
-                           .replace("__EXE__", exe_str.replace("'","''"))
-                           .replace("__CFG__", cfg_str.replace("'","''"))
-                           .replace("__WD__",  wd_str.replace("'","''")))
+                           .replace("__BAT_ONCE__", bat_once_str.replace("'","''"))
+                           .replace("__BAT_WD__",   bat_wd_str.replace("'","''")))
                 r = subprocess.run(
                     ["powershell","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command",ps_code],
                     capture_output=True, text=True, check=False
                 )
                 if r.returncode == 0 and "NATIVE_FALLBACK_OK" in (r.stdout or ""):
                     horary_ok = True
-                    print("  [PowerShell ScheduledTasks] ✅ SUCESSO! Tarefa HORARIA e fallbacks criados.")
+                    print("  [PowerShell ScheduledTasks v6.4] ✅ SUCESSO! Tarefa HORARIA e fallbacks criados.")
                 else:
-                    print(f"  [PowerShell ScheduledTasks] rc={r.returncode}")
+                    print(f"  [PowerShell ScheduledTasks v6.4] rc={r.returncode}")
                     if r.stdout: print("  stdout (ultimas):", "\n  ".join((r.stdout.splitlines() or [])[-4:]))
                     if r.stderr: print("  stderr (ultimas):", "\n  ".join((r.stderr.splitlines() or [])[-4:]))
             except Exception as e:
-                print(f"  [PowerShell ScheduledTasks] Exception: {e}")
+                print(f"  [PowerShell ScheduledTasks v6.4] Exception: {e}")
 
-            # CAMADA 3: schtasks HOURLY fallback
+            # CAMADA 3: schtasks HOURLY fallback — v6.4 com BAT + /RU SYSTEM
             if not horary_ok:
                 try:
                     from datetime import datetime, timedelta
@@ -624,6 +679,7 @@ Write-Output 'NATIVE_FALLBACK_OK'
                         "schtasks","/Create","/F",
                         "/TN","Print Collect Agent - A Cada 1 HORA",
                         "/SC","HOURLY","/MO","1",
+                        "/RL","HIGHEST","/RU","SYSTEM",
                         "/SD",sd,"/ST",st,
                         "/TR",_tr("once"),
                     ], check=False)

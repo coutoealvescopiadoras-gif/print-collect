@@ -8,5 +8,5 @@ set "CFG_DIR=%PROGRAMDATA%\PrintCollect"
 set "CFG=%CFG_DIR%\config.yaml"
 set "EXE=%EXE_DIR%PrintCollectAgent.exe"
 if not exist "%CFG_DIR%" mkdir "%CFG_DIR%" >nul 2>&1
-"%EXE%" --config "%CFG%" once
+"%EXE%" --config "%CFG%" watchdog
 exit /b 0

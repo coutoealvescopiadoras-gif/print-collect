@@ -3,11 +3,11 @@ REM ============================================================================
 REM PRINT COLLECT - SUPERV5+ (AGENDAMENTO ROBUSTO - 6 CAMADAS!)
 REM =============================================================================
 REM Instala CINCO TAREFAS DIFERENTES no Windows Task Scheduler.
-REM 1) 30 em 30 minutos (MINUTE/MO=30)      — PRINCIPAL 1
-REM 2) HORARIA (HOURLY / MO 1)              — PRINCIPAL 2
-REM 3) DAILY com Repetition Every 60min     — CAMADA RESERVA 1
-REM 4) AO INICIAR (AtStartUp/OnBoot)        — CAMADA RESERVA 2
-REM 5) AO LOGAR (OnLogon)                   — CAMADA RESERVA 3
+REM 1) 30 em 30 minutos (MINUTE/MO=30)      ? PRINCIPAL 1
+REM 2) HORARIA (HOURLY / MO 1)              ? PRINCIPAL 2
+REM 3) DAILY com Repetition Every 60min     ? CAMADA RESERVA 1
+REM 4) AO INICIAR (AtStartUp/OnBoot)        ? CAMADA RESERVA 2
+REM 5) AO LOGAR (OnLogon)                   ? CAMADA RESERVA 3
 REM 6) WATCHDOG a cada 10 minutos (MINUTE/MO=10) que verifica se as duas
 REM    ultimas horas tem coleta; se NAO tem, dispara na HORA!
 REM =============================================================================
@@ -87,10 +87,10 @@ set _ST=%_HH%:%_MM%
 set RC_ALL=0
 
 REM =============================================================================
-REM CAMADA 1: TAREFA 30 em 30 MINUTOS (SCHTASKS /SC MINUTE /MO 30)  — MAIS SIMPLES POSSIVEL!
+REM CAMADA 1: TAREFA 30 em 30 MINUTOS (SCHTASKS /SC MINUTE /MO 30)  ? MAIS SIMPLES POSSIVEL!
 REM =============================================================================
 set TASK_NAME=Print Collect Agent - 30 Minutos
-echo [%date% %time%] PASSO 2/7: CAMADA 1 — Tarefa 30 em 30 minutos ... >> "%LOG%"
+echo [%date% %time%] PASSO 2/7: CAMADA 1 ? Tarefa 30 em 30 minutos ... >> "%LOG%"
 schtasks /Create /F /TN "%TASK_NAME%" /SC MINUTE /MO 30 /TR "%TR_ESCAPED%" >nul 2>> "%LOG%"
 set RC=%ERRORLEVEL%
 if %RC% EQU 0 (
@@ -119,7 +119,7 @@ REM ============================================================================
 REM CAMADA 2: TAREFA HORARIA (PowerShell ScheduledTasks primeiro!)
 REM =============================================================================
 set TASK_NAME=Print Collect Agent - A Cada 1 HORA
-echo [%date% %time%] PASSO 3/7: CAMADA 2 — Tarefa HORARIA ... >> "%LOG%"
+echo [%date% %time%] PASSO 3/7: CAMADA 2 ? Tarefa HORARIA ... >> "%LOG%"
 powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference='Stop';" ^
   "$exe='%EXE:'='%';" ^
@@ -146,7 +146,7 @@ REM ============================================================================
 REM CAMADA 3: TAREFA DIARIA C/ REPETICAO 60 MIN (DURATION INFINITO)
 REM =============================================================================
 set TASK_NAME=Print Collect Agent - Diario Repeticao
-echo [%date% %time%] PASSO 4/7: CAMADA 3 — Diaria repeticao ... >> "%LOG%"
+echo [%date% %time%] PASSO 4/7: CAMADA 3 ? Diaria repeticao ... >> "%LOG%"
 schtasks /Create /F /TN "%TASK_NAME%" /SC DAILY /MO 1 /ST %_ST% /SD %_SD% /RI 60 /DU 9999:00 /K /TR "%TR_ESCAPED%" >nul 2>> "%LOG%"
 set RC=%ERRORLEVEL%
 if %RC% EQU 0 (
@@ -177,17 +177,17 @@ REM ============================================================================
 REM CAMADA 4: AO INICIAR (OnBoot / Startup do Windows)
 REM =============================================================================
 set TASK_NAME=Print Collect Agent - Ao Iniciar
-echo [%date% %time%] PASSO 5/7: CAMADA 4 — Ao iniciar (boot)... >> "%LOG%"
+echo [%date% %time%] PASSO 5/7: CAMADA 4 ? Ao iniciar (boot)... >> "%LOG%"
 schtasks /Create /F /TN "%TASK_NAME%" /SC ONSTART /TR "%TR_ESCAPED%" >nul 2>> "%LOG%"
 set RC=%ERRORLEVEL%
 echo [%date% %time%]   schtasks ONSTART RC=%RC% >> "%LOG%"
 if %RC% NEQ 0 set RC_ALL=%RC%
 
 REM =============================================================================
-REM CAMADA 5: AO LOGAR (OnLogon — usuario faz login em qualquer conta)
+REM CAMADA 5: AO LOGAR (OnLogon ? usuario faz login em qualquer conta)
 REM =============================================================================
 set TASK_NAME=Print Collect Agent - Ao Logar
-echo [%date% %time%] PASSO 6/7: CAMADA 5 — Ao Logar ... >> "%LOG%"
+echo [%date% %time%] PASSO 6/7: CAMADA 5 ? Ao Logar ... >> "%LOG%"
 schtasks /Create /F /TN "%TASK_NAME%" /SC ONLOGON /TR "%TR_ESCAPED%" >nul 2>> "%LOG%"
 set RC=%ERRORLEVEL%
 if %RC% NEQ 0 (
@@ -211,7 +211,7 @@ REM ============================================================================
 REM CAMADA 6: WATCHDOG a cada 10 minutos que detecta se coletas pararam!
 REM =============================================================================
 set TASK_NAME=Print Collect Agent - Watchdog
-echo [%date% %time%] PASSO 7/7: CAMADA 6 — Watchdog 10 minutos ... >> "%LOG%"
+echo [%date% %time%] PASSO 7/7: CAMADA 6 ? Watchdog 10 minutos ... >> "%LOG%"
 schtasks /Create /F /TN "%TASK_NAME%" /SC MINUTE /MO 10 /TR "%TR_WD_ESCAPED%" >nul 2>> "%LOG%"
 set RC=%ERRORLEVEL%
 if %RC% EQU 0 (

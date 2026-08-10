@@ -217,6 +217,7 @@ Write-OK "SearchPrinters.exe x86 buildado: $ExeSearch"
 Write-Step 5 "Preparando arquivos do instalador (runtime + exe + wizard nativo + search nativo)"
 $RuntimeFiles = @(
     (Join-Path $RuntimeDir "run-once.bat"),
+    (Join-Path $RuntimeDir "run-watchdog.bat"),
     (Join-Path $RuntimeDir "test-agent.bat"),
     (Join-Path $RuntimeDir "open-config.bat"),
     (Join-Path $RuntimeDir "list-printers.bat"),
