@@ -83,6 +83,15 @@ export default function Clientes() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user, ownOnly, partnerId, searchDebounced]);
 
+  useEffect(() => {
+    if (authLoading || !user) return;
+    const id = window.setInterval(() => {
+      load();
+    }, 60000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, user, ownOnly, partnerId, searchDebounced]);
+
   const hasAnyPartnerVisible = clients.some((c) => c.partner_name && c.partner_id);
   const temFiltroAplicado =
     !ownOnly || partnerId !== null || searchDebounced.trim().length > 0;

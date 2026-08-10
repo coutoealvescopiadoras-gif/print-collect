@@ -14,6 +14,14 @@ export default function Alertas() {
     load();
   }, [authLoading, user]);
 
+  useEffect(() => {
+    if (authLoading || !user) return;
+    const id = window.setInterval(() => {
+      load();
+    }, 60000);
+    return () => window.clearInterval(id);
+  }, [authLoading, user]);
+
   const handleResolve = async (id: number) => {
     await api.resolveAlert(id);
     load();

@@ -21,6 +21,14 @@ export default function Agentes() {
     load();
   }, [authLoading, user]);
 
+  useEffect(() => {
+    if (authLoading || !user) return;
+    const id = window.setInterval(() => {
+      load();
+    }, 60000);
+    return () => window.clearInterval(id);
+  }, [authLoading, user]);
+
   const deleteAgent = async (agentId: number, agentName: string) => {
     const ok = window.confirm(`Excluir o agente "${agentName}"?\n\nO token deixa de funcionar imediatamente.`);
     if (!ok) return;

@@ -9,12 +9,26 @@ export default function Dashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
 
-  useEffect(() => {
+  const load = () => {
     if (authLoading || !user) return;
     Promise.all([api.getStats(), api.getAlerts(false)]).then(([s, a]) => {
       setStats(s);
       setAlerts(a.slice(0, 5));
     });
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, user]);
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+    const id = window.setInterval(() => {
+      load();
+    }, 60000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user]);
 
   if (!stats) return <div className="loading">Carregando...</div>;

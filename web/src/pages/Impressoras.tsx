@@ -74,6 +74,15 @@ export default function Impressoras() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user, ownOnly, partnerId, searchDebounced]);
 
+  useEffect(() => {
+    if (authLoading || !user) return;
+    const id = window.setInterval(() => {
+      load();
+    }, 60000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, user, ownOnly, partnerId, searchDebounced]);
+
   const handleRemovePrinter = async (printer: Printer) => {
     const model = printer.model || printer.ip_address || "esta impressora";
     const ok = window.confirm(
