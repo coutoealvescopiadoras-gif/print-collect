@@ -35,6 +35,7 @@ export default function Clientes() {
   const [loadingPrintersClientId, setLoadingPrintersClientId] = useState<number | null>(null);
   const [editingSectorPrinterId, setEditingSectorPrinterId] = useState<number | null>(null);
   const [savingSectorPrinterId, setSavingSectorPrinterId] = useState<number | null>(null);
+  const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null);
 
   // Filtros (igual aba Impressoras)
   const [ownOnly, setOwnOnly] = useState<boolean>(true);
@@ -65,7 +66,7 @@ export default function Clientes() {
     api.getPartners().then(setPartners).catch(() => setPartners([]));
   }, [isSuperadmin]);
 
-  const load = async () => {
+  const load = async (showLoading = false) => {
     if (authLoading || !user) return;
     const params: Parameters<typeof api.getClients>[0] = {};
     if (isSuperadmin) {
@@ -75,6 +76,7 @@ export default function Clientes() {
     if (searchDebounced.trim()) params.search = searchDebounced.trim();
     const data = await api.getClients(params);
     setClients(data);
+    setLastRefreshAt(new Date());
   };
 
   useEffect(() => {
@@ -86,11 +88,11 @@ export default function Clientes() {
   useEffect(() => {
     if (authLoading || !user) return;
     const id = window.setInterval(() => {
-      load();
+      load(false);
     }, 60000);
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading, user, ownOnly, partnerId, searchDebounced]);
+  }, [authLoading, user]);
 
   const hasAnyPartnerVisible = clients.some((c) => c.partner_name && c.partner_id);
   const temFiltroAplicado =
@@ -335,11 +337,31 @@ export default function Clientes() {
         <h1 className="page-title" style={{ marginBottom: 0 }}>
           Clientes
         </h1>
-        {canManageClients && (
-          <button className="btn btn-primary" onClick={handleOpenCreate}>
-            + Novo cliente
-          </button>
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+          {lastRefreshAt && (
+            <div
+              style={{
+                fontSize: "0.8rem",
+                color: "var(--text-muted)",
+                padding: "0.35rem 0.7rem",
+                borderRadius: 999,
+                border: "1px solid var(--border)",
+                background: "var(--surface-2)",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.35rem",
+              }}
+            >
+              <span style={{ color: "var(--success)" }}>●</span>
+              Atualizado em {formatDateTimeBrasil(lastRefreshAt)}
+            </div>
+          )}
+          {canManageClients && (
+            <button className="btn btn-primary" onClick={handleOpenCreate}>
+              + Novo cliente
+            </button>
+          )}
+        </div>
       </div>
 
       <div

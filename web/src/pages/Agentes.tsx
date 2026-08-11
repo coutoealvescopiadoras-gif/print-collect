@@ -11,10 +11,14 @@ export default function Agentes() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [deletingAgentId, setDeletingAgentId] = useState<number | null>(null);
+  const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null);
 
   const load = () => {
-    api.getAgents().then(setAgents);
-    api.getClients().then(setClients);
+    Promise.all([api.getAgents(), api.getClients()]).then(([a, c]) => {
+      setAgents(a);
+      setClients(c);
+      setLastRefreshAt(new Date());
+    });
   };
   useEffect(() => {
     if (authLoading || !user) return;
@@ -43,8 +47,26 @@ export default function Agentes() {
 
   return (
     <>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem", flexWrap: "wrap", gap: "0.75rem" }}>
         <h1 className="page-title" style={{ marginBottom: 0 }}>Agentes</h1>
+        {lastRefreshAt && (
+          <div
+            style={{
+              fontSize: "0.8rem",
+              color: "var(--text-muted)",
+              padding: "0.35rem 0.7rem",
+              borderRadius: 999,
+              border: "1px solid var(--border)",
+              background: "var(--surface-2)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.35rem",
+            }}
+          >
+            <span style={{ color: "var(--success)" }}>●</span>
+            Atualizado em {formatDateTimeBrasil(lastRefreshAt)}
+          </div>
+        )}
       </div>
 
       <div className="card" style={{ padding: "1rem 1.25rem", marginBottom: "1.5rem", background: "var(--bg-soft)", borderLeft: "4px solid var(--primary)" }}>

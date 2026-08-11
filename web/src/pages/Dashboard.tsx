@@ -8,13 +8,14 @@ export default function Dashboard() {
   const { user, loading: authLoading } = useAuth();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null);
 
-  const load = () => {
+  const load = async () => {
     if (authLoading || !user) return;
-    Promise.all([api.getStats(), api.getAlerts(false)]).then(([s, a]) => {
-      setStats(s);
-      setAlerts(a.slice(0, 5));
-    });
+    const [s, a] = await Promise.all([api.getStats(), api.getAlerts(false)]);
+    setStats(s);
+    setAlerts(a.slice(0, 5));
+    setLastRefreshAt(new Date());
   };
 
   useEffect(() => {
@@ -35,7 +36,38 @@ export default function Dashboard() {
 
   return (
     <>
-      <h1 className="page-title">Dashboard</h1>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          flexWrap: "wrap",
+          gap: "1rem",
+          marginBottom: "2rem",
+        }}
+      >
+        <h1 className="page-title" style={{ marginBottom: 0 }}>
+          Dashboard
+        </h1>
+        {lastRefreshAt && (
+          <div
+            style={{
+              fontSize: "0.8rem",
+              color: "var(--text-muted)",
+              padding: "0.35rem 0.7rem",
+              borderRadius: 999,
+              border: "1px solid var(--border)",
+              background: "var(--surface-2)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.35rem",
+            }}
+          >
+            <span style={{ color: "var(--success)" }}>●</span>
+            Atualizado em {formatDateTimeBrasil(lastRefreshAt)}
+          </div>
+        )}
+      </div>
 
       <div
         style={{

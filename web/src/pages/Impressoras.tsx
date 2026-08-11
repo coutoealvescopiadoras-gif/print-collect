@@ -27,6 +27,7 @@ export default function Impressoras() {
   const isSuperadmin = effectiveRole === "superadmin";
   const isPartnerAdmin = effectiveRole === "partner_admin";
   const hasAnyPartnerVisible = printers.some((p) => p.partner_name && p.partner_id);
+  const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null);
 
   const canManagePrinters =
     !authLoading &&
@@ -52,9 +53,9 @@ export default function Impressoras() {
     api.getPartners().then(setPartners).catch(() => setPartners([]));
   }, [isSuperadmin]);
 
-  const load = async () => {
+  const load = async (showLoading = false) => {
     if (authLoading || !user) return;
-    setLoading(true);
+    if (showLoading) setLoading(true);
     try {
       const params: Parameters<typeof api.getPrinters>[0] = {};
       if (isSuperadmin) {
@@ -64,24 +65,25 @@ export default function Impressoras() {
       if (searchDebounced.trim()) params.search = searchDebounced.trim();
       const data = await api.getPrinters(params);
       setPrinters(data);
+      setLastRefreshAt(new Date());
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   };
 
   useEffect(() => {
-    load();
+    load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user, ownOnly, partnerId, searchDebounced]);
 
   useEffect(() => {
     if (authLoading || !user) return;
     const id = window.setInterval(() => {
-      load();
+      load(false);
     }, 60000);
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading, user, ownOnly, partnerId, searchDebounced]);
+  }, [authLoading, user]);
 
   const handleRemovePrinter = async (printer: Printer) => {
     const model = printer.model || printer.ip_address || "esta impressora";
@@ -125,6 +127,24 @@ export default function Impressoras() {
         <h1 className="page-title" style={{ marginBottom: 0 }}>
           Impressoras
         </h1>
+        {lastRefreshAt && (
+          <div
+            style={{
+              fontSize: "0.8rem",
+              color: "var(--text-muted)",
+              padding: "0.35rem 0.7rem",
+              borderRadius: 999,
+              border: "1px solid var(--border)",
+              background: "var(--surface-2)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.35rem",
+            }}
+          >
+            <span style={{ color: "var(--success)" }}>●</span>
+            Atualizado em {formatDateTimeBrasil(lastRefreshAt)}
+          </div>
+        )}
       </div>
 
       <div

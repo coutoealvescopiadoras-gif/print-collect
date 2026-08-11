@@ -7,8 +7,13 @@ import { useAuth } from "../context/AuthContext";
 export default function Alertas() {
   const { user, loading: authLoading } = useAuth();
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null);
 
-  const load = () => api.getAlerts(false).then(setAlerts);
+  const load = () =>
+    api.getAlerts(false).then((r) => {
+      setAlerts(r);
+      setLastRefreshAt(new Date());
+    });
   useEffect(() => {
     if (authLoading || !user) return;
     load();
@@ -29,7 +34,38 @@ export default function Alertas() {
 
   return (
     <>
-      <h1 className="page-title">Alertas</h1>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          flexWrap: "wrap",
+          gap: "1rem",
+          marginBottom: "1rem",
+        }}
+      >
+        <h1 className="page-title" style={{ marginBottom: 0 }}>
+          Alertas
+        </h1>
+        {lastRefreshAt && (
+          <div
+            style={{
+              fontSize: "0.8rem",
+              color: "var(--text-muted)",
+              padding: "0.35rem 0.7rem",
+              borderRadius: 999,
+              border: "1px solid var(--border)",
+              background: "var(--surface-2)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.35rem",
+            }}
+          >
+            <span style={{ color: "var(--success)" }}>●</span>
+            Atualizado em {formatDateTimeBrasil(lastRefreshAt)}
+          </div>
+        )}
+      </div>
 
       <div className="card">
         {alerts.length === 0 ? (
