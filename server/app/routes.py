@@ -936,8 +936,7 @@ def list_clients(
     if _is_partner_admin(current_user):
         query = query.filter(Client.partner_id == _required_partner_id(current_user))
     elif _is_superadmin(current_user):
-        # Opção C: own_only default True = clientes diretos (sem parceiro)
-        if own_only is None or own_only == True:
+        if own_only == True:
             query = query.filter(Client.partner_id.is_(None))
         if partner_id is not None:
             query = query.filter(Client.partner_id == partner_id)
@@ -1077,10 +1076,8 @@ def list_printers(
         if client_id is not None:
             _assert_partner_owns_client(db, current_user, client_id)
     elif _is_superadmin(current_user):
-        # Opção C: own_only = True (ou None por default para superadmin) = mostra SOMENTE clientes diretos (sem parceiro)
-        if own_only is None or own_only == True:
+        if own_only == True:
             query = query.filter(Client.partner_id.is_(None))
-        # Filtro por parceiro específico (só se own_only=False e passou partner_id)
         if partner_id is not None:
             query = query.filter(Client.partner_id == partner_id)
 
@@ -2404,7 +2401,7 @@ async def agent_report(
                 r_toner_magenta = _safe_float(reading.toner_magenta)
                 r_toner_yellow = _safe_float(reading.toner_yellow)
 
-                # ----- PASSO 1: busca impressora por IP OU serial -----
+                # ----- PASSO 1: busca impressora por IP OU serial NO CLIENTE ATUAL -----
                 #   NOTA: usamos ILIKE (case-insensitive) no serial e no IP para nao
                 #   duplicar impressoras por diferenca maiuscula/minuscula no SNMP.
                 #   (ex: serial ABC123 na primeira coleta, abc123 na segunda -> 2 impressoras!)
