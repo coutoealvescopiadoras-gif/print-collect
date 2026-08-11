@@ -17,7 +17,18 @@ from sqlalchemy import or_, false as sql_false
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.database import Agent, Alert, Client, Location, Partner, Printer, Reading, User, get_db
+from app.database import (
+    Agent,
+    Alert,
+    Client,
+    Location,
+    Partner,
+    Printer,
+    Reading,
+    User,
+    engine,
+    get_db,
+)
 # # # from app.email import send_alert_email (temporarily disabled)
 from app.schemas import (
     AgentCreate,
@@ -2608,7 +2619,7 @@ async def agent_report(
         #    grava nada (commit fantasma). Solucao:
         #      1) FLUSH OBRIGATORIO antes do commit (garante INSERTs feitos)
         #      2) COMMIT 2 VEZES (segundo commit segura o retorno do serverless)
-        #      3) Se falhar, abre SESSAO NOVA e repete TODO o flush + commit
+        #      3) Se falhar, abre SESSAO NOVA via sessionmaker NOVO e repete
         # ================================================================
         _commit_ok = False
         _commit_err_msg = ""
@@ -2647,18 +2658,131 @@ async def agent_report(
                         pass
             if not _commit_ok:
                 raise Exception(_commit_err_msg or "commit falhou silenciosamente")
-        except Exception as e_final:
+        except Exception as _fallback_needed:
+            # ==============================================================
+            # 🔥 FALLBACK NUCLEAR: Session.commit() nao grava (Vercel bug)
+            #    Recria Sessao NOVA via SessionLocal nova e repete a leitura
+            #    de todos os objetos (agent, printer, reading) numa transacao
+            #    engine.begin() direta, garantindo que COMMIT vai sair
+            # ==============================================================
             try:
                 db.rollback()
             except Exception:
                 pass
-            return {
-                "status": "commit_error",
-                "readings_received": total_readings,
-                "processed_ok": processed_ok,
-                "processed_errors": processed_errors + 1,
-                "warnings": (warnings + [f"[COMMIT ERROR] {str(e_final)[:250]}"])[:50],
-            }
+            try:
+                db.close()
+            except Exception:
+                pass
+            try:
+                from sqlalchemy.orm import sessionmaker as _sm
+                from sqlalchemy import text as _txt
+                _SL2 = _sm(autocommit=False, autoflush=False, bind=engine, expire_on_commit=False)
+                _db2 = _SL2()
+                try:
+                    _ag2 = _db2.query(Agent).filter(Agent.api_token == str(x_agent_token)).first()
+                    if _ag2 and getattr(_ag2, "client_id", None):
+                        _ag2.last_heartbeat = _now()
+                        _cli_id = int(_ag2.client_id)
+                        for reading in payload.readings:
+                            _ri = _s_ip(getattr(reading, "ip_address", None))
+                            _rs = _s_strn(getattr(reading, "serial_number", None), 200)
+                            _rmo = _s_strn(getattr(reading, "model", None), 200)
+                            _rma = _s_strn(getattr(reading, "manufacturer", None), 200)
+                            _rst = _s_strn(getattr(reading, "status", None), 50) or "unknown"
+                            _rpt = _safe_int(getattr(reading, "pages_total", 0), 0)
+                            _rpb = _safe_int(getattr(reading, "pages_bw", 0), 0)
+                            _rpc = _safe_int(getattr(reading, "pages_color", 0), 0)
+                            _rtb = _safe_float(getattr(reading, "toner_black", None))
+                            _rtc = _safe_float(getattr(reading, "toner_cyan", None))
+                            _rtm = _safe_float(getattr(reading, "toner_magenta", None))
+                            _rty = _safe_float(getattr(reading, "toner_yellow", None))
+                            _p2 = None
+                            if _ri:
+                                _p2 = (_db2.query(Printer)
+                                    .filter(Printer.client_id == _cli_id, Printer.ip_address.ilike(_ri))
+                                    .first())
+                            if not _p2 and _rs:
+                                _p2 = (_db2.query(Printer)
+                                    .filter(Printer.client_id == _cli_id, Printer.serial_number.ilike(_rs))
+                                    .first())
+                            if not _p2:
+                                _p2 = Printer(client_id=_cli_id, ip_address=_ri)
+                                _db2.add(_p2)
+                                try: _db2.flush()
+                                except Exception: _db2.rollback()
+                            _p2.ip_address = _ri
+                            _p2.serial_number = _rs or _p2.serial_number
+                            _p2.model = _rmo or _p2.model
+                            _p2.manufacturer = _rma or _p2.manufacturer
+                            _p2.status = _rst
+                            try:
+                                if _rpt and _rpt > int(_p2.pages_total or 0):
+                                    _p2.pages_total = _rpt
+                            except Exception: pass
+                            try:
+                                if _rpb and _rpb > int(_p2.pages_bw or 0):
+                                    _p2.pages_bw = _rpb
+                            except Exception: pass
+                            try:
+                                if _rpc and _rpc > int(_p2.pages_color or 0):
+                                    _p2.pages_color = _rpc
+                            except Exception: pass
+                            _p2.toner_black = _rtb
+                            _p2.toner_cyan = _rtc
+                            _p2.toner_magenta = _rtm
+                            _p2.toner_yellow = _rty
+                            try:
+                                if not _is_color_printer_real(_p2):
+                                    _p2.toner_cyan = None
+                                    _p2.toner_magenta = None
+                                    _p2.toner_yellow = None
+                            except Exception: pass
+                            _p2.last_seen = now
+                            _p2.updated_at = now
+                            try: _db2.flush()
+                            except Exception: pass
+                            _rr2 = Reading(
+                                printer_id=_p2.id,
+                                pages_total=int(_p2.pages_total or 0),
+                                pages_bw=int(_p2.pages_bw or 0),
+                                pages_color=int(_p2.pages_color or 0),
+                                toner_black=_p2.toner_black,
+                                toner_cyan=_p2.toner_cyan,
+                                toner_magenta=_p2.toner_magenta,
+                                toner_yellow=_p2.toner_yellow,
+                                status=_rst,
+                                collected_at=now,
+                            )
+                            _db2.add(_rr2)
+                        try:
+                            _db2.commit()
+                            _commit_ok = True
+                            _commit_err_msg = ""
+                            try:
+                                warnings.append("[FALLBACK OK] Gravado via Session NOVA (Session.commit original falhou)")
+                            except Exception:
+                                pass
+                        except Exception as _e3:
+                            _commit_err_msg = str(_e3)[:250]
+                            try: _db2.rollback()
+                            except Exception: pass
+                finally:
+                    try: _db2.close()
+                    except Exception: pass
+            except Exception as _e_fb:
+                if not _commit_err_msg:
+                    _commit_err_msg = str(_e_fb)[:250]
+            if not _commit_ok:
+                try:
+                    return {
+                        "status": "commit_error",
+                        "readings_received": total_readings,
+                        "processed_ok": processed_ok,
+                        "processed_errors": processed_errors + 1,
+                        "warnings": (warnings + [f"[COMMIT ERROR (nuclear falhou)] {_commit_err_msg[:250]}"])[:50],
+                    }
+                except Exception:
+                    pass
 
         return {
             "status": "ok" if processed_errors == 0 else "partial",
