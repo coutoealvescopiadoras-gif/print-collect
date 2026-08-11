@@ -34,7 +34,7 @@ export default function Impressoras() {
     !!user &&
     (isSuperadmin || isPartnerAdmin || effectiveRole === "client_manager");
 
-  const [ownOnly, setOwnOnly] = useState<boolean>(true);
+  const [ownOnly, setOwnOnly] = useState<boolean>(false);
   const [partnerId, setPartnerId] = useState<number | null>(null);
   const [searchText, setSearchText] = useState<string>("");
   const [searchDebounced, setSearchDebounced] = useState<string>("");

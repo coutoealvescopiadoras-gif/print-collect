@@ -39,7 +39,7 @@ export default function Clientes() {
   const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null);
 
   // Filtros (igual aba Impressoras)
-  const [ownOnly, setOwnOnly] = useState<boolean>(true);
+  const [ownOnly, setOwnOnly] = useState<boolean>(false);
   const [partnerId, setPartnerId] = useState<number | null>(null);
   const [searchText, setSearchText] = useState<string>("");
   const [searchDebounced, setSearchDebounced] = useState<string>("");
