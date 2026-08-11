@@ -66,7 +66,7 @@ export default function Clientes() {
     api.getPartners().then(setPartners).catch(() => setPartners([]));
   }, [isSuperadmin]);
 
-  const load = async (showLoading = false) => {
+  const load = async () => {
     if (authLoading || !user) return;
     const params: Parameters<typeof api.getClients>[0] = {};
     if (isSuperadmin) {
@@ -88,7 +88,7 @@ export default function Clientes() {
   useEffect(() => {
     if (authLoading || !user) return;
     const id = window.setInterval(() => {
-      load(false);
+      load();
     }, 60000);
     return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
