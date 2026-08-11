@@ -203,7 +203,12 @@ elif True:
     _engine_kwargs["poolclass"] = NullPool
 
 engine = create_engine(_db_url, **_engine_kwargs)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+    expire_on_commit=False,
+)
 
 _migration_engine = None
 
@@ -324,6 +329,17 @@ def init_db() -> None:
 def get_db():
     db = SessionLocal()
     try:
+        try:
+            db.connection()
+        except Exception:
+            try:
+                db.close()
+            except Exception:
+                pass
+            db = SessionLocal()
         yield db
     finally:
-        db.close()
+        try:
+            db.close()
+        except Exception:
+            pass

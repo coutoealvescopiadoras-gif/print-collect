@@ -2601,9 +2601,52 @@ async def agent_report(
         except Exception:
             pass
 
-        # ----- COMMIT FINAL DE TUDO -----
+        # ================================================================
+        # 🔥 COMMIT FINAL DE TUDO - BLINDADO CONTRA SERVERLESS (Vercel)
+        #    Problema conhecido: sessao SQLAlchemy reciclada perde
+        #    transacao no NullPool + psycopg 3. Retorna HTTP200 mas nao
+        #    grava nada (commit fantasma). Solucao:
+        #      1) FLUSH OBRIGATORIO antes do commit (garante INSERTs feitos)
+        #      2) COMMIT 2 VEZES (segundo commit segura o retorno do serverless)
+        #      3) Se falhar, abre SESSAO NOVA e repete TODO o flush + commit
+        # ================================================================
+        _commit_ok = False
+        _commit_err_msg = ""
         try:
-            db.commit()
+            try:
+                db.flush()
+            except Exception:
+                pass
+            try:
+                db.connection()
+            except Exception:
+                pass
+            try:
+                db.commit()
+                _commit_ok = True
+            except Exception as _e1:
+                _commit_err_msg = str(_e1)[:250]
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                try:
+                    db.flush()
+                except Exception:
+                    pass
+                try:
+                    db.commit()
+                    _commit_ok = True
+                    _commit_err_msg = ""
+                except Exception as _e2:
+                    if not _commit_err_msg:
+                        _commit_err_msg = str(_e2)[:250]
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+            if not _commit_ok:
+                raise Exception(_commit_err_msg or "commit falhou silenciosamente")
         except Exception as e_final:
             try:
                 db.rollback()
@@ -2653,5 +2696,32 @@ def agent_heartbeat(
 ):
     agent = _get_agent(x_agent_token, db)
     agent.last_heartbeat = _now()
-    db.commit()
+    _ok = False
+    try:
+        try:
+            db.flush()
+        except Exception:
+            pass
+        try:
+            db.connection()
+        except Exception:
+            pass
+        db.commit()
+        _ok = True
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        try:
+            db.commit()
+            _ok = True
+        except Exception:
+            pass
+    if not _ok:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return {"status": "commit_error"}
     return {"status": "ok"}
