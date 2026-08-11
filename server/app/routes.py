@@ -2473,6 +2473,33 @@ async def agent_report(
                         ip_address=r_ip,
                     )
                     db.add(printer)
+                    # ==============================================================
+                    # 🔥 CRITICO: FLUSH OBRIGATORIO LOGO APOS CRIAR IMPRESSORA NOVA
+                    #    Sem esse flush, printer.id CONTINUA None, e Reading tenta
+                    #    ser criado com printer_id=None.
+                    #    Bug que causava "commit fantasma HTTP200 mas 0 impressoras":
+                    #    Reading com FK NULL violava constraint mas o except
+                    #    em volta rollbackava SILENCIOSAMENTE.
+                    # ==============================================================
+                    try:
+                        db.flush()
+                    except Exception as flush_create_err:
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
+                        processed_errors += 1
+                        warnings.append(
+                            f"[FLUSH CREATE PRINTER FAIL] ip={r_ip or '?'} serial={r_serial or ''}: "
+                            + str(flush_create_err)[:220]
+                        )
+                        # Recarrega agent (rollback remove da sessao!)
+                        try:
+                            agent = _get_agent(x_agent_token, db)
+                            agent.last_heartbeat = _now()
+                        except Exception:
+                            pass
+                        continue
 
                 # ----- PASSO 3: APLICA ATUALIZACOES -----
                 #   REGRA CRITICA DE CONTADORES MONOTONICOS (NUNCA DIMINUEM!):
@@ -2513,7 +2540,7 @@ async def agent_report(
                 printer.toner_magenta = r_toner_magenta
                 printer.toner_yellow = r_toner_yellow
 
-                # --- TONERS PB: ⛔ DEFESA EM PROFUNDIDADE (Julio pediu 10x!!!) ---
+                # --- TONERS PB: DEFESA EM PROFUNDIDADE (Julio pediu 10x!!!) ---
                 # Depois de escrever os valores recebidos, checamos se e PB REAL:
                 # Se for PB, APAGA toner_cyan/magenta/yellow (forca None, nao grava 0!)
                 # Muitas impressoras PB Ricoh SP 3710SF etc reportam 0 via SNMP, mas
@@ -2531,7 +2558,20 @@ async def agent_report(
                 printer.updated_at = now
 
                 # ================================================================
-                # 🔥 CORRECAO V6.4 DASHBOARD HORARIO ATUALIZADO
+                #  CRITICO: printer.id PRECISA EXISTIR (int valido > 0)
+                #  Se ainda for None aqui, Reading vai dar FK NULL.
+                #  Forcamos flush se necessario.
+                # ================================================================
+                try:
+                    if not getattr(printer, "id", None):
+                        db.flush()
+                except Exception:
+                    try: db.rollback()
+                    except Exception: pass
+                _printer_id_ok = bool(getattr(printer, "id", None) and int(printer.id) > 0)
+
+                # ================================================================
+                # CORRECAO V6.4 DASHBOARD HORARIO ATUALIZADO
                 #    SEMPRE cria uma Reading NOVA a cada coleta, MESMO que o
                 #    contador de páginas seja IDENTICO ao anterior.
                 #    Motivo: telas de impressora/cliente mostram a ultima leitura
@@ -2539,23 +2579,30 @@ async def agent_report(
                 #    Julio olha o dashboard e pensa "nao coletou" porque o horario
                 #    da ultima linha de leitura nao atualiza, apesar do last_seen sim.
                 # ================================================================
-                try:
-                    reading_row = Reading(
-                        printer_id=printer.id,
-                        pages_total=int(printer.pages_total or 0),
-                        pages_bw=int(printer.pages_bw or 0),
-                        pages_color=int(printer.pages_color or 0),
-                        toner_black=printer.toner_black,
-                        toner_cyan=printer.toner_cyan,
-                        toner_magenta=printer.toner_magenta,
-                        toner_yellow=printer.toner_yellow,
-                        status=_s_strn(r_status, 50) or "unknown",
-                        collected_at=now,
+                if _printer_id_ok:
+                    try:
+                        reading_row = Reading(
+                            printer_id=printer.id,
+                            pages_total=int(printer.pages_total or 0),
+                            pages_bw=int(printer.pages_bw or 0),
+                            pages_color=int(printer.pages_color or 0),
+                            toner_black=printer.toner_black,
+                            toner_cyan=printer.toner_cyan,
+                            toner_magenta=printer.toner_magenta,
+                            toner_yellow=printer.toner_yellow,
+                            status=_s_strn(r_status, 50) or "unknown",
+                            collected_at=now,
+                        )
+                        db.add(reading_row)
+                    except Exception:
+                        # Nunca deixa a falha de insercao da reading matar o loop
+                        pass
+                else:
+                    processed_errors += 1
+                    warnings.append(
+                        f"[SKIP READING] printer.id null/0 em impressora ip={r_ip or '?'}"
+                        f" model={r_model or ''} (nao gravamos reading sem FK valida)"
                     )
-                    db.add(reading_row)
-                except Exception:
-                    # Nunca deixa a falha de insercao da reading matar o loop
-                    pass
 
                 try:
                     db.flush()
