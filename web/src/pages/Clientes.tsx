@@ -32,6 +32,7 @@ export default function Clientes() {
   const [expandedClientId, setExpandedClientId] = useState<number | null>(null);
   const [clientPrinters, setClientPrinters] = useState<Record<number, Printer[]>>({});
   const [clientLocations, setClientLocations] = useState<Record<number, Location[]>>({});
+  const [clientPrintersLoadedAt, setClientPrintersLoadedAt] = useState<Record<number, number>>({});
   const [loadingPrintersClientId, setLoadingPrintersClientId] = useState<number | null>(null);
   const [editingSectorPrinterId, setEditingSectorPrinterId] = useState<number | null>(null);
   const [savingSectorPrinterId, setSavingSectorPrinterId] = useState<number | null>(null);
@@ -76,6 +77,27 @@ export default function Clientes() {
     if (searchDebounced.trim()) params.search = searchDebounced.trim();
     const data = await api.getClients(params);
     setClients(data);
+
+    const alreadyExpandedIds = Object.keys(clientPrinters).map(Number);
+    if (alreadyExpandedIds.length > 0) {
+      const results = await Promise.all(
+        alreadyExpandedIds.map((cid) =>
+          Promise.all([
+            api.getPrinters({ client_id: cid }),
+            api.getLocations(cid),
+          ]),
+        ),
+      );
+      const newPrinters: Record<number, Printer[]> = {};
+      const newLocations: Record<number, Location[]> = {};
+      alreadyExpandedIds.forEach((cid, idx) => {
+        newPrinters[cid] = results[idx][0];
+        newLocations[cid] = results[idx][1];
+      });
+      setClientPrinters((current) => ({ ...current, ...newPrinters }));
+      setClientLocations((current) => ({ ...current, ...newLocations }));
+    }
+
     setLastRefreshAt(new Date());
   };
 
@@ -230,13 +252,7 @@ export default function Clientes() {
     }
   };
 
-  const toggleClientPrinters = async (clientId: number) => {
-    if (expandedClientId === clientId) {
-      setExpandedClientId(null);
-      return;
-    }
-    setExpandedClientId(clientId);
-    if (clientPrinters[clientId]) return;
+  const loadClientPrintersOnce = async (clientId: number) => {
     try {
       setLoadingPrintersClientId(clientId);
       const [printers, locations] = await Promise.all([
@@ -245,9 +261,28 @@ export default function Clientes() {
       ]);
       setClientPrinters((current) => ({ ...current, [clientId]: printers }));
       setClientLocations((current) => ({ ...current, [clientId]: locations }));
+      setClientPrintersLoadedAt((current) => ({ ...current, [clientId]: Date.now() }));
     } finally {
       setLoadingPrintersClientId(null);
     }
+  };
+
+  const toggleClientPrinters = async (clientId: number) => {
+    if (expandedClientId === clientId) {
+      setExpandedClientId(null);
+      return;
+    }
+    setExpandedClientId(clientId);
+
+    const hasCache = clientId in clientPrinters;
+    const cacheEmpty = Array.isArray(clientPrinters[clientId]) && clientPrinters[clientId].length === 0;
+    const cacheAgeSec = hasCache
+      ? (Date.now() - (clientPrintersLoadedAt[clientId] || 0)) / 1000
+      : Number.POSITIVE_INFINITY;
+    const cacheStale = !hasCache || (cacheEmpty && cacheAgeSec > 60) || cacheAgeSec > 10 * 60;
+
+    if (!cacheStale) return;
+    await loadClientPrintersOnce(clientId);
   };
 
   const openPairing = (client: Client) => {
