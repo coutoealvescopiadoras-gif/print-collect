@@ -279,7 +279,7 @@ export default function Clientes() {
     const cacheAgeSec = hasCache
       ? (Date.now() - (clientPrintersLoadedAt[clientId] || 0)) / 1000
       : Number.POSITIVE_INFINITY;
-    const cacheStale = !hasCache || (cacheEmpty && cacheAgeSec > 60) || cacheAgeSec > 10 * 60;
+    const cacheStale = !hasCache || (cacheEmpty && cacheAgeSec > 10) || cacheAgeSec > 10 * 60;
 
     if (!cacheStale) return;
     await loadClientPrintersOnce(clientId);
@@ -669,36 +669,47 @@ export default function Clientes() {
                             <div style={{ fontWeight: 600 }}>
                               Impressoras mapeadas para <strong>{c.name}</strong>
                             </div>
-                            {c.client_code && (
-                              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: 13 }}>
-                                <span style={{ color: "var(--text-muted)" }}>🎫 Código:</span>
-                                <span
-                                  style={{
-                                    fontFamily: "'Courier New', ui-monospace, monospace",
-                                    fontWeight: 800,
-                                    color: "rgb(16,185,129)",
-                                  }}
-                                >
-                                  {c.client_code}
-                                </span>
-                                <button
-                                  type="button"
-                                  className="btn btn-secondary"
-                                  style={{ fontSize: 12, padding: "0.2rem 0.5rem" }}
-                                  onClick={() => copyText(c.client_code!)}
-                                >
-                                  📋 Copiar código
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn btn-secondary"
-                                  style={{ fontSize: 12, padding: "0.2rem 0.5rem" }}
-                                  onClick={() => copyText(buildPairingMessage(c))}
-                                >
-                                  📩 Copiar mensagem completa
-                                </button>
-                              </div>
-                            )}
+                            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                              {c.client_code && (
+                                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: 13 }}>
+                                  <span style={{ color: "var(--text-muted)" }}>🎫 Código:</span>
+                                  <span
+                                    style={{
+                                      fontFamily: "'Courier New', ui-monospace, monospace",
+                                      fontWeight: 800,
+                                      color: "rgb(16,185,129)",
+                                    }}
+                                  >
+                                    {c.client_code}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: 12, padding: "0.2rem 0.5rem" }}
+                                    onClick={() => copyText(c.client_code!)}
+                                  >
+                                    📋 Copiar código
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: 12, padding: "0.2rem 0.5rem" }}
+                                    onClick={() => copyText(buildPairingMessage(c))}
+                                  >
+                                    📩 Copiar mensagem completa
+                                  </button>
+                                </div>
+                              )}
+                              <button
+                                type="button"
+                                className="btn btn-secondary"
+                                style={{ fontSize: 12, padding: "0.25rem 0.6rem", display: "inline-flex", alignItems: "center", gap: 4 }}
+                                onClick={() => loadClientPrintersOnce(c.id)}
+                                title="Atualizar impressoras deste cliente agora"
+                              >
+                                🔄 Atualizar
+                              </button>
+                            </div>
                           </div>
                           {loadingPrintersClientId === c.id ? (
                             <div className="loading" style={{ padding: "0.5rem 0", textAlign: "left" }}>
@@ -707,14 +718,24 @@ export default function Clientes() {
                           ) : (clientPrinters[c.id] || []).length === 0 ? (
                             <div style={{ color: "var(--text-muted)" }}>
                               Nenhuma impressora encontrada para este cliente.{" "}
+                              <button
+                                className="btn btn-link"
+                                style={{ padding: 0, margin: 0 }}
+                                onClick={() => loadClientPrintersOnce(c.id)}
+                              >
+                                🔄 Tentar recarregar agora
+                              </button>
                               {canManageClients && (
-                                <button
-                                  className="btn btn-link"
-                                  style={{ padding: 0, margin: 0 }}
-                                  onClick={() => openPairing(c)}
-                                >
-                                  Gerar código de pareamento para instalar o agente.
-                                </button>
+                                <>
+                                  {" "}ou{" "}
+                                  <button
+                                    className="btn btn-link"
+                                    style={{ padding: 0, margin: 0 }}
+                                    onClick={() => openPairing(c)}
+                                  >
+                                    Gerar código de pareamento para instalar o agente.
+                                  </button>
+                                </>
                               )}
                             </div>
                           ) : (
