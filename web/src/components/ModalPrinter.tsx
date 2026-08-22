@@ -64,8 +64,8 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
         className="modal"
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: "min(1100px, 94vw)",
-          maxHeight: "90vh",
+          width: "min(1450px, 97vw)",
+          maxHeight: "95vh",
           display: "flex",
           flexDirection: "column",
           padding: 0,
@@ -179,80 +179,109 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
                 <ContadoresPrinter printer={printer} />
               </div>
 
-              {/* ==================== TONERS ==================== */}
-              <div style={{ marginBottom: "1.5rem" }}>
-                <h4 style={{ margin: "0 0 0.6rem 0" }}>🧪 Toners</h4>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-                    gap: 12,
-                  }}
-                >
-                  <TonerPB label="Preto" value={printer.toner_black} color="#111827" />
-                  <TonerPB label="Ciano" value={printer.toner_cyan} color="#0891b2" />
-                  <TonerPB label="Magenta" value={printer.toner_magenta} color="#db2777" />
-                  <TonerPB label="Amarelo" value={printer.toner_yellow} color="#ca8a04" />
-                </div>
-              </div>
+              {/* ==================== TONERS (PB = só preto; COLOR = 4) ==================== */}
+              {(() => {
+                const isColor =
+                  !!printer.toner_cyan ||
+                  !!printer.toner_magenta ||
+                  !!printer.toner_yellow ||
+                  Number(printer.pages_color || 0) > 0;
+                return (
+                  <div style={{ marginBottom: "1.5rem" }}>
+                    <h4 style={{ margin: "0 0 0.6rem 0" }}>
+                      🧪 Toners
+                      <span style={{ fontWeight: 400, fontSize: "0.85rem", color: "var(--text-muted)", marginLeft: 8 }}>
+                        ({isColor ? "Impressora COLORIDA - 4 cartuchos" : "Impressora PRETA & BRANCA - apenas toner preto"})
+                      </span>
+                    </h4>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: isColor
+                          ? "repeat(auto-fit, minmax(200px, 1fr))"
+                          : "repeat(auto-fit, minmax(220px, 320px))",
+                        gap: 12,
+                      }}
+                    >
+                      <TonerPB label="Preto" value={printer.toner_black} color="#111827" />
+                      {isColor && (
+                        <>
+                          <TonerPB label="Ciano" value={printer.toner_cyan} color="#0891b2" />
+                          <TonerPB label="Magenta" value={printer.toner_magenta} color="#db2777" />
+                          <TonerPB label="Amarelo" value={printer.toner_yellow} color="#ca8a04" />
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
-              {/* ==================== HISTORICO LEITURAS ==================== */}
-              <div>
-                <h4 style={{ margin: "0 0 0.6rem 0" }}>
-                  🕒 Histórico de leituras
-                  <span style={{ fontWeight: 400, fontSize: "0.85rem", color: "var(--text-muted)", marginLeft: 8 }}>
-                    (últimas {readings.length} coletas)
-                  </span>
-                </h4>
-                {readings.length === 0 ? (
-                  <div className="empty">Nenhuma leitura registrada ainda (ainda não houve coleta para esta impressora).</div>
-                ) : (
-                  <table style={{ width: "100%" }}>
-                    <thead>
-                      <tr>
-                        <th>Data / Hora</th>
-                        <th>Total</th>
-                        <th>Preto</th>
-                        <th>Cor</th>
-                        <th style={{ textAlign: "center" }}>🖤</th>
-                        <th style={{ textAlign: "center" }}>🔵</th>
-                        <th style={{ textAlign: "center" }}>🟣</th>
-                        <th style={{ textAlign: "center" }}>🟡</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {readings.map((r, idx) => {
-                        const prev = readings[idx + 1];
-                        const diffPages =
-                          prev && r.pages_total >= prev.pages_total ? r.pages_total - prev.pages_total : null;
-                        return (
-                          <tr key={r.id}>
-                            <td>{formatDateTimeBrasil(r.collected_at)}</td>
-                            <td>
-                              <strong>{formatNumberBrasil(r.pages_total)}</strong>
-                              {diffPages !== null && diffPages > 0 && (
-                                <span style={{ color: "var(--success)", fontSize: "0.75rem", marginLeft: 4 }}>
-                                  +{formatNumberBrasil(diffPages)}
-                                </span>
-                              )}
-                            </td>
-                            <td>{formatNumberBrasil(r.pages_bw)}</td>
-                            <td style={{ color: "var(--primary)" }}>{formatNumberBrasil(r.pages_color)}</td>
-                            <TDToner v={r.toner_black} />
-                            <TDToner v={r.toner_cyan} />
-                            <TDToner v={r.toner_magenta} />
-                            <TDToner v={r.toner_yellow} />
-                            <td>
-                              <span className={`badge ${r.status}`}>{r.status}</span>
-                            </td>
+              {/* ==================== HISTORICO LEITURAS (colunas toners condicionais) ==================== */}
+              {(() => {
+                const isColor =
+                  !!printer.toner_cyan ||
+                  !!printer.toner_magenta ||
+                  !!printer.toner_yellow ||
+                  Number(printer.pages_color || 0) > 0;
+                return (
+                  <div>
+                    <h4 style={{ margin: "0 0 0.6rem 0" }}>
+                      🕒 Histórico de leituras
+                      <span style={{ fontWeight: 400, fontSize: "0.85rem", color: "var(--text-muted)", marginLeft: 8 }}>
+                        (últimas {readings.length} coletas)
+                      </span>
+                    </h4>
+                    {readings.length === 0 ? (
+                      <div className="empty">Nenhuma leitura registrada ainda (ainda não houve coleta para esta impressora).</div>
+                    ) : (
+                      <table style={{ width: "100%" }}>
+                        <thead>
+                          <tr>
+                            <th>Data / Hora</th>
+                            <th>Total</th>
+                            <th>Preto</th>
+                            <th>Cor</th>
+                            <th style={{ textAlign: "center" }}>🖤</th>
+                            {isColor && <th style={{ textAlign: "center" }}>🔵</th>}
+                            {isColor && <th style={{ textAlign: "center" }}>🟣</th>}
+                            {isColor && <th style={{ textAlign: "center" }}>🟡</th>}
+                            <th>Status</th>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                )}
-              </div>
+                        </thead>
+                        <tbody>
+                          {readings.map((r, idx) => {
+                            const prev = readings[idx + 1];
+                            const diffPages =
+                              prev && r.pages_total >= prev.pages_total ? r.pages_total - prev.pages_total : null;
+                            return (
+                              <tr key={r.id}>
+                                <td>{formatDateTimeBrasil(r.collected_at)}</td>
+                                <td>
+                                  <strong>{formatNumberBrasil(r.pages_total)}</strong>
+                                  {diffPages !== null && diffPages > 0 && (
+                                    <span style={{ color: "var(--success)", fontSize: "0.75rem", marginLeft: 4 }}>
+                                      +{formatNumberBrasil(diffPages)}
+                                    </span>
+                                  )}
+                                </td>
+                                <td>{formatNumberBrasil(r.pages_bw)}</td>
+                                <td style={{ color: "var(--primary)" }}>{formatNumberBrasil(r.pages_color)}</td>
+                                <TDToner v={r.toner_black} />
+                                {isColor && <TDToner v={r.toner_cyan} />}
+                                {isColor && <TDToner v={r.toner_magenta} />}
+                                {isColor && <TDToner v={r.toner_yellow} />}
+                                <td>
+                                  <span className={`badge ${r.status}`}>{r.status}</span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                );
+              })()}
             </>
           )}
         </div>

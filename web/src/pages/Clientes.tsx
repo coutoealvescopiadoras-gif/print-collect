@@ -840,8 +840,8 @@ Qualquer dúvida é só chamar a gente!`}
               className="modal"
               onClick={(e) => e.stopPropagation()}
               style={{
-                width: "min(1050px, 95vw)",
-                maxHeight: "90vh",
+                width: "min(1400px, 97vw)",
+                maxHeight: "95vh",
                 display: "flex",
                 flexDirection: "column",
                 padding: 0,
