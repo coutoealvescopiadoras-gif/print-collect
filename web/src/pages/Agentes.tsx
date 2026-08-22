@@ -1,8 +1,24 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Agent, Client } from "../types";
+import type { Agent, Client, Printer } from "../types";
 import { useAuth } from "../context/AuthContext";
 import { formatDateTimeBrasil } from "../utils";
+
+function getAgentInactiveInfo(agent: Agent): { days: number; hours: number; totalHours: number } | null {
+  if (!agent.last_heartbeat) return { days: 9999, hours: 0, totalHours: 999999 };
+  try {
+    const last = new Date(agent.last_heartbeat).getTime();
+    if (isNaN(last)) return { days: 9999, hours: 0, totalHours: 999999 };
+    const diff = Date.now() - last;
+    if (diff < 0) return null;
+    const totalHours = Math.floor(diff / (1000 * 60 * 60));
+    const days = Math.floor(totalHours / 24);
+    const hours = totalHours - days * 24;
+    return { days, hours, totalHours };
+  } catch {
+    return null;
+  }
+}
 
 export default function Agentes() {
   const { user, loading: authLoading } = useAuth();
@@ -10,13 +26,15 @@ export default function Agentes() {
   const canManageAgents = effectiveRole === "superadmin" || effectiveRole === "partner_admin" || effectiveRole === "client_manager";
   const [agents, setAgents] = useState<Agent[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
+  const [printers, setPrinters] = useState<Printer[]>([]);
   const [deletingAgentId, setDeletingAgentId] = useState<number | null>(null);
   const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null);
 
   const load = () => {
-    Promise.all([api.getAgents(), api.getClients()]).then(([a, c]) => {
+    Promise.all([api.getAgents(), api.getClients(), api.getPrinters()]).then(([a, c, p]) => {
       setAgents(a);
       setClients(c);
+      setPrinters(p || []);
       setLastRefreshAt(new Date());
     });
   };
@@ -44,6 +62,14 @@ export default function Agentes() {
       setDeletingAgentId(null);
     }
   };
+
+  const printerCountByClient = new Map<number, number>();
+  for (const p of printers) {
+    if (p.ignored) continue;
+    const cid = p.client_id;
+    if (!cid) continue;
+    printerCountByClient.set(cid, (printerCountByClient.get(cid) || 0) + 1);
+  }
 
   return (
     <>
@@ -90,42 +116,66 @@ export default function Agentes() {
               <tr>
                 <th>Nome</th>
                 <th>Cliente</th>
+                <th style={{ width: 110, textAlign: "center" }}>🖨️ Impressoras</th>
                 <th>Último heartbeat</th>
                 <th>Versão</th>
-                <th>Status</th>
+                <th style={{ width: 170 }}>Status</th>
                 {canManageAgents && <th style={{ width: "80px" }}>Ações</th>}
               </tr>
             </thead>
             <tbody>
-              {agents.map((a) => (
-                <tr key={a.id}>
-                  <td>{a.name}</td>
-                  <td>{clients.find((c) => c.id === a.client_id)?.name || `#${a.client_id}`}</td>
-                  <td>
-                    {a.last_heartbeat
-                      ? formatDateTimeBrasil(a.last_heartbeat)
-                      : "Nunca"}
-                  </td>
-                  <td>{a.version || "—"}</td>
-                  <td>
-                    <span className={`badge ${a.active ? "online" : "offline"}`}>
-                      {a.active ? "Ativo" : "Inativo"}
-                    </span>
-                  </td>
-                  {canManageAgents && (
-                    <td>
-                      <button
-                        className="btn btn-ghost"
-                        onClick={() => deleteAgent(a.id, a.name)}
-                        disabled={deletingAgentId === a.id}
-                        style={{ color: "var(--danger)", padding: "0.35rem 0.6rem" }}
-                      >
-                        {deletingAgentId === a.id ? "Excluindo..." : "Excluir"}
-                      </button>
+              {agents.map((a) => {
+                const inactive = getAgentInactiveInfo(a);
+                const isInactive24h = !!inactive && inactive.totalHours >= 24;
+                const isCritical = !!inactive && inactive.totalHours >= 72;
+                const totalPrinters = printerCountByClient.get(a.client_id) || 0;
+                return (
+                  <tr
+                    key={a.id}
+                    style={isCritical ? { background: "rgba(220, 53, 69, 0.08)" } : isInactive24h ? { background: "rgba(253, 126, 20, 0.08)" } : undefined}
+                  >
+                    <td style={isCritical ? { fontWeight: 600, color: "var(--danger)" } : undefined}>{a.name}</td>
+                    <td>{clients.find((c) => c.id === a.client_id)?.name || `#${a.client_id}`}</td>
+                    <td style={{ textAlign: "center", fontWeight: 600 }}>
+                      {totalPrinters > 0 ? totalPrinters : <span style={{ color: "var(--text-muted)" }}>0</span>}
                     </td>
-                  )}
-                </tr>
-              ))}
+                    <td>
+                      {a.last_heartbeat
+                        ? formatDateTimeBrasil(a.last_heartbeat)
+                        : <span style={{ color: "var(--text-muted)" }}>Nunca</span>}
+                    </td>
+                    <td>{a.version || <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
+                    <td>
+                      {isInactive24h ? (
+                        <span className={`badge ${isCritical ? "offline" : "warning"}`} style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+                          {isCritical ? "🔴" : "🟠"}
+                          {inactive && inactive.days > 0
+                            ? `Inativo há ${inactive.days}d ${inactive.hours}h`
+                            : inactive && inactive.hours > 0
+                              ? `Inativo há ${inactive.hours}h`
+                              : `Inativo há >24h`}
+                        </span>
+                      ) : (
+                        <span className={`badge ${a.active ? "online" : "offline"}`}>
+                          {a.active ? "Ativo" : "Inativo"}
+                        </span>
+                      )}
+                    </td>
+                    {canManageAgents && (
+                      <td>
+                        <button
+                          className="btn btn-ghost"
+                          onClick={() => deleteAgent(a.id, a.name)}
+                          disabled={deletingAgentId === a.id}
+                          style={{ color: "var(--danger)", padding: "0.35rem 0.6rem" }}
+                        >
+                          {deletingAgentId === a.id ? "Excluindo..." : "Excluir"}
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
