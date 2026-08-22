@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { api, getPublicApiUrl } from "../api";
-import type { AgentPairingCode, Client, Partner, Printer } from "../types";
+import type { AgentPairingCode, Client, Location, Partner, Printer } from "../types";
 import { useAuth } from "../context/AuthContext";
 import { formatDateTimeBrasil } from "../utils";
 import ModalPrinter from "../components/ModalPrinter";
@@ -30,6 +30,8 @@ export default function Clientes() {
   const [editingClientId, setEditingClientId] = useState<number | null>(null);
   const [form, setForm] = useState({ name: "", cnpj: "", contact_name: "", contact_email: "" });
   const [deletingClientId, setDeletingClientId] = useState<number | null>(null);
+  const [editingSectorPrinterId, setEditingSectorPrinterId] = useState<number | null>(null);
+  const [savingSectorPrinterId, setSavingSectorPrinterId] = useState<number | null>(null);
   const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null);
 
   // Filtros (igual aba Impressoras)
@@ -51,6 +53,7 @@ export default function Clientes() {
   // Nível 1: Modal do Cliente (lista impressoras dele)
   const [clienteModalId, setClienteModalId] = useState<number | null>(null);
   const [impressorasClienteModal, setImpressorasClienteModal] = useState<Printer[]>([]);
+  const [locaisClienteModal, setLocaisClienteModal] = useState<Location[]>([]);
   const [loadingClienteModal, setLoadingClienteModal] = useState<boolean>(false);
   // Nível 2: Modal Ficha Completa Impressora
   const [printerModalId, setPrinterModalId] = useState<number | null>(null);
@@ -154,15 +157,19 @@ export default function Clientes() {
     }
   };
 
-  // ============ MODAL CLIENTE (Nível 1 — Julio pediu! SOMENTE LISTA IMPRESSORAS + BOTÃO REMOVER) ============
+  // ============ MODAL CLIENTE (Nível 1 — Julio pediu! LISTA IMPRESSORAS + SETOR EDITAVEL + REMOVER) ============
   const handleAbrirModalCliente = async (clientId: number) => {
     try {
       setLoadingClienteModal(true);
       setClienteModalId(clientId);
-      const printers = await api.getPrinters({ client_id: clientId });
+      const [printers, locations] = await Promise.all([
+        api.getPrinters({ client_id: clientId }),
+        api.getLocations(clientId),
+      ]);
       setImpressorasClienteModal(printers || []);
+      setLocaisClienteModal(locations || []);
     } catch (e: any) {
-      window.alert("Erro ao carregar impressoras do cliente: " + String(e?.message || e));
+      window.alert("Erro ao carregar impressoras e setores do cliente: " + String(e?.message || e));
     } finally {
       setLoadingClienteModal(false);
     }
@@ -171,7 +178,50 @@ export default function Clientes() {
   const handleFecharModalCliente = () => {
     setClienteModalId(null);
     setImpressorasClienteModal([]);
+    setLocaisClienteModal([]);
+    setEditingSectorPrinterId(null);
+    setSavingSectorPrinterId(null);
     setLoadingClienteModal(false);
+  };
+
+  const getPrinterSectorModal = (printer: Printer) => {
+    if (!printer.location_id) return "—";
+    const location = locaisClienteModal.find((item) => item.id === printer.location_id);
+    return location ? (location.sector || location.name || "—") : "—";
+  };
+
+  const handleChangeSectorModal = async (printer: Printer, rawValue: string) => {
+    if (!clienteModalId) return;
+    try {
+      setSavingSectorPrinterId(printer.id);
+      let targetLocationId: number | null = null;
+      if (rawValue === "") {
+        targetLocationId = null;
+      } else if (rawValue.startsWith("new:")) {
+        const sectorName = rawValue.slice(4).trim();
+        if (!sectorName) return;
+        const created = await api.createLocation({
+          client_id: clienteModalId,
+          name: sectorName,
+          sector: sectorName,
+        });
+        setLocaisClienteModal((curr) => [...curr, created]);
+        targetLocationId = created.id;
+      } else {
+        targetLocationId = Number(rawValue) || null;
+      }
+      const updatedPrinter = await api.updatePrinter(printer.id, {
+        location_id: targetLocationId,
+      });
+      setImpressorasClienteModal((curr) =>
+        curr.map((p) => (p.id === printer.id ? { ...p, ...updatedPrinter } : p)),
+      );
+    } catch (e: any) {
+      window.alert("Erro ao salvar setor: " + String(e?.message || e));
+    } finally {
+      setEditingSectorPrinterId(null);
+      setSavingSectorPrinterId(null);
+    }
   };
 
   const handleRemovePrinterModal = async (printer: Printer) => {
@@ -900,11 +950,16 @@ Qualquer dúvida é só chamar a gente!`}
                     <thead>
                       <tr>
                         <th>🖨️ Impressora mapeada (clique para ver ficha completa)</th>
+                        {canEditSector && <th style={{ width: 260, minWidth: 240 }}>📍 Setor / Local (clique para editar)</th>}
                         <th style={{ width: 160, textAlign: "center" }}>Ações</th>
                       </tr>
                     </thead>
                     <tbody>
                       {impressorasClienteModal.map((printer) => {
+                        const isEditingSector = editingSectorPrinterId === printer.id;
+                        const isSavingSector = savingSectorPrinterId === printer.id;
+                        const currentSectorLabel = getPrinterSectorModal(printer);
+
                         return (
                           <tr key={printer.id}>
                             {/* ===== (1) MODELO CLICÁVEL (abre ModalPrinter) ===== */}
@@ -955,7 +1010,88 @@ Qualquer dúvida é só chamar a gente!`}
                               </button>
                             </td>
 
-                            {/* ===== (2) AÇÕES: SÓ BOTÃO REMOVER IMPRESSORA (Julio pediu!) ===== */}
+                            {/* ===== (2) SETOR EDITÁVEL (Julio pediu para trazer de volta para Modal 1!) ===== */}
+                            {canEditSector && (
+                              <td style={{ minWidth: 240 }}>
+                                {isEditingSector ? (
+                                  <select
+                                    autoFocus
+                                    disabled={isSavingSector}
+                                    defaultValue={printer.location_id ? String(printer.location_id) : ""}
+                                    style={{
+                                      width: "100%",
+                                      padding: "0.45rem 0.6rem",
+                                      borderRadius: 8,
+                                      border: "1.5px solid var(--primary)",
+                                      background: "var(--surface)",
+                                      color: "var(--text)",
+                                      fontSize: 14,
+                                      outline: "none",
+                                    }}
+                                    onBlur={() => setEditingSectorPrinterId(null)}
+                                    onChange={async (evt) => {
+                                      const value = evt.target.value;
+                                      if (value === "prompt:new") {
+                                        const nome = window.prompt("Digite o nome do novo setor / local:", "");
+                                        if (!nome) {
+                                          setEditingSectorPrinterId(null);
+                                          return;
+                                        }
+                                        await handleChangeSectorModal(printer, `new:${nome}`);
+                                      } else {
+                                        await handleChangeSectorModal(printer, value);
+                                      }
+                                    }}
+                                  >
+                                    <option value="">❌ Sem setor / não definido</option>
+                                    <optgroup label="Setores existentes">
+                                      {locaisClienteModal.map((loc) => (
+                                        <option key={loc.id} value={String(loc.id)}>
+                                          {loc.sector || loc.name}
+                                        </option>
+                                      ))}
+                                    </optgroup>
+                                    <optgroup label="Ações">
+                                      <option value="prompt:new">➕ Criar novo setor…</option>
+                                    </optgroup>
+                                  </select>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    disabled={isSavingSector || !canEditSector}
+                                    title={canEditSector ? "Clique para alterar o setor / local desta impressora" : "Sem permissão"}
+                                    onClick={() => setEditingSectorPrinterId(printer.id)}
+                                    style={{
+                                      width: "100%",
+                                      textAlign: "left",
+                                      padding: "0.45rem 0.6rem",
+                                      borderRadius: 8,
+                                      border: "1.5px dashed transparent",
+                                      background: "transparent",
+                                      cursor: canEditSector ? "pointer" : "default",
+                                      color: "var(--text)",
+                                      fontSize: 14,
+                                      fontWeight: 600,
+                                      transition: "border-color .15s, background .15s",
+                                    }}
+                                    onMouseEnter={(e) => {
+                                      if (canEditSector && !isSavingSector) {
+                                        (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border)";
+                                        (e.currentTarget as HTMLButtonElement).style.background = "var(--surface-2)";
+                                      }
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      (e.currentTarget as HTMLButtonElement).style.borderColor = "transparent";
+                                      (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                                    }}
+                                  >
+                                    {isSavingSector ? "💾 Salvando…" : currentSectorLabel}
+                                  </button>
+                                )}
+                              </td>
+                            )}
+
+                            {/* ===== (3) AÇÕES: BOTÃO REMOVER IMPRESSORA (Julio pediu para manter!) ===== */}
                             {canEditSector && (
                               <td style={{ textAlign: "center" }}>
                                 <button

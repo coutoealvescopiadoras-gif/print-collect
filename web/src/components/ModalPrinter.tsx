@@ -102,12 +102,6 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
             </h3>
             <div style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginTop: 4 }}>
               Cliente: <strong>{printer?.client_name || "—"}</strong>
-              {printer?.location_sector
-                ? ` · Setor: ${printer.location_sector}`
-                : printer?.location_name
-                  ? ` · Local: ${printer.location_name}`
-                  : ""}
-              {" "}· ID #{printerId}
             </div>
           </div>
           <button
