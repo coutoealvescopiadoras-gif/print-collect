@@ -458,7 +458,6 @@ export default function Clientes() {
               <tr>
                 <th>Nome</th>
                 {(isSuperadmin || hasAnyPartnerVisible) && <th>Parceiro</th>}
-                <th style={{ width: 165 }}>🎫 Código Cliente</th>
                 <th>CNPJ</th>
                 <th>Contato</th>
                 <th>E-mail</th>
@@ -503,41 +502,6 @@ export default function Clientes() {
                         {c.partner_name || <span style={{ opacity: 0.6 }}>—</span>}
                       </td>
                     )}
-                    <td>
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", flexWrap: "wrap" }}>
-                        <span
-                          style={{
-                            fontFamily: "'Courier New', ui-monospace, monospace",
-                            fontWeight: 800,
-                            fontSize: 14,
-                            letterSpacing: 1.2,
-                            padding: "0.15rem 0.45rem",
-                            borderRadius: 6,
-                            background: "rgba(16,185,129,0.12)",
-                            color: "rgb(16,185,129)",
-                            border: "1px solid rgba(16,185,129,0.25)",
-                          }}
-                          title="Código único do cliente (não expira)"
-                        >
-                          {c.client_code || "—"}
-                        </span>
-                        {c.client_code && (
-                          <button
-                            type="button"
-                            className="btn btn-ghost"
-                            style={{
-                              padding: "0.1rem 0.35rem",
-                              fontSize: 12,
-                              minWidth: "auto",
-                            }}
-                            onClick={() => copyText(c.client_code!)}
-                            title="Copiar código do cliente"
-                          >
-                            📋
-                          </button>
-                        )}
-                      </div>
-                    </td>
                     <td>{c.cnpj || "—"}</td>
                     <td>{c.contact_name || "—"}</td>
                     <td>{c.contact_email || "—"}</td>
@@ -834,45 +798,68 @@ Qualquer dúvida é só chamar a gente!`}
                     {clienteModal.partner_name && <span>Parceiro: <strong style={{ color: "var(--text)" }}>{clienteModal.partner_name}</strong> · </span>}
                     ID #{clienteModal.id}
                   </div>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+
+                  {/* ===== CODIGO DO CLIENTE EVIDENTISSIMO (Julio pediu para deixar AQUI no modal 1, nao mais na tabela!) ===== */}
                   {clienteModal.client_code && (
-                    <>
-                      <div
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 6,
-                          padding: "0.3rem 0.7rem",
-                          borderRadius: 8,
-                          background: "rgba(16,185,129,0.1)",
-                          border: "1px solid rgba(16,185,129,0.25)",
-                          fontSize: 13,
-                        }}
-                      >
-                        <span style={{ color: "var(--text-muted)" }}>🎫</span>
-                        <span style={{ fontFamily: "'Courier New', ui-monospace, monospace", fontWeight: 800, color: "rgb(16,185,129)" }}>
+                    <div
+                      style={{
+                        marginTop: "0.9rem",
+                        padding: "0.8rem 0.9rem",
+                        borderRadius: 12,
+                        background: "linear-gradient(135deg, rgba(16,185,129,0.12), rgba(16,185,129,0.05))",
+                        border: "1.5px solid rgba(16,185,129,0.35)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "0.75rem",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: "0.75rem", color: "rgb(16,185,129)", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 3 }}>
+                          🎫 Código do Cliente (usar para parear o agente!)
+                        </div>
+                        <div
+                          style={{
+                            fontFamily: "'Courier New', ui-monospace, monospace",
+                            fontWeight: 900,
+                            fontSize: "1.4rem",
+                            color: "rgb(5,150,105)",
+                            letterSpacing: 2.5,
+                            padding: "0.15rem 0.25rem",
+                            display: "inline-block",
+                          }}
+                        >
                           {clienteModal.client_code}
-                        </span>
+                        </div>
                       </div>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        style={{ fontSize: 12, padding: "0.25rem 0.6rem" }}
-                        onClick={() => copyText(clienteModal.client_code!)}
-                      >
-                        📋 Copiar código
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        style={{ fontSize: 12, padding: "0.25rem 0.6rem" }}
-                        onClick={() => copyText(buildPairingMessage(clienteModal))}
-                      >
-                        📩 Copiar mensagem
-                      </button>
-                    </>
+                      <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          style={{
+                            fontSize: 14,
+                            padding: "0.5rem 0.9rem",
+                            fontWeight: 700,
+                            boxShadow: "0 3px 10px rgba(16,185,129,0.25)",
+                          }}
+                          onClick={() => copyText(clienteModal.client_code!)}
+                        >
+                          📋 Copiar Código
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ fontSize: 12, padding: "0.35rem 0.75rem" }}
+                          onClick={() => copyText(buildPairingMessage(clienteModal))}
+                        >
+                          📩 Copiar mensagem
+                        </button>
+                      </div>
+                    </div>
                   )}
+                </div>
+                <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "flex-end", gap: "0.5rem", flexWrap: "wrap" }}>
                   <button
                     type="button"
                     className="btn btn-secondary"
