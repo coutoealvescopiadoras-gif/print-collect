@@ -1197,20 +1197,4 @@ Qualquer dúvida é só chamar a gente!`}
   );
 }
 
-/* ============ Helpers internos Clientes.tsx ============ */
-function MiniInfo({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div style={{ fontSize: 13 }}>
-      <div style={{ color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>{label}</div>
-      <div
-        style={{
-          fontWeight: 600,
-          color: "var(--text)",
-          fontFamily: mono ? "'Courier New', ui-monospace, monospace" : undefined,
-        }}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
+/* ============ Helpers internos Clientes.tsx (antigos, sem uso) ============ */
