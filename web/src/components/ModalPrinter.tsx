@@ -214,22 +214,23 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
                 );
               })()}
 
-              {/* ==================== HISTORICO LEITURAS (colunas toners condicionais) ==================== */}
+              {/* ==================== HISTORICO LEITURAS (1a COLETA POR DIA, MAX 30 DIAS MAIS NOVOS) ==================== */}
               {(() => {
                 const isColor =
                   !!printer.toner_cyan ||
                   !!printer.toner_magenta ||
                   !!printer.toner_yellow ||
                   Number(printer.pages_color || 0) > 0;
+                const dailyReadings = getPrimeiraLeituraPorDiaLimit30(readings);
                 return (
                   <div>
                     <h4 style={{ margin: "0 0 0.6rem 0" }}>
                       🕒 Histórico de leituras
                       <span style={{ fontWeight: 400, fontSize: "0.85rem", color: "var(--text-muted)", marginLeft: 8 }}>
-                        (últimas {readings.length} coletas)
+                        (primeira coleta de cada dia · {dailyReadings.length} dias)
                       </span>
                     </h4>
-                    {readings.length === 0 ? (
+                    {dailyReadings.length === 0 ? (
                       <div className="empty">Nenhuma leitura registrada ainda (ainda não houve coleta para esta impressora).</div>
                     ) : (
                       <table style={{ width: "100%" }}>
@@ -237,8 +238,8 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
                           <tr>
                             <th>Data / Hora</th>
                             <th>Total</th>
-                            <th>Preto</th>
-                            <th>Cor</th>
+                            {isColor && <th>Preto</th>}
+                            {isColor && <th>Cor</th>}
                             <th style={{ textAlign: "center" }}>🖤</th>
                             {isColor && <th style={{ textAlign: "center" }}>🔵</th>}
                             {isColor && <th style={{ textAlign: "center" }}>🟣</th>}
@@ -247,8 +248,8 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
                           </tr>
                         </thead>
                         <tbody>
-                          {readings.map((r, idx) => {
-                            const prev = readings[idx + 1];
+                          {dailyReadings.map((r, idx) => {
+                            const prev = dailyReadings[idx + 1];
                             const diffPages =
                               prev && r.pages_total >= prev.pages_total ? r.pages_total - prev.pages_total : null;
                             return (
@@ -262,8 +263,8 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
                                     </span>
                                   )}
                                 </td>
-                                <td>{formatNumberBrasil(r.pages_bw)}</td>
-                                <td style={{ color: "var(--primary)" }}>{formatNumberBrasil(r.pages_color)}</td>
+                                {isColor && <td>{formatNumberBrasil(r.pages_bw)}</td>}
+                                {isColor && <td style={{ color: "var(--primary)" }}>{formatNumberBrasil(r.pages_color)}</td>}
                                 <TDToner v={r.toner_black} />
                                 {isColor && <TDToner v={r.toner_cyan} />}
                                 {isColor && <TDToner v={r.toner_magenta} />}
@@ -314,29 +315,32 @@ function ContadoresPrinter({ printer }: { printer: Printer }) {
   const total = Number(printer.pages_total || 0);
   const pb = Number(printer.pages_bw || 0);
   const cor = Number(printer.pages_color || 0);
+
+  if (!isColor) {
+    return (
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr)",
+          gap: 12,
+        }}
+      >
+        <CardCounter label="Total" value={formatNumberBrasil(total)} accent="#0f172a" sub={"Páginas"} />
+      </div>
+    );
+  }
+
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: isColor ? "repeat(3, minmax(0, 1fr))" : "repeat(2, minmax(0, 1fr))",
+        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
         gap: 12,
       }}
     >
+      <CardCounter label="Preto & Branco" value={formatNumberBrasil(pb)} accent="#4b5563" sub={"Páginas"} />
+      <CardCounter label="Coloridas" value={formatNumberBrasil(cor)} accent="#2563eb" sub={""} />
       <CardCounter label="Total" value={formatNumberBrasil(total)} accent="#0f172a" sub={"Páginas"} />
-      <CardCounter
-        label="Preto & Branco"
-        value={formatNumberBrasil(pb)}
-        accent="#4b5563"
-        sub={isColor ? "" : "Páginas"}
-      />
-      {isColor && (
-        <CardCounter
-          label="Coloridas"
-          value={formatNumberBrasil(cor)}
-          accent="#2563eb"
-          sub={""}
-        />
-      )}
     </div>
   );
 }
@@ -420,6 +424,29 @@ function TonerPB({ label, value, color }: { label: string; value: number | null 
       )}
     </div>
   );
+}
+
+function getPrimeiraLeituraPorDiaLimit30(readings: Reading[]): Reading[] {
+  if (!readings || readings.length === 0) return [];
+  const grupos: Record<string, Reading> = {};
+  readings.forEach(r => {
+    if (!r.collected_at) return;
+    const data = new Date(r.collected_at);
+    if (isNaN(data.getTime())) return;
+    const chave = `${data.getFullYear()}-${String(data.getMonth() + 1).padStart(2, "0")}-${String(data.getDate()).padStart(2, "0")}`;
+    if (!grupos[chave]) {
+      grupos[chave] = r;
+    } else {
+      const existente = new Date(grupos[chave].collected_at!).getTime();
+      const novo = data.getTime();
+      if (novo < existente) {
+        grupos[chave] = r;
+      }
+    }
+  });
+  return Object.values(grupos)
+    .sort((a, b) => new Date(b.collected_at!).getTime() - new Date(a.collected_at!).getTime())
+    .slice(0, 30);
 }
 
 function TDToner({ v }: { v: number | null | undefined }) {
