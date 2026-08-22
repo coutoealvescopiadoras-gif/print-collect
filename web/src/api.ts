@@ -46,21 +46,27 @@ export function resolveBaseUrl() {
   const proto = window.location.protocol;
 
   // ============================================================
-  // 🚀 PRODUCAO (Julio decidiu: Backend SEMPRE vai para o Render!)
-  // Elimina 100% erros futuros de 404 de Vercel Functions Python.
-  // URL REAL do Render (COM hifen, igual repositorio GitHub):
+  // NENHUMA variavel VITE_API_URL configurada (CASO ATUAL).
+  // Volta ao comportamento ORIGINAL (funcionava antes das alteracoes):
+  // - Producao printcollect.com.br / www.printcollect.com.br:
+  //   BASE VAZIA ("") = usa /api/* no MESMO dominio → Serverless Function
+  //   Python da Vercel (api/index.py). Ja corrigimos ReadingOut no routes.py.
+  // - Preview Vercel: vazio (a menos que VITE_API_URL_FALLBACK esteja setado)
+  // - OnRender / Local / LAN: comportamento padrao.
+  //
+  // Julio pode a QUALQUER MOMENTO ativar backend dedicado no Render criando
+  // a variavel VITE_API_URL = https://print-collect-api.onrender.com no
+  // painel Settings Environment Variables da Vercel (Production + Preview).
   // ============================================================
-  const RENDER_API_URL = "https://print-collect-api.onrender.com";
 
   if (host === "printcollect.com.br" || host === "www.printcollect.com.br") {
-    return RENDER_API_URL;
+    return "";
   }
 
   if (isVercelPreview(host) || host.endsWith(".vercel.app")) {
-    // Preview Vercel: tambem usa API do Render (sempre, nao depende serverless python!)
     const fallback = (import.meta.env.VITE_API_URL_FALLBACK || "").trim();
     if (fallback) return fallback.replace(/\/$/, "");
-    return RENDER_API_URL;
+    return "";
   }
 
   if (host.endsWith(".onrender.com")) {
@@ -71,7 +77,6 @@ export function resolveBaseUrl() {
     return `${proto}//${host}:8000`;
   }
 
-  // Fallback final (localhost dev): vazio = usa /api/* local (dev server vite proxy)
   return "";
 }
 
