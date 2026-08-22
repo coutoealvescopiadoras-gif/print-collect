@@ -37,7 +37,7 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
         setError(null);
         const [p, rs] = await Promise.all([
           api.getPrinterById(printerId),
-          api.getPrinterReadings(printerId, 50),
+          api.getPrinterReadings(printerId, 30),
         ]);
         if (cancelled) return;
         setPrinter(p);
@@ -174,10 +174,6 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
                 <InfoCard
                   label="Cadastrada em"
                   value={formatDateTimeBrasil(printer.created_at)}
-                />
-                <InfoCard
-                  label="Atualizada em"
-                  value={formatDateTimeBrasil(printer.updated_at)}
                 />
               </div>
 
