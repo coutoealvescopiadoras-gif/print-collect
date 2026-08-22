@@ -2111,6 +2111,57 @@ def _close_color_alerts_for_printer(db: Session, printer_id: int) -> int:
     return closed
 
 
+def _auto_resolve_toner_alerts_for_printer(db: Session, printer: Printer) -> int:
+    """Fecha AUTOMATICAMENTE os alertas ATIVOS de TONER BAIXO quando a nova
+    coleta mostra que o nivel SUBIU (cartucho foi substituido). Logica:
+    Se toner estava baixo mas HOJE esta >=35% → significa trocou o cartucho!
+    Resolve automaticamente o alerta (nao precisa Julio clicar em Resolver manualmente).
+    Limiar de 35% escolhido com folga: se subiu de 5% para mais de 35%, e certeza de troca.
+    Nao fecha para niveis intermediarios (ex: 10% → 18%, so flutuacao SNMP).
+    """
+    RESOLVE_THRESHOLD = 35.0
+    closed = 0
+    try:
+        if not getattr(printer, "id", None):
+            return 0
+        actives = (
+            db.query(Alert)
+            .filter(Alert.printer_id == printer.id, Alert.resolved == False, Alert.alert_type == "supply")
+            .all()
+        )
+        if not actives:
+            return 0
+        ts = _now()
+        for a in actives:
+            try:
+                msg = (a.message or "").lower()
+                resolved_flag = False
+                if ("preto" in msg or "black" in msg) and printer.toner_black is not None and float(printer.toner_black) >= RESOLVE_THRESHOLD:
+                    resolved_flag = True
+                elif ("ciano" in msg or "cyan" in msg) and printer.toner_cyan is not None and float(printer.toner_cyan) >= RESOLVE_THRESHOLD:
+                    resolved_flag = True
+                elif ("magenta" in msg) and printer.toner_magenta is not None and float(printer.toner_magenta) >= RESOLVE_THRESHOLD:
+                    resolved_flag = True
+                elif ("amarelo" in msg or "yellow" in msg) and printer.toner_yellow is not None and float(printer.toner_yellow) >= RESOLVE_THRESHOLD:
+                    resolved_flag = True
+                if resolved_flag:
+                    a.resolved = True
+                    a.resolved_at = ts
+                    closed += 1
+            except Exception:
+                continue
+        if closed > 0:
+            try:
+                db.flush()
+            except Exception:
+                try: db.rollback()
+                except Exception: pass
+                closed = 0
+    except Exception:
+        closed = 0
+    return closed
+
+
 def _sync_alerts(db: Session, printer: Printer, alert_messages: list[str]) -> None:
     """Sincroniza alertas. TUDO envolto em try/except para NUNCA crashar
     (mesmo que um alerta tenha caractere proibido, ou SQL engasgue).
@@ -2695,6 +2746,18 @@ async def agent_report(
                 # --- TIMESTAMPS: SEMPRE atualiza estes ---
                 printer.last_seen = now
                 printer.updated_at = now
+
+                # ================================================================
+                # 🔥 PASSO 3.1: AUTO-RESOLVE ALERTAS DE TONER SUBIRAM (Julio pediu!)
+                #    Quando tecnico TROCOU o cartucho e a nova coleta chegou com
+                #    nivel >= 35% (ex: era 5% agora 90%!).
+                #    CHAMAMOS ANTES do sync_alerts para nao fechar alerta que
+                #    acabou de ser criado no mesmo passo.
+                # ================================================================
+                try:
+                    _auto_resolve_toner_alerts_for_printer(db, printer)
+                except Exception:
+                    pass
 
                 # ================================================================
                 #  CRITICO: printer.id PRECISA EXISTIR (int valido > 0)
