@@ -4,7 +4,6 @@ import Layout from "./Layout";
 import Dashboard from "./pages/Dashboard";
 import Clientes from "./pages/Clientes";
 import Instalador from "./pages/Instalador";
-import Impressoras from "./pages/Impressoras";
 import Alertas from "./pages/Alertas";
 import Agentes from "./pages/Agentes";
 import Usuarios from "./pages/Usuarios";
@@ -76,7 +75,6 @@ export function App() {
               <Route index element={<Dashboard />} />
               <Route path="clientes" element={<Clientes />} />
               <Route path="instalador" element={<Instalador />} />
-              <Route path="impressoras" element={<Impressoras />} />
               <Route path="alertas" element={<Alertas />} />
               <Route path="agentes" element={<Agentes />} />
               <Route path="usuarios" element={<Usuarios />} />
