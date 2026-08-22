@@ -840,11 +840,19 @@ Qualquer dúvida é só chamar a gente!`}
               className="modal"
               onClick={(e) => e.stopPropagation()}
               style={{
-                width: "min(1400px, 97vw)",
-                maxHeight: "95vh",
+                width: "calc(100% - 64px)",
+                height: "calc(100vh - 96px)",
+                maxWidth: "1880px",
+                maxHeight: "calc(100vh - 96px)",
+                minWidth: "720px",
+                minHeight: "520px",
                 display: "flex",
                 flexDirection: "column",
                 padding: 0,
+                margin: 0,
+                boxSizing: "border-box",
+                position: "relative",
+                flex: "0 1 auto",
               }}
             >
               {/* ===== HEADER MODAL CLIENTE ===== */}
