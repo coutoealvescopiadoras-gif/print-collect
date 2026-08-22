@@ -924,18 +924,8 @@ Qualquer dúvida é só chamar a gente!`}
                 </div>
               </div>
 
-              {/* ===== CORPO: TABELA IMPRESSORAS (Apenas lista do cliente, Julio pediu focar nisso!) ===== */}
-              <div style={{ padding: "1rem 1.4rem", overflowY: "auto", flex: 1 }}>
-                <div style={{ fontWeight: 600, marginBottom: "0.6rem", fontSize: "0.95rem" }}>
-                  🖨️ Impressoras deste cliente
-                  <span style={{ fontWeight: 400, color: "var(--text-muted)", fontSize: "0.85rem", marginLeft: 8 }}>
-                    ({loadingClienteModal ? "…" : impressorasClienteModal.length} cadastradas)
-                  </span>
-                  <span style={{ fontWeight: 400, color: "var(--text-muted)", fontSize: "0.8rem", marginLeft: 16 }}>
-                    💡 Clique no <strong>modelo da impressora</strong> para abrir a ficha completa com histórico.
-                  </span>
-                </div>
-
+              {/* ===== CORPO: TABELA IMPRESSORAS (Sem titulo, Julio pediu para apagar!) ===== */}
+              <div style={{ padding: "0.75rem 1.4rem", overflowY: "auto", flex: 1 }}>
                 {loadingClienteModal ? (
                   <div className="loading" style={{ padding: "2rem 0" }}>Carregando impressoras…</div>
                 ) : impressorasClienteModal.length === 0 ? (
