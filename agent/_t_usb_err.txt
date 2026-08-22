@@ -1,0 +1,4 @@
+[INFO] USB PnP entities conectadas agora: 7 (USB/DOT4 detectado=True)
+[INFO] USB WMI retornou 1 impressora(s) bruta(s) e 2 fila(s) spooler.
+[INFO] USB final: 0 impressora(s) coletadas, 1 pulada(s) (virtual), 0 pulada(s) (copy duplicata), 0 pulada(s) (offline/fantasma).
+[INFO] Coleta USB: nenhuma impressora fisica local encontrada neste ciclo (pode ser normal se nao houver USB/LPT/Shared).

@@ -1,0 +1,18 @@
+========================================================================
+IMPRESSORAS WIN32_PRINTER (instaladas no Windows)
+========================================================================
+---
+Nome: Microsoft Print to PDF
+Fabricante: 
+Driver: Microsoft Print To PDF
+Porta: PORTPROMPT:
+Padrao: True
+Status: Unknown
+
+========================================================================
+FILAS DE IMPRESSAO (contadores TotalPagesPrinted)
+========================================================================
+Fila: 'Microsoft Print to PDF' PaginasTotal=0  JobsTotal=0
+Fila: '_Total' PaginasTotal=0  JobsTotal=0
+
+FIM.

@@ -1,0 +1,47 @@
+﻿====================================================================================================
+python : Traceback (most recent call last):
+No linha:1 caractere:1
++ python prova_final_deploy.py 2>&1 | Out-File -FilePath _prova1.txt -E ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last) 
+   ::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+PROVA FINAL DO BUG DEPLOY (agora: 11/08/2026 18:17:57 )
+   PASSO 1: POST /api/agent/report para https://www.printcollect.com.br
+   PASSO 2: CONSULTA BANCO NEON IMEDIATAMENTE DEPOIS
+   PASSO 3: VERIFICA SE IMPRESSORA client_id=226 FOI CRIADA
+====================================================================================================
+
+--- BANCO APËS ANTES DO POST ---
+[Impressoras cliente_id=226] 0 encontradas:
+[┌ltimas readings desse cliente] 0:
+
+--- ENVIANDO POST ---
+  File "C:\Users\Julio\Desktop\print-collect\server\prova_final_deploy.py", 
+line 107, in <module>
+HTTP 200
+Resposta: {"status":"ok","readings_received":1,"processed_ok":1,"processed_errors":0,"warnings":[]}
+Nao parseou JSON? 'charmap' codec can't encode character '\u2705' in position 2: character maps to <undefined>
+
+--- BANCO APËS POST (3s de espera) ---
+[Impressoras cliente_id=226] 0 encontradas:
+[┌ltimas readings desse cliente] 0:
+
+--- BANCO APËS POST + 9s TOTAL ---
+[Impressoras cliente_id=226] 0 encontradas:
+[┌ltimas readings desse cliente] 0:
+
+====================================================================================================
+RESULTADO FINAL:
+   Antes do POST: impressoras=0 readings=0
+   Depois 3s    : impressoras=0 readings=0
+   Depois 9s    : impressoras=0 readings=0
+    print("\n\u274c AINDA NAO GRAVOU. Vamos aguardar deploy ou precisa de mais 
+ajuste.")
+  File "C:\Users\Julio\AppData\Local\Programs\Python\Python312-32\Lib\encodings
+\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u274c' in 
+position 2: character maps to <undefined>

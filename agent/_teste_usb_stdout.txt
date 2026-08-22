@@ -1,0 +1,5 @@
+2026-08-21 21:33:37,344 [INFO] USB WMI retornou 1 impressora(s) bruta(s) e 2 fila(s) spooler.
+2026-08-21 21:33:37,353 [INFO] USB final: 0 impressora(s) coletadas, 1 pulada(s) (virtual).
+2026-08-21 21:33:37,354 [INFO] Coleta USB: nenhuma impressora fisica local encontrada neste ciclo (pode ser normal se nao houver USB/LPT/Shared).
+
+Encontradas 0 impressora(s) USB/Local via Windows:

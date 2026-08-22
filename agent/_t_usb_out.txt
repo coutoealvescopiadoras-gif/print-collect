@@ -1,0 +1,1 @@
+RESULTADO RC=0 OK! Quantidade impressoras USB: 0
