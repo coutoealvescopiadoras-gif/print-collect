@@ -1238,17 +1238,34 @@ def list_alerts(resolved: Optional[bool] = None, db: Session = Depends(get_db), 
 
     # PASSO 2: Uma ÚNICA query para carregar TUDO que precisamos de uma vez só
     printer_is_color_cache: dict[int, bool] = {}
+    printer_cache: dict[int, Printer] = {}  # Reutilizado para nome cliente/modelo/serial/ip
     if all_printer_ids:
         try:
             pid_list = list(all_printer_ids)
             printers = db.query(Printer).filter(Printer.id.in_(pid_list)).all()
             for p in printers or []:
                 try:
+                    printer_cache[int(p.id)] = p
                     printer_is_color_cache[int(p.id)] = _is_color_printer_real(p)
                 except Exception:
                     printer_is_color_cache[int(p.id)] = True  # mostra por seguranca
         except Exception:
             printer_is_color_cache = {}
+            printer_cache = {}
+
+    # PASSO 2.5: Monta CACHE de CLIENTES (1 unica query!) para client_name sem N+1
+    client_cache: dict[int, Client] = {}
+    try:
+        all_client_ids: set[int] = set()
+        for _pr in printer_cache.values():
+            if getattr(_pr, "client_id", None) is not None:
+                all_client_ids.add(int(_pr.client_id))
+        if all_client_ids:
+            c_list = db.query(Client).filter(Client.id.in_(list(all_client_ids))).all()
+            for _c in c_list or []:
+                client_cache[int(_c.id)] = _c
+    except Exception:
+        client_cache = {}
 
     # PASSO 3: Monta lista final segura (filtra alertas color PB)
     safe_alerts: list[Alert] = []
@@ -1266,6 +1283,31 @@ def list_alerts(resolved: Optional[bool] = None, db: Session = Depends(get_db), 
             # Qualquer erro de checagem: mostra o alerta (nunca esconde coisa por erro!)
             pass
         safe_alerts.append(a)
+
+    # ==============================================================
+    # PASSO 4: Adiciona CAMPOS NOVOS nos alertas (client_name / printer_model / serial / ip!)
+    # Usa printer_cache + client_cache acima — 0 queries novas!
+    # ==============================================================
+    for a in safe_alerts or []:
+        try:
+            pid = int(getattr(a, "printer_id", 0) or 0)
+            pr = printer_cache.get(pid)
+            if pr is not None:
+                a.printer_ip = str(getattr(pr, "ip_address", "") or "")
+                a.printer_model = (getattr(pr, "model", None) or None)
+                a.printer_serial = (getattr(pr, "serial_number", None) or None)
+                a.printer_manufacturer = (getattr(pr, "manufacturer", None) or None)
+                cid = getattr(pr, "client_id", None)
+                if cid is not None:
+                    try:
+                        a.client_id = int(cid)
+                    except Exception:
+                        a.client_id = None
+                    cli = client_cache.get(int(cid)) if isinstance(cid, int) else None
+                    if cli is not None:
+                        a.client_name = (getattr(cli, "name", "") or "") or None
+        except Exception:
+            pass
     return safe_alerts
 
 

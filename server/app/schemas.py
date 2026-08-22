@@ -243,6 +243,12 @@ class AlertOut(BaseModel):
     resolved: bool
     created_at: datetime
     resolved_at: Optional[datetime] = None
+    client_id: Optional[int] = None
+    client_name: Optional[str] = None
+    printer_model: Optional[str] = None
+    printer_serial: Optional[str] = None
+    printer_ip: Optional[str] = None
+    printer_manufacturer: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

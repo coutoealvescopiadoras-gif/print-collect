@@ -74,7 +74,10 @@ export default function Alertas() {
           <table>
             <thead>
               <tr>
+                <th>Cliente</th>
                 <th>Impressora</th>
+                <th>Serial</th>
+                <th>IP</th>
                 <th>Tipo</th>
                 <th>Mensagem</th>
                 <th>Severidade</th>
@@ -85,7 +88,48 @@ export default function Alertas() {
             <tbody>
               {alerts.map((a) => (
                 <tr key={a.id}>
-                  <td>#{a.printer_id}</td>
+                  <td>
+                    {a.client_name ? (
+                      <strong>{a.client_name}</strong>
+                    ) : (
+                      <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
+                        #{a.client_id ?? "—"}
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    {a.printer_model ? (
+                      <div>
+                        <div>
+                          <strong>{a.printer_model}</strong>
+                        </div>
+                        <div style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>
+                          {a.printer_manufacturer ? a.printer_manufacturer : ""}
+                        </div>
+                      </div>
+                    ) : (
+                      <span>
+                      <div>#{a.printer_id}</div>
+                        <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
+                          (modelo não cadastrado)
+                        </span>
+                    </span>
+                    )}
+                  </td>
+                  <td>
+                    {a.printer_serial ? (
+                      <code style={{ fontSize: "0.85rem" }}>{a.printer_serial}</code>
+                    ) : (
+                      <span style={{ color: "var(--text-muted)" }}>—</span>
+                    )}
+                  </td>
+                  <td>
+                    {a.printer_ip ? (
+                      <code style={{ fontSize: "0.85rem" }}>{a.printer_ip}</code>
+                    ) : (
+                      <span style={{ color: "var(--text-muted)" }}>—</span>
+                    )}
+                  </td>
                   <td>{a.alert_type}</td>
                   <td>{a.message}</td>
                   <td>

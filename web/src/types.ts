@@ -56,6 +56,13 @@ export interface Alert {
   severity: string;
   resolved: boolean;
   created_at: string;
+  resolved_at?: string | null;
+  client_id?: number | null;
+  client_name?: string | null;
+  printer_model?: string | null;
+  printer_serial?: string | null;
+  printer_ip?: string | null;
+  printer_manufacturer?: string | null;
 }
 
 export interface Agent {
