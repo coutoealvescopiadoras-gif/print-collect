@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { api, getPublicApiUrl } from "../api";
 import type { AgentPairingCode, Client, Partner, Printer } from "../types";
 import { useAuth } from "../context/AuthContext";
-import { formatDateTimeBrasil, formatNumberBrasil } from "../utils";
+import { formatDateTimeBrasil } from "../utils";
 import ModalPrinter from "../components/ModalPrinter";
 
 function copyText(text: string) {
