@@ -50,11 +50,11 @@ class Settings(BaseSettings):
     api_key: str = os.getenv("API_KEY", "agent-dev-key")
     cors_origins: str = os.getenv(
         "CORS_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,https://printcollect.com.br,https://www.printcollect.com.br,https://print-collect-api.onrender.com",
     )
     cors_origin_regex: str = os.getenv(
         "CORS_ORIGIN_REGEX",
-        r"^https?://(printcollect\.com\.br|www\.printcollect\.com\.br|[a-zA-Z0-9-]+\.vercel\.app|[a-zA-Z0-9-]+\.onrender\.com|localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(:\d+)?$",
+        r"^https?://(printcollect\.com\.br|www\.printcollect\.com\.br|[a-zA-Z0-9-]+-coutoealvescopiadoras-gif\.vercel\.app|[a-zA-Z0-9-]+\.vercel\.app|print-collect-api\.onrender\.com|[a-zA-Z0-9-]+\.onrender\.com|localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})(:\d+)?$",
     )
     auto_create_tables: bool = True
 

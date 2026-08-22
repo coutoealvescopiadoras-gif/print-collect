@@ -48,8 +48,9 @@ function resolveBaseUrl() {
   // ============================================================
   // 🚀 PRODUCAO (Julio decidiu: Backend SEMPRE vai para o Render!)
   // Elimina 100% erros futuros de 404 de Vercel Functions Python.
+  // URL REAL do Render (COM hifen, igual repositorio GitHub):
   // ============================================================
-  const RENDER_API_URL = "https://printcollect-api.onrender.com";
+  const RENDER_API_URL = "https://print-collect-api.onrender.com";
 
   if (host === "printcollect.com.br" || host === "www.printcollect.com.br") {
     return RENDER_API_URL;
