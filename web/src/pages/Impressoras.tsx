@@ -307,14 +307,22 @@ export default function Impressoras() {
                 <th>IP</th>
                 <th>Serial</th>
                 <th>Status</th>
-                <th>Páginas</th>
+                <th>
+                  Contadores
+                  <div style={{ fontWeight: 400, fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2 }}>
+                    Total · Preto · Cor
+                  </div>
+                </th>
                 <th>Toner</th>
                 <th>Última coleta</th>
                 {canManagePrinters && <th style={{ width: 110 }}>Ações</th>}
               </tr>
             </thead>
             <tbody>
-              {printers.map((p) => (
+              {printers.map((p) => {
+                const isColorPrinter =
+                  !!p.toner_cyan || !!p.toner_magenta || !!p.toner_yellow || Number(p.pages_color || 0) > 0;
+                return (
                 <tr key={p.id}>
                   <td>
                   <strong>{p.client_name || "—"}</strong>
@@ -337,7 +345,22 @@ export default function Impressoras() {
                   <td>
                     <span className={`badge ${p.status}`}>{p.status}</span>
                   </td>
-                  <td>{formatNumberBrasil(p.pages_total)}</td>
+                  <td style={{ lineHeight: 1.35, fontSize: "0.92rem" }}>
+                    <div>
+                      <strong style={{ fontSize: "1rem" }}>{formatNumberBrasil(p.pages_total)}</strong>
+                      <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>total</span>
+                    </div>
+                    {isColorPrinter ? (
+                      <div style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginTop: 2 }}>
+                        <span style={{ color: "var(--text)" }}>{formatNumberBrasil(p.pages_bw)}</span> preto ·{" "}
+                        <span style={{ color: "var(--primary)" }}>{formatNumberBrasil(p.pages_color)}</span> cor
+                      </div>
+                    ) : Number(p.pages_bw || 0) > 0 ? (
+                      <div style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginTop: 2 }}>
+                        {formatNumberBrasil(p.pages_bw)} preto &amp; branco
+                      </div>
+                    ) : null}
+                  </td>
                   <td>
                     <TonerBar level={p.toner_black} />
                   </td>
@@ -377,7 +400,7 @@ export default function Impressoras() {
                     </td>
                   )}
                 </tr>
-              ))}
+              )})}
             </tbody>
           </table>
         )}

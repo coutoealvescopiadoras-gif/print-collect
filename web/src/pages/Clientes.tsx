@@ -747,7 +747,12 @@ export default function Clientes() {
                                   <th>IP</th>
                                   <th>Serial</th>
                                   <th>Status</th>
-                                  <th>Contador</th>
+                                  <th>
+                                    Contadores
+                                    <div style={{ fontWeight: 400, fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2 }}>
+                                      Total · Preto · Cor
+                                    </div>
+                                  </th>
                                   <th>Última coleta</th>
                                   {canEditSector && <th style={{ width: 110 }}>Ações</th>}
                                 </tr>
@@ -757,6 +762,11 @@ export default function Clientes() {
                                   const isEditingSector = editingSectorPrinterId === printer.id;
                                   const isSavingSector = savingSectorPrinterId === printer.id;
                                   const currentSectorLabel = getPrinterSector(c.id, printer);
+                                  const isColorPrinter =
+                                    !!printer.toner_cyan ||
+                                    !!printer.toner_magenta ||
+                                    !!printer.toner_yellow ||
+                                    Number(printer.pages_color || 0) > 0;
 
                                   return (
                                     <tr key={printer.id}>
@@ -847,7 +857,30 @@ export default function Clientes() {
                                       <td>
                                         <span className={`badge ${printer.status}`}>{printer.status}</span>
                                       </td>
-                                      <td>{formatNumberBrasil(printer.pages_total)}</td>
+                                      <td style={{ lineHeight: 1.35, fontSize: "0.92rem" }}>
+                                        <div>
+                                          <strong style={{ fontSize: "1rem" }}>
+                                            {formatNumberBrasil(printer.pages_total)}
+                                          </strong>
+                                          <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>total</span>
+                                        </div>
+                                        {isColorPrinter ? (
+                                          <div style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginTop: 2 }}>
+                                            <span style={{ color: "var(--text)" }}>
+                                              {formatNumberBrasil(printer.pages_bw)}
+                                            </span>{" "}
+                                            preto ·{" "}
+                                            <span style={{ color: "var(--primary)" }}>
+                                              {formatNumberBrasil(printer.pages_color)}
+                                            </span>{" "}
+                                            cor
+                                          </div>
+                                        ) : Number(printer.pages_bw || 0) > 0 ? (
+                                          <div style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginTop: 2 }}>
+                                            {formatNumberBrasil(printer.pages_bw)} preto &amp; branco
+                                          </div>
+                                        ) : null}
+                                      </td>
                                       <td>
                                         {formatDateTimeBrasil(printer.last_seen)}
                                       </td>
