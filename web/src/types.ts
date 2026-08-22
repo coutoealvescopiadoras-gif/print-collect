@@ -37,6 +37,22 @@ export interface Printer {
   client_name: string;
   partner_id: number | null;
   partner_name: string | null;
+  location_name?: string | null;
+  location_sector?: string | null;
+}
+
+export interface Reading {
+  id: number;
+  printer_id: number;
+  pages_total: number;
+  pages_bw: number;
+  pages_color: number;
+  toner_black: number | null;
+  toner_cyan: number | null;
+  toner_magenta: number | null;
+  toner_yellow: number | null;
+  status: string;
+  collected_at: string;
 }
 
 export interface Location {

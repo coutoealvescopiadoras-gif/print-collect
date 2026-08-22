@@ -3,6 +3,7 @@ import { api, getPublicApiUrl } from "../api";
 import type { AgentPairingCode, Client, Location, Partner, Printer } from "../types";
 import { useAuth } from "../context/AuthContext";
 import { formatDateTimeBrasil, formatNumberBrasil } from "../utils";
+import ModalPrinter from "../components/ModalPrinter";
 
 function copyText(text: string) {
   if (!text) return;
@@ -52,6 +53,15 @@ export default function Clientes() {
   const [pairingError, setPairingError] = useState<string | null>(null);
   const [pairingResult, setPairingResult] = useState<AgentPairingCode | null>(null);
   const [pairingCopied, setPairingCopied] = useState(false);
+
+  // ===== MODAIS HIERÁRQUICOS (Julio pediu UI profissional) =====
+  // Nível 1: Modal do Cliente (lista impressoras dele)
+  const [clienteModalId, setClienteModalId] = useState<number | null>(null);
+  const [impressorasClienteModal, setImpressorasClienteModal] = useState<Printer[]>([]);
+  const [locaisClienteModal, setLocaisClienteModal] = useState<Location[]>([]);
+  const [loadingClienteModal, setLoadingClienteModal] = useState<boolean>(false);
+  // Nível 2: Modal Ficha Completa Impressora
+  const [printerModalId, setPrinterModalId] = useState<number | null>(null);
 
   // Debounce pesquisa
   useEffect(() => {
@@ -283,6 +293,86 @@ export default function Clientes() {
 
     if (!cacheStale) return;
     await loadClientPrintersOnce(clientId);
+  };
+
+  // ============ MODAL CLIENTE (Nível 1) ============
+  const handleAbrirModalCliente = async (clientId: number) => {
+    try {
+      setLoadingClienteModal(true);
+      setClienteModalId(clientId);
+      const [printers, locations] = await Promise.all([
+        api.getPrinters({ client_id: clientId }),
+        api.getLocations(clientId),
+      ]);
+      setImpressorasClienteModal(printers || []);
+      setLocaisClienteModal(locations || []);
+    } catch (e: any) {
+      window.alert("Erro ao carregar dados do cliente: " + String(e?.message || e));
+    } finally {
+      setLoadingClienteModal(false);
+    }
+  };
+
+  const handleFecharModalCliente = () => {
+    setClienteModalId(null);
+    setImpressorasClienteModal([]);
+    setLocaisClienteModal([]);
+    setLoadingClienteModal(false);
+  };
+
+  const getPrinterSectorModal = (printer: Printer) => {
+    if (!printer.location_id) return "—";
+    const location = locaisClienteModal.find((item) => item.id === printer.location_id);
+    return location ? (location.sector || location.name || "—") : "—";
+  };
+
+  const handleChangeSectorModal = async (printer: Printer, rawValue: string) => {
+    if (!clienteModalId) return;
+    try {
+      setSavingSectorPrinterId(printer.id);
+      let targetLocationId: number | null = null;
+      if (rawValue === "") {
+        targetLocationId = null;
+      } else if (rawValue.startsWith("new:")) {
+        const sectorName = rawValue.slice(4).trim();
+        if (!sectorName) return;
+        const created = await api.createLocation({
+          client_id: clienteModalId,
+          name: sectorName,
+          sector: sectorName,
+        });
+        setLocaisClienteModal((curr) => [...curr, created]);
+        targetLocationId = created.id;
+      } else {
+        targetLocationId = Number(rawValue) || null;
+      }
+      const updatedPrinter = await api.updatePrinter(printer.id, {
+        location_id: targetLocationId,
+      });
+      setImpressorasClienteModal((curr) =>
+        curr.map((p) => (p.id === printer.id ? { ...p, ...updatedPrinter } : p)),
+      );
+    } catch (e: any) {
+      window.alert("Erro ao salvar setor: " + String(e?.message || e));
+    } finally {
+      setEditingSectorPrinterId(null);
+      setSavingSectorPrinterId(null);
+    }
+  };
+
+  const handleRemovePrinterModal = async (printer: Printer) => {
+    const model = printer.model || printer.ip_address || "esta impressora";
+    const ok = window.confirm(
+      `Confirma REMOVER "${model}"?\n\n` +
+        `Ela NÃO será mais monitorada e NÃO voltará a aparecer automaticamente, mesmo que seja encontrada na rede na próxima coleta.`,
+    );
+    if (!ok) return;
+    try {
+      await api.ignorePrinter(printer.id);
+      setImpressorasClienteModal((curr) => curr.filter((p) => p.id !== printer.id));
+    } catch (e: any) {
+      window.alert("Erro ao remover impressora: " + String(e?.message || e));
+    }
   };
 
   const openPairing = (client: Client) => {
@@ -569,7 +659,8 @@ export default function Clientes() {
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem" }}>
                         <button
                           type="button"
-                          onClick={() => toggleClientPrinters(c.id)}
+                          onClick={() => handleAbrirModalCliente(c.id)}
+                          title="Abrir janela com impressoras e dados completos deste cliente"
                           style={{
                             background: "transparent",
                             border: "none",
@@ -577,10 +668,18 @@ export default function Clientes() {
                             cursor: "pointer",
                             fontWeight: 600,
                             textAlign: "left",
-                            padding: 0,
+                            padding: "0.2rem 0.35rem",
+                            borderRadius: 6,
+                            transition: "background .15s",
+                          }}
+                          onMouseEnter={(e) => {
+                            (e.currentTarget as HTMLButtonElement).style.background = "var(--surface-hover)";
+                          }}
+                          onMouseLeave={(e) => {
+                            (e.currentTarget as HTMLButtonElement).style.background = "transparent";
                           }}
                         >
-                          {expandedClientId === c.id ? "▼ " : "▶ "}{c.name}
+                          🪟 <strong>{c.name}</strong>
                         </button>
                       </div>
                     </td>
@@ -661,273 +760,6 @@ export default function Clientes() {
                       )}
                     </td>
                   </tr>
-                  {expandedClientId === c.id && (
-                    <tr key={`details-${c.id}`}>
-                      <td colSpan={(isSuperadmin || hasAnyPartnerVisible) ? 9 : 8} style={{ background: "var(--surface-hover)" }}>
-                        <div style={{ padding: "1rem 0" }}>
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap", marginBottom: "0.75rem" }}>
-                            <div style={{ fontWeight: 600 }}>
-                              Impressoras mapeadas para <strong>{c.name}</strong>
-                            </div>
-                            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
-                              {c.client_code && (
-                                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: 13 }}>
-                                  <span style={{ color: "var(--text-muted)" }}>🎫 Código:</span>
-                                  <span
-                                    style={{
-                                      fontFamily: "'Courier New', ui-monospace, monospace",
-                                      fontWeight: 800,
-                                      color: "rgb(16,185,129)",
-                                    }}
-                                  >
-                                    {c.client_code}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    className="btn btn-secondary"
-                                    style={{ fontSize: 12, padding: "0.2rem 0.5rem" }}
-                                    onClick={() => copyText(c.client_code!)}
-                                  >
-                                    📋 Copiar código
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="btn btn-secondary"
-                                    style={{ fontSize: 12, padding: "0.2rem 0.5rem" }}
-                                    onClick={() => copyText(buildPairingMessage(c))}
-                                  >
-                                    📩 Copiar mensagem completa
-                                  </button>
-                                </div>
-                              )}
-                              <button
-                                type="button"
-                                className="btn btn-secondary"
-                                style={{ fontSize: 12, padding: "0.25rem 0.6rem", display: "inline-flex", alignItems: "center", gap: 4 }}
-                                onClick={() => loadClientPrintersOnce(c.id)}
-                                title="Atualizar impressoras deste cliente agora"
-                              >
-                                🔄 Atualizar
-                              </button>
-                            </div>
-                          </div>
-                          {loadingPrintersClientId === c.id ? (
-                            <div className="loading" style={{ padding: "0.5rem 0", textAlign: "left" }}>
-                              Carregando impressoras...
-                            </div>
-                          ) : (clientPrinters[c.id] || []).length === 0 ? (
-                            <div style={{ color: "var(--text-muted)" }}>
-                              Nenhuma impressora encontrada para este cliente.{" "}
-                              <button
-                                className="btn btn-link"
-                                style={{ padding: 0, margin: 0 }}
-                                onClick={() => loadClientPrintersOnce(c.id)}
-                              >
-                                🔄 Tentar recarregar agora
-                              </button>
-                              {canManageClients && (
-                                <>
-                                  {" "}ou{" "}
-                                  <button
-                                    className="btn btn-link"
-                                    style={{ padding: 0, margin: 0 }}
-                                    onClick={() => openPairing(c)}
-                                  >
-                                    Gerar código de pareamento para instalar o agente.
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          ) : (
-                            <table>
-                              <thead>
-                                <tr>
-                                  <th>Modelo</th>
-                                  <th>Setor</th>
-                                  <th>IP</th>
-                                  <th>Serial</th>
-                                  <th>Status</th>
-                                  <th>
-                                    Contadores
-                                    <div style={{ fontWeight: 400, fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2 }}>
-                                      Total · Preto · Cor
-                                    </div>
-                                  </th>
-                                  <th>Última coleta</th>
-                                  {canEditSector && <th style={{ width: 110 }}>Ações</th>}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {(clientPrinters[c.id] || []).map((printer) => {
-                                  const isEditingSector = editingSectorPrinterId === printer.id;
-                                  const isSavingSector = savingSectorPrinterId === printer.id;
-                                  const currentSectorLabel = getPrinterSector(c.id, printer);
-                                  const isColorPrinter =
-                                    !!printer.toner_cyan ||
-                                    !!printer.toner_magenta ||
-                                    !!printer.toner_yellow ||
-                                    Number(printer.pages_color || 0) > 0;
-
-                                  return (
-                                    <tr key={printer.id}>
-                                      <td>
-                                        <div>{printer.model || "—"}</div>
-                                        {printer.manufacturer && (
-                                          <small style={{ color: "var(--text-muted)" }}>{printer.manufacturer}</small>
-                                        )}
-                                      </td>
-                                      <td style={{ minWidth: 220 }}>
-                                        {isEditingSector ? (
-                                          <select
-                                            autoFocus
-                                            disabled={isSavingSector}
-                                            defaultValue={printer.location_id ? String(printer.location_id) : ""}
-                                            style={{
-                                              width: "100%",
-                                              padding: "0.35rem 0.5rem",
-                                              borderRadius: 6,
-                                              border: "1px solid var(--primary)",
-                                              background: "var(--surface)",
-                                              color: "var(--text)",
-                                              fontSize: 13.5,
-                                              outline: "none",
-                                            }}
-                                            onBlur={() => setEditingSectorPrinterId(null)}
-                                            onChange={async (evt) => {
-                                              const value = evt.target.value;
-                                              if (value === "prompt:new") {
-                                                const nome = window.prompt("Digite o nome do novo setor / local:", "");
-                                                if (!nome) {
-                                                  setEditingSectorPrinterId(null);
-                                                  return;
-                                                }
-                                                await handleChangeSector(c.id, printer, `new:${nome}`);
-                                              } else {
-                                                await handleChangeSector(c.id, printer, value);
-                                              }
-                                            }}
-                                          >
-                                            <option value="">❌ Sem setor / não definido</option>
-                                            <optgroup label="Setores existentes">
-                                              {(clientLocations[c.id] || []).map((loc) => (
-                                                <option key={loc.id} value={String(loc.id)}>
-                                                  {loc.sector || loc.name}
-                                                </option>
-                                              ))}
-                                            </optgroup>
-                                            <optgroup label="Ações">
-                                              <option value="prompt:new">➕ Criar novo setor…</option>
-                                            </optgroup>
-                                          </select>
-                                        ) : (
-                                          <button
-                                            type="button"
-                                            disabled={isSavingSector || !canEditSector}
-                                            title={canEditSector ? "Clique para alterar o setor" : "Você não tem permissão para editar"}
-                                            onClick={() => setEditingSectorPrinterId(printer.id)}
-                                            style={{
-                                              width: "100%",
-                                              textAlign: "left",
-                                              padding: "0.25rem 0.5rem",
-                                              borderRadius: 6,
-                                              border: "1px dashed transparent",
-                                              background: "transparent",
-                                              cursor: canEditSector ? "pointer" : "default",
-                                              color: "var(--text)",
-                                              fontSize: 13.5,
-                                              transition: "border-color .15s, background .15s",
-                                            }}
-                                            onMouseEnter={(e) => {
-                                              if (canEditSector && !isSavingSector) {
-                                                (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border)";
-                                                (e.currentTarget as HTMLButtonElement).style.background = "var(--surface)";
-                                              }
-                                            }}
-                                            onMouseLeave={(e) => {
-                                              (e.currentTarget as HTMLButtonElement).style.borderColor = "transparent";
-                                              (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-                                            }}
-                                          >
-                                            {isSavingSector ? "💾 Salvando…" : currentSectorLabel}
-                                          </button>
-                                        )}
-                                      </td>
-                                      <td>{printer.ip_address}</td>
-                                      <td>{printer.serial_number || "—"}</td>
-                                      <td>
-                                        <span className={`badge ${printer.status}`}>{printer.status}</span>
-                                      </td>
-                                      <td style={{ lineHeight: 1.35, fontSize: "0.92rem" }}>
-                                        <div>
-                                          <strong style={{ fontSize: "1rem" }}>
-                                            {formatNumberBrasil(printer.pages_total)}
-                                          </strong>
-                                          <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>total</span>
-                                        </div>
-                                        {isColorPrinter ? (
-                                          <div style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginTop: 2 }}>
-                                            <span style={{ color: "var(--text)" }}>
-                                              {formatNumberBrasil(printer.pages_bw)}
-                                            </span>{" "}
-                                            preto ·{" "}
-                                            <span style={{ color: "var(--primary)" }}>
-                                              {formatNumberBrasil(printer.pages_color)}
-                                            </span>{" "}
-                                            cor
-                                          </div>
-                                        ) : Number(printer.pages_bw || 0) > 0 ? (
-                                          <div style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginTop: 2 }}>
-                                            {formatNumberBrasil(printer.pages_bw)} preto &amp; branco
-                                          </div>
-                                        ) : null}
-                                      </td>
-                                      <td>
-                                        {formatDateTimeBrasil(printer.last_seen)}
-                                      </td>
-                                      {canEditSector && (
-                                        <td>
-                                          <button
-                                            type="button"
-                                            className="btn btn-secondary"
-                                            style={{
-                                              color: "var(--danger)",
-                                              borderColor: "transparent",
-                                              background: "transparent",
-                                              padding: "0.3rem 0.6rem",
-                                              fontSize: 13,
-                                              display: "inline-flex",
-                                              alignItems: "center",
-                                              gap: 4,
-                                            }}
-                                            title="Remover esta impressora do monitoramento"
-                                            onMouseEnter={(e) => {
-                                              (e.currentTarget as HTMLButtonElement).style.background =
-                                                "rgba(239, 68, 68, 0.08)";
-                                              (e.currentTarget as HTMLButtonElement).style.borderColor =
-                                                "rgba(239, 68, 68, 0.3)";
-                                            }}
-                                            onMouseLeave={(e) => {
-                                              (e.currentTarget as HTMLButtonElement).style.borderColor =
-                                                "transparent";
-                                              (e.currentTarget as HTMLButtonElement).style.background =
-                                                "transparent";
-                                            }}
-                                            onClick={() => handleRemovePrinter(c.id, printer)}
-                                          >
-                                            🗑️ Remover
-                                          </button>
-                                        </td>
-                                      )}
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  )}
                 </Fragment>
               ))}
             </tbody>
@@ -1131,6 +963,400 @@ Qualquer dúvida é só chamar a gente!`}
           </div>
         </div>
       )}
+
+      {/* ============================================================
+           MODAL NÍVEL 1: CLIENTE (lista impressoras dele)
+           Julio pediu para ficar profissional = não inline, modal!
+         ============================================================ */}
+      {(() => {
+        const clienteModal = clienteModalId ? clients.find((c) => c.id === clienteModalId) : null;
+        if (!clienteModal) return null;
+        return (
+          <div className="modal-overlay" onClick={handleFecharModalCliente}>
+            <div
+              className="modal"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: "min(1050px, 95vw)",
+                maxHeight: "90vh",
+                display: "flex",
+                flexDirection: "column",
+                padding: 0,
+              }}
+            >
+              {/* ===== HEADER MODAL CLIENTE ===== */}
+              <div
+                style={{
+                  padding: "1.1rem 1.4rem",
+                  borderBottom: "1px solid var(--border)",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: "1rem",
+                  flexWrap: "wrap",
+                  background: "var(--surface)",
+                  position: "sticky",
+                  top: 0,
+                  zIndex: 2,
+                }}
+              >
+                <div>
+                  <h3 style={{ margin: 0, fontSize: "1.3rem", display: "flex", alignItems: "center", gap: 8 }}>
+                    🏢 {clienteModal.name}
+                    <span className={`badge ${clienteModal.active ? "online" : "offline"}`} style={{ marginLeft: 6 }}>
+                      {clienteModal.active ? "Ativo" : "Inativo"}
+                    </span>
+                  </h3>
+                  <div style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginTop: 4 }}>
+                    {clienteModal.partner_name && <span>Parceiro: <strong style={{ color: "var(--text)" }}>{clienteModal.partner_name}</strong> · </span>}
+                    ID #{clienteModal.id}
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                  {clienteModal.client_code && (
+                    <>
+                      <div
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          padding: "0.3rem 0.7rem",
+                          borderRadius: 8,
+                          background: "rgba(16,185,129,0.1)",
+                          border: "1px solid rgba(16,185,129,0.25)",
+                          fontSize: 13,
+                        }}
+                      >
+                        <span style={{ color: "var(--text-muted)" }}>🎫</span>
+                        <span style={{ fontFamily: "'Courier New', ui-monospace, monospace", fontWeight: 800, color: "rgb(16,185,129)" }}>
+                          {clienteModal.client_code}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ fontSize: 12, padding: "0.25rem 0.6rem" }}
+                        onClick={() => copyText(clienteModal.client_code!)}
+                      >
+                        📋 Copiar código
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ fontSize: 12, padding: "0.25rem 0.6rem" }}
+                        onClick={() => copyText(buildPairingMessage(clienteModal))}
+                      >
+                        📩 Copiar mensagem
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ fontSize: 12, padding: "0.3rem 0.7rem" }}
+                    onClick={() => handleAbrirModalCliente(clienteModal.id)}
+                    disabled={loadingClienteModal}
+                  >
+                    {loadingClienteModal ? "Carregando…" : "🔄 Atualizar"}
+                  </button>
+                  <button className="btn btn-ghost" onClick={handleFecharModalCliente} title="Fechar">✕</button>
+                </div>
+              </div>
+
+              {/* ===== RESUMO CLIENTE ===== */}
+              <div
+                style={{
+                  padding: "0.9rem 1.4rem",
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+                  gap: 10,
+                  borderBottom: "1px solid var(--border)",
+                  background: "var(--surface-2)",
+                }}
+              >
+                <MiniInfo label="CNPJ" value={clienteModal.cnpj || "—"} />
+                <MiniInfo label="Contato" value={clienteModal.contact_name || "—"} />
+                <MiniInfo label="E-mail" value={clienteModal.contact_email || "—"} />
+                <MiniInfo label="🎫 Código" value={clienteModal.client_code || "—"} mono />
+              </div>
+
+              {/* ===== CORPO: TABELA IMPRESSORAS ===== */}
+              <div style={{ padding: "1rem 1.4rem", overflowY: "auto", flex: 1 }}>
+                <div style={{ fontWeight: 600, marginBottom: "0.6rem", fontSize: "0.95rem" }}>
+                  🖨️ Impressoras deste cliente
+                  <span style={{ fontWeight: 400, color: "var(--text-muted)", fontSize: "0.85rem", marginLeft: 8 }}>
+                    ({loadingClienteModal ? "…" : impressorasClienteModal.length} cadastradas)
+                  </span>
+                  <span style={{ fontWeight: 400, color: "var(--text-muted)", fontSize: "0.8rem", marginLeft: 16 }}>
+                    💡 Clique no <strong>modelo da impressora</strong> para abrir a ficha completa com histórico.
+                  </span>
+                </div>
+
+                {loadingClienteModal ? (
+                  <div className="loading" style={{ padding: "2rem 0" }}>Carregando impressoras…</div>
+                ) : impressorasClienteModal.length === 0 ? (
+                  <div style={{ color: "var(--text-muted)", padding: "1.5rem 1rem", textAlign: "center", border: "1px dashed var(--border)", borderRadius: 10 }}>
+                    Nenhuma impressora encontrada para este cliente ainda.
+                    {canManageClients && (
+                      <div style={{ marginTop: "0.75rem" }}>
+                        <button
+                          className="btn btn-secondary"
+                          style={{ fontSize: 13, padding: "0.3rem 0.7rem" }}
+                          onClick={() => { handleFecharModalCliente(); openPairing(clienteModal); }}
+                        >
+                          🔗 Gerar pareamento para instalar o agente
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <table style={{ width: "100%" }}>
+                    <thead>
+                      <tr>
+                        <th>Modelo (clique para detalhes)</th>
+                        <th>Setor</th>
+                        <th>IP</th>
+                        <th>Serial</th>
+                        <th>Status</th>
+                        <th>
+                          Contadores
+                          <div style={{ fontWeight: 400, fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2 }}>
+                            Total · Preto · Cor
+                          </div>
+                        </th>
+                        <th>Última coleta</th>
+                        {canEditSector && <th style={{ width: 110 }}>Ações</th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {impressorasClienteModal.map((printer) => {
+                        const isEditingSector = editingSectorPrinterId === printer.id;
+                        const isSavingSector = savingSectorPrinterId === printer.id;
+                        const currentSectorLabel = getPrinterSectorModal(printer);
+                        const isColorPrinter =
+                          !!printer.toner_cyan ||
+                          !!printer.toner_magenta ||
+                          !!printer.toner_yellow ||
+                          Number(printer.pages_color || 0) > 0;
+
+                        return (
+                          <tr key={printer.id}>
+                            {/* ===== MODELO CLICÁVEL (abre ModalPrinter) ===== */}
+                            <td>
+                              <button
+                                type="button"
+                                onClick={() => setPrinterModalId(printer.id)}
+                                title="Abrir ficha completa desta impressora (contadores, toners, histórico)"
+                                style={{
+                                  background: "transparent",
+                                  border: "none",
+                                  padding: "0.25rem 0.5rem",
+                                  margin: "-0.25rem -0.5rem",
+                                  borderRadius: 6,
+                                  cursor: "pointer",
+                                  textAlign: "left",
+                                  color: "var(--primary)",
+                                  fontWeight: 600,
+                                  transition: "background .15s",
+                                }}
+                                onMouseEnter={(e) => {
+                                  (e.currentTarget as HTMLButtonElement).style.background = "var(--surface-hover)";
+                                }}
+                                onMouseLeave={(e) => {
+                                  (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                                }}
+                              >
+                                📄 {printer.model || "—"}
+                                {printer.manufacturer && (
+                                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 400 }}>
+                                    {printer.manufacturer}
+                                  </div>
+                                )}
+                              </button>
+                            </td>
+
+                            {/* ===== SETOR EDITÁVEL ===== */}
+                            <td style={{ minWidth: 220 }}>
+                              {isEditingSector ? (
+                                <select
+                                  autoFocus
+                                  disabled={isSavingSector}
+                                  defaultValue={printer.location_id ? String(printer.location_id) : ""}
+                                  style={{
+                                    width: "100%",
+                                    padding: "0.35rem 0.5rem",
+                                    borderRadius: 6,
+                                    border: "1px solid var(--primary)",
+                                    background: "var(--surface)",
+                                    color: "var(--text)",
+                                    fontSize: 13.5,
+                                    outline: "none",
+                                  }}
+                                  onBlur={() => setEditingSectorPrinterId(null)}
+                                  onChange={async (evt) => {
+                                    const value = evt.target.value;
+                                    if (value === "prompt:new") {
+                                      const nome = window.prompt("Digite o nome do novo setor / local:", "");
+                                      if (!nome) {
+                                        setEditingSectorPrinterId(null);
+                                        return;
+                                      }
+                                      await handleChangeSectorModal(printer, `new:${nome}`);
+                                    } else {
+                                      await handleChangeSectorModal(printer, value);
+                                    }
+                                  }}
+                                >
+                                  <option value="">❌ Sem setor / não definido</option>
+                                  <optgroup label="Setores existentes">
+                                    {locaisClienteModal.map((loc) => (
+                                      <option key={loc.id} value={String(loc.id)}>
+                                        {loc.sector || loc.name}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                  <optgroup label="Ações">
+                                    <option value="prompt:new">➕ Criar novo setor…</option>
+                                  </optgroup>
+                                </select>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={isSavingSector || !canEditSector}
+                                  title={canEditSector ? "Clique para alterar o setor" : "Sem permissão"}
+                                  onClick={() => setEditingSectorPrinterId(printer.id)}
+                                  style={{
+                                    width: "100%",
+                                    textAlign: "left",
+                                    padding: "0.25rem 0.5rem",
+                                    borderRadius: 6,
+                                    border: "1px dashed transparent",
+                                    background: "transparent",
+                                    cursor: canEditSector ? "pointer" : "default",
+                                    color: "var(--text)",
+                                    fontSize: 13.5,
+                                    transition: "border-color .15s, background .15s",
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    if (canEditSector && !isSavingSector) {
+                                      (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border)";
+                                      (e.currentTarget as HTMLButtonElement).style.background = "var(--surface)";
+                                    }
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    (e.currentTarget as HTMLButtonElement).style.borderColor = "transparent";
+                                    (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                                  }}
+                                >
+                                  {isSavingSector ? "💾 Salvando…" : currentSectorLabel}
+                                </button>
+                              )}
+                            </td>
+
+                            <td>{printer.ip_address}</td>
+                            <td>{printer.serial_number || "—"}</td>
+                            <td>
+                              <span className={`badge ${printer.status}`}>{printer.status}</span>
+                            </td>
+
+                            {/* ===== CONTADORES 3 NÍVEIS ===== */}
+                            <td style={{ lineHeight: 1.35, fontSize: "0.92rem" }}>
+                              <div>
+                                <strong style={{ fontSize: "1rem" }}>
+                                  {formatNumberBrasil(printer.pages_total)}
+                                </strong>
+                                <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>total</span>
+                              </div>
+                              {isColorPrinter ? (
+                                <div style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginTop: 2 }}>
+                                  <span style={{ color: "var(--text)" }}>
+                                    {formatNumberBrasil(printer.pages_bw)}
+                                  </span>{" "}
+                                  preto ·{" "}
+                                  <span style={{ color: "var(--primary)" }}>
+                                    {formatNumberBrasil(printer.pages_color)}
+                                  </span>{" "}
+                                  cor
+                                </div>
+                              ) : Number(printer.pages_bw || 0) > 0 ? (
+                                <div style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginTop: 2 }}>
+                                  {formatNumberBrasil(printer.pages_bw)} preto &amp; branco
+                                </div>
+                              ) : null}
+                            </td>
+
+                            <td>{formatDateTimeBrasil(printer.last_seen)}</td>
+
+                            {/* ===== AÇÕES ===== */}
+                            {canEditSector && (
+                              <td>
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary"
+                                  style={{
+                                    color: "var(--danger)",
+                                    borderColor: "transparent",
+                                    background: "transparent",
+                                    padding: "0.3rem 0.6rem",
+                                    fontSize: 13,
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 4,
+                                  }}
+                                  title="Remover esta impressora do monitoramento"
+                                  onMouseEnter={(e) => {
+                                    (e.currentTarget as HTMLButtonElement).style.background =
+                                      "rgba(239, 68, 68, 0.08)";
+                                    (e.currentTarget as HTMLButtonElement).style.borderColor =
+                                      "rgba(239, 68, 68, 0.3)";
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    (e.currentTarget as HTMLButtonElement).style.borderColor =
+                                      "transparent";
+                                    (e.currentTarget as HTMLButtonElement).style.background =
+                                      "transparent";
+                                  }}
+                                  onClick={() => handleRemovePrinterModal(printer)}
+                                >
+                                  🗑️ Remover
+                                </button>
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ============================================================
+           MODAL NÍVEL 2: FICHA COMPLETA DA IMPRESSORA (Reutilizável)
+           Usa componente ModalPrinter.tsx já criado profissionalmente!
+         ============================================================ */}
+      <ModalPrinter printerId={printerModalId} onClose={() => setPrinterModalId(null)} />
     </>
+  );
+}
+
+/* ============ Helpers internos Clientes.tsx ============ */
+function MiniInfo({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div style={{ fontSize: 13 }}>
+      <div style={{ color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>{label}</div>
+      <div
+        style={{
+          fontWeight: 600,
+          color: "var(--text)",
+          fontFamily: mono ? "'Courier New', ui-monospace, monospace" : undefined,
+        }}
+      >
+        {value}
+      </div>
+    </div>
   );
 }

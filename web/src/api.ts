@@ -288,6 +288,10 @@ export const api = {
       q ? `/api/printers?${q}` : "/api/printers",
     );
   },
+  getPrinterById: (printerId: number) =>
+    request<import("./types").Printer>(`/api/printers/${printerId}`),
+  getPrinterReadings: (printerId: number, limit = 50) =>
+    request<import("./types").Reading[]>(`/api/printers/${printerId}/readings?limit=${limit}`),
   getAlerts: (resolved?: boolean) =>
     request<import("./types").Alert[]>(
       resolved !== undefined ? `/api/alerts?resolved=${resolved}` : "/api/alerts",

@@ -214,6 +214,7 @@ class PrinterUpdate(BaseModel):
 class PrinterOut(PrinterBase):
     id: int
     client_id: int
+    location_id: Optional[int] = None
     status: str
     pages_total: int
     pages_bw: int
@@ -230,6 +231,24 @@ class PrinterOut(PrinterBase):
     client_name: str = ""
     partner_id: Optional[int] = None
     partner_name: Optional[str] = None
+    location_name: Optional[str] = None
+    location_sector: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class ReadingOut(BaseModel):
+    id: int
+    printer_id: int
+    pages_total: int
+    pages_bw: int
+    pages_color: int
+    toner_black: Optional[float] = None
+    toner_cyan: Optional[float] = None
+    toner_magenta: Optional[float] = None
+    toner_yellow: Optional[float] = None
+    status: str
+    collected_at: datetime
 
     model_config = {"from_attributes": True}
 

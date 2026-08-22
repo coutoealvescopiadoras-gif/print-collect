@@ -3,6 +3,7 @@ import { api } from "../api";
 import type { Partner, Printer } from "../types";
 import { formatDateTimeBrasil, formatNumberBrasil } from "../utils";
 import { useAuth } from "../context/AuthContext";
+import ModalPrinter from "../components/ModalPrinter";
 
 function TonerBar({ level }: { level: number | null }) {
   if (level === null) return <span>—</span>;
@@ -38,6 +39,7 @@ export default function Impressoras() {
   const [partnerId, setPartnerId] = useState<number | null>(null);
   const [searchText, setSearchText] = useState<string>("");
   const [searchDebounced, setSearchDebounced] = useState<string>("");
+  const [selectedPrinterId, setSelectedPrinterId] = useState<number | null>(null);
 
   // Debounce do texto de pesquisa (1 espera 400ms apos digitar para atualizar listagem
   useEffect(() => {
@@ -333,12 +335,36 @@ export default function Impressoras() {
                   </td>
                 )}
                   <td>
-                    <div>{p.model || "—"}</div>
-                    {p.manufacturer && (
-                      <small style={{ color: "var(--text-muted)" }}>
-                        {p.manufacturer}
-                      </small>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPrinterId(p.id)}
+                      title="Abrir ficha completa com contadores, toners e histórico"
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        padding: "0.25rem 0.5rem",
+                        margin: "-0.25rem -0.5rem",
+                        borderRadius: 6,
+                        cursor: "pointer",
+                        textAlign: "left",
+                        color: "var(--primary)",
+                        fontWeight: 600,
+                        transition: "background .15s",
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLButtonElement).style.background = "var(--surface-hover)";
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                      }}
+                    >
+                      📄 {p.model || "—"}
+                      {p.manufacturer && (
+                        <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 400 }}>
+                          {p.manufacturer}
+                        </div>
+                      )}
+                    </button>
                   </td>
                   <td>{p.ip_address}</td>
                   <td>{p.serial_number || "—"}</td>
@@ -405,6 +431,9 @@ export default function Impressoras() {
           </table>
         )}
       </div>
+
+      {/* Ficha Completa Impressora (Modal Profissional) */}
+      <ModalPrinter printerId={selectedPrinterId} onClose={() => setSelectedPrinterId(null)} />
     </>
   );
 }

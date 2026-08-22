@@ -1123,10 +1123,106 @@ def list_printers(
                         _p = db.query(Partner).filter(Partner.id == cli.partner_id).first()
                         p.partner_name = _p.name if _p else None
                         partners_cache[cli.partner_id] = p.partner_name or ""
+            # Tambem adiciona nome do setor/location se tiver
+            try:
+                if p.location_id and getattr(p, "location", None) is not None:
+                    loc = p.location
+                    if loc:
+                        p.location_name = (getattr(loc, "name", None) or None)
+                        p.location_sector = (getattr(loc, "sector", None) or None)
+            except Exception:
+                pass
         except Exception:
             if not getattr(p, "client_name", ""):
                 p.client_name = ""
     return printers
+
+
+# ==============================================================
+# NOVA FEATURE Julio Modais Hierarquicos: Detalhe INDIVIDUAL impressora
+# ==============================================================
+@router.get("/printers/{printer_id}", response_model=PrinterOut)
+def get_printer_detail(
+    printer_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Abre FICHA DETALHADA de 1 impressora (para modal no front).
+    Verifica permissões de escopo (client/partner) igual list_printers."""
+    _ensure_printer_ignored_column(db)
+
+    # Query com JOIN para poder checar permissões
+    query = (
+        db.query(Printer)
+        .join(Client, Client.id == Printer.client_id, isouter=False)
+        .filter(Printer.id == printer_id)
+    )
+    if _is_partner_admin(current_user):
+        partner_id_forced = _required_partner_id(current_user)
+        query = query.filter(Client.partner_id == partner_id_forced)
+
+    printer = query.first()
+    if printer is None:
+        raise HTTPException(status_code=404, detail=f"Printer #{printer_id} nao encontrado (ou sem permissao para este usuario).")
+
+    scoped_client_id = _scoped_client_id(current_user, None)
+    if scoped_client_id is not None and int(printer.client_id or 0) != int(scoped_client_id):
+        raise HTTPException(status_code=404, detail=f"Printer #{printer_id} nao encontrado (ou sem permissao).")
+
+    # Preenche campos dinamicos (mesma logica list_printers)
+    try:
+        from server.app.database import Partner
+    except Exception:
+        Partner = None
+    try:
+        cli = printer.client
+        if cli:
+            printer.client_name = cli.name or ""
+            printer.partner_id = cli.partner_id
+            if cli.partner_id and cli.partner:
+                printer.partner_name = cli.partner.name or None
+            elif cli.partner_id and Partner is not None:
+                _p = db.query(Partner).filter(Partner.id == cli.partner_id).first()
+                printer.partner_name = _p.name if _p else None
+    except Exception:
+        printer.client_name = printer.client_name or ""
+    # Location sector
+    try:
+        if printer.location_id and getattr(printer, "location", None) is not None:
+            loc = printer.location
+            if loc:
+                printer.location_name = (getattr(loc, "name", None) or None)
+                printer.location_sector = (getattr(loc, "sector", None) or None)
+    except Exception:
+        pass
+    return printer
+
+
+# ==============================================================
+# NOVA FEATURE Julio: HISTORICO ultimas N Leituras (Readings) impressora
+# ==============================================================
+@router.get("/printers/{printer_id}/readings", response_model=list[ReadingOut])
+def get_printer_readings(
+    printer_id: int,
+    limit: int = Query(default=50, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Retorna ultimas N leituras de 1 impressora (mais novas primeiro collected_at DESC).
+    Usado no modal da impressora para mostrar grafico / tabela historica de contadores."""
+    # 1) Primeiro valida se a impressora EXISTE e o USUARIO TEM PERMISSAO (reutiliza endpoint acima!)
+    printer = get_printer_detail(printer_id=printer_id, db=db, current_user=current_user)
+    if printer is None:
+        raise HTTPException(status_code=404, detail="Printer nao encontrado")
+
+    rows = (
+        db.query(Reading)
+        .filter(Reading.printer_id == printer_id)
+        .order_by(Reading.collected_at.desc(), Reading.id.desc())
+        .limit(int(limit))
+        .all()
+    )
+    return list(rows or [])
 
 
 @router.post("/printers", response_model=PrinterOut, status_code=201)
