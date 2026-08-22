@@ -30,11 +30,6 @@ export default function Clientes() {
   const [editingClientId, setEditingClientId] = useState<number | null>(null);
   const [form, setForm] = useState({ name: "", cnpj: "", contact_name: "", contact_email: "" });
   const [deletingClientId, setDeletingClientId] = useState<number | null>(null);
-  const [expandedClientId, setExpandedClientId] = useState<number | null>(null);
-  const [clientPrinters, setClientPrinters] = useState<Record<number, Printer[]>>({});
-  const [clientLocations, setClientLocations] = useState<Record<number, Location[]>>({});
-  const [clientPrintersLoadedAt, setClientPrintersLoadedAt] = useState<Record<number, number>>({});
-  const [loadingPrintersClientId, setLoadingPrintersClientId] = useState<number | null>(null);
   const [editingSectorPrinterId, setEditingSectorPrinterId] = useState<number | null>(null);
   const [savingSectorPrinterId, setSavingSectorPrinterId] = useState<number | null>(null);
   const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null);
@@ -87,26 +82,6 @@ export default function Clientes() {
     if (searchDebounced.trim()) params.search = searchDebounced.trim();
     const data = await api.getClients(params);
     setClients(data);
-
-    const alreadyExpandedIds = Object.keys(clientPrinters).map(Number);
-    if (alreadyExpandedIds.length > 0) {
-      const results = await Promise.all(
-        alreadyExpandedIds.map((cid) =>
-          Promise.all([
-            api.getPrinters({ client_id: cid }),
-            api.getLocations(cid),
-          ]),
-        ),
-      );
-      const newPrinters: Record<number, Printer[]> = {};
-      const newLocations: Record<number, Location[]> = {};
-      alreadyExpandedIds.forEach((cid, idx) => {
-        newPrinters[cid] = results[idx][0];
-        newLocations[cid] = results[idx][1];
-      });
-      setClientPrinters((current) => ({ ...current, ...newPrinters }));
-      setClientLocations((current) => ({ ...current, ...newLocations }));
-    }
 
     setLastRefreshAt(new Date());
   };
@@ -177,122 +152,10 @@ export default function Clientes() {
     try {
       setDeletingClientId(clientId);
       await api.deleteClient(clientId);
-      if (expandedClientId === clientId) {
-        setExpandedClientId(null);
-      }
       load();
     } finally {
       setDeletingClientId(null);
     }
-  };
-
-  const getPrinterSector = (clientId: number, printer: Printer) => {
-    if (!printer.location_id) return "—";
-    const location = (clientLocations[clientId] || []).find((item) => item.id === printer.location_id);
-    return location ? (location.sector || location.name || "—") : "—";
-  };
-
-  const handleChangeSector = async (
-    clientId: number,
-    printer: Printer,
-    rawValue: string,
-  ) => {
-    try {
-      setSavingSectorPrinterId(printer.id);
-
-      let targetLocationId: number | null = null;
-
-      if (rawValue === "") {
-        targetLocationId = null;
-      } else if (rawValue.startsWith("new:")) {
-        const sectorName = rawValue.slice(4).trim();
-        if (!sectorName) return;
-        const created = await api.createLocation({
-          client_id: clientId,
-          name: sectorName,
-          sector: sectorName,
-        });
-        setClientLocations((current) => {
-          const list = current[clientId] || [];
-          return { ...current, [clientId]: [...list, created] };
-        });
-        targetLocationId = created.id;
-      } else {
-        targetLocationId = Number(rawValue) || null;
-      }
-
-      const updatedPrinter = await api.updatePrinter(printer.id, {
-        location_id: targetLocationId,
-      });
-      setClientPrinters((current) => {
-        const list = current[clientId] || [];
-        return {
-          ...current,
-          [clientId]: list.map((p) => (p.id === printer.id ? { ...p, ...updatedPrinter } : p)),
-        };
-      });
-    } catch (e: any) {
-      window.alert("Erro ao salvar setor: " + String(e?.message || e));
-    } finally {
-      setEditingSectorPrinterId(null);
-      setSavingSectorPrinterId(null);
-    }
-  };
-
-  const handleRemovePrinter = async (clientId: number, printer: Printer) => {
-    const model = printer.model || printer.ip_address || "esta impressora";
-    const ok = window.confirm(
-      `Confirma REMOVER "${model}"?\n\n` +
-        `Ela NÃO será mais monitorada e NÃO voltará a aparecer automaticamente, mesmo que seja encontrada na rede na próxima coleta.\n\n` +
-        `(Se mudar de ideia depois, crie uma impressora manualmente com o mesmo IP/serial, ou contate o suporte.)`,
-    );
-    if (!ok) return;
-
-    try {
-      await api.ignorePrinter(printer.id);
-      setClientPrinters((current) => {
-        const list = current[clientId] || [];
-        return {
-          ...current,
-          [clientId]: list.filter((p) => p.id !== printer.id),
-        };
-      });
-    } catch (e: any) {
-      window.alert("Erro ao remover impressora: " + String(e?.message || e));
-    }
-  };
-
-  const loadClientPrintersOnce = async (clientId: number) => {
-    try {
-      setLoadingPrintersClientId(clientId);
-      const [printers, locations] = await Promise.all([
-        api.getPrinters({ client_id: clientId }),
-        api.getLocations(clientId),
-      ]);
-      setClientPrinters((current) => ({ ...current, [clientId]: printers }));
-      setClientLocations((current) => ({ ...current, [clientId]: locations }));
-      setClientPrintersLoadedAt((current) => ({ ...current, [clientId]: Date.now() }));
-    } finally {
-      setLoadingPrintersClientId(null);
-    }
-  };
-
-  const toggleClientPrinters = async (clientId: number) => {
-    if (expandedClientId === clientId) {
-      setExpandedClientId(null);
-      return;
-    }
-    setExpandedClientId(clientId);
-
-    const hasCache = clientId in clientPrinters;
-    const cacheEmpty = Array.isArray(clientPrinters[clientId]) && clientPrinters[clientId].length === 0;
-    const cacheAgeSec = hasCache
-      ? (Date.now() - (clientPrintersLoadedAt[clientId] || 0)) / 1000
-      : Number.POSITIVE_INFINITY;
-    const cacheStale = !hasCache || (cacheEmpty && cacheAgeSec > 10) || cacheAgeSec > 10 * 60;
-
-    if (!cacheStale) return;
-    await loadClientPrintersOnce(clientId);
   };
 
   // ============ MODAL CLIENTE (Nível 1) ============
