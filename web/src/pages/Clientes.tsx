@@ -934,24 +934,7 @@ Qualquer dúvida é só chamar a gente!`}
                 </div>
               </div>
 
-              {/* ===== RESUMO CLIENTE ===== */}
-              <div
-                style={{
-                  padding: "0.9rem 1.4rem",
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
-                  gap: 10,
-                  borderBottom: "1px solid var(--border)",
-                  background: "var(--surface-2)",
-                }}
-              >
-                <MiniInfo label="CNPJ" value={clienteModal.cnpj || "—"} />
-                <MiniInfo label="Contato" value={clienteModal.contact_name || "—"} />
-                <MiniInfo label="E-mail" value={clienteModal.contact_email || "—"} />
-                <MiniInfo label="🎫 Código" value={clienteModal.client_code || "—"} mono />
-              </div>
-
-              {/* ===== CORPO: TABELA IMPRESSORAS ===== */}
+              {/* ===== CORPO: TABELA IMPRESSORAS (Apenas lista do cliente, Julio pediu focar nisso!) ===== */}
               <div style={{ padding: "1rem 1.4rem", overflowY: "auto", flex: 1 }}>
                 <div style={{ fontWeight: 600, marginBottom: "0.6rem", fontSize: "0.95rem" }}>
                   🖨️ Impressoras deste cliente
