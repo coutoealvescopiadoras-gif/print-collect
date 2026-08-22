@@ -98,7 +98,6 @@ export default function Clientes() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user]);
 
-  const hasAnyPartnerVisible = clients.some((c) => c.partner_name && c.partner_id);
   const temFiltroAplicado =
     !ownOnly || partnerId !== null || searchDebounced.trim().length > 0;
 
