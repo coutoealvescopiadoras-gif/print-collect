@@ -28,7 +28,7 @@ export default function Clientes() {
   const [clients, setClients] = useState<Client[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [editingClientId, setEditingClientId] = useState<number | null>(null);
-  const [form, setForm] = useState({ name: "", cnpj: "", contact_name: "", contact_email: "" });
+  const [form, setForm] = useState({ name: "", cnpj: "", contact_name: "", contact_phone: "", contact_email: "" });
   const [deletingClientId, setDeletingClientId] = useState<number | null>(null);
   const [editingSectorPrinterId, setEditingSectorPrinterId] = useState<number | null>(null);
   const [savingSectorPrinterId, setSavingSectorPrinterId] = useState<number | null>(null);
@@ -123,6 +123,7 @@ export default function Clientes() {
       name: client.name || "",
       cnpj: client.cnpj || "",
       contact_name: client.contact_name || "",
+      contact_phone: client.contact_phone || "",
       contact_email: client.contact_email || "",
     });
     setShowModal(true);
@@ -131,7 +132,7 @@ export default function Clientes() {
   const handleCloseModal = () => {
     setShowModal(false);
     setEditingClientId(null);
-    setForm({ name: "", cnpj: "", contact_name: "", contact_email: "" });
+    setForm({ name: "", cnpj: "", contact_name: "", contact_phone: "", contact_email: "" });
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -508,7 +509,7 @@ export default function Clientes() {
                 <th>Nome</th>
                 <th>CNPJ</th>
                 <th>Contato</th>
-                <th>📞 Telefone</th>
+                <th>Telefone</th>
                 <th>E-mail</th>
                 <th>Status</th>
                 <th style={{ width: 260, textAlign: "right" }}>Ações</th>
@@ -600,6 +601,10 @@ export default function Clientes() {
               <div className="form-group">
                 <label>Contato</label>
                 <input value={form.contact_name} onChange={(e) => setForm({ ...form, contact_name: e.target.value })} />
+              </div>
+              <div className="form-group">
+                <label>Telefone</label>
+                <input placeholder="(11) 99999-0000" value={form.contact_phone} onChange={(e) => setForm({ ...form, contact_phone: e.target.value })} />
               </div>
               <div className="form-group">
                 <label>E-mail</label>
