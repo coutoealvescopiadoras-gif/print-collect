@@ -14,7 +14,7 @@ function isVercelPreview(hostname: string) {
   return /\.vercel\.app$/.test(hostname) || /-git-[a-f0-9]+-/.test(hostname);
 }
 
-function resolveBaseUrl() {
+export function resolveBaseUrl() {
   const configuredBase = (import.meta.env.VITE_API_URL || "").trim();
 
   if (configuredBase) {

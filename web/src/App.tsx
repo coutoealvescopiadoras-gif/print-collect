@@ -9,6 +9,7 @@ import Alertas from "./pages/Alertas";
 import Agentes from "./pages/Agentes";
 import Usuarios from "./pages/Usuarios";
 import Revendedores from "./pages/Revendedores";
+import Diagnostico from "./pages/Diagnostico";
 import { Login } from "./pages/Login";
 
 function ProtectedRoutes() {
@@ -68,6 +69,7 @@ export function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+          <Route path="/diagnostico" element={<Diagnostico />} />
           <Route path="/login" element={<LoginRoute />} />
           <Route element={<ProtectedRoutes />}>
             <Route path="/" element={<Layout />}>
