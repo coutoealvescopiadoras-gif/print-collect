@@ -457,7 +457,6 @@ export default function Clientes() {
             <thead>
               <tr>
                 <th>Nome</th>
-                {(isSuperadmin || hasAnyPartnerVisible) && <th>Parceiro</th>}
                 <th>CNPJ</th>
                 <th>Contato</th>
                 <th>E-mail</th>
