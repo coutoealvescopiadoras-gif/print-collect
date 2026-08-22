@@ -2162,6 +2162,118 @@ def _auto_resolve_toner_alerts_for_printer(db: Session, printer: Printer) -> int
     return closed
 
 
+def _auto_mark_online_and_close_offline_alerts(db: Session, printer: Printer) -> int:
+    """Quando AGENTE COLETOU a impressora AGORA (ela voltou a ter comunicacao):
+    (1) Se status estava offline → muda para ONLINE.
+    (2) Fecha automaticamente TODOS os alertas de \"sem comunicacao/offline\" dessa impressora.
+    Chamado DENTRO do loop de processamento da impressora (a cada coleta OK do agente).
+    """
+    closed = 0
+    try:
+        if not getattr(printer, "id", None):
+            return 0
+        ts = _now()
+        changed = False
+        if getattr(printer, "status", None) == "offline":
+            printer.status = "online"
+            changed = True
+        actives = (
+            db.query(Alert)
+            .filter(Alert.printer_id == printer.id, Alert.resolved == False, Alert.alert_type == "device")
+            .all()
+        )
+        for a in actives or []:
+            try:
+                msg_low = (a.message or "").lower()
+                if ("sem" in msg_low and ("comunic" in msg_low or "colet" in msg_low)) or ("offline" in msg_low) or ("inativo" in msg_low) or ("parada" in msg_low):
+                    a.resolved = True
+                    a.resolved_at = ts
+                    closed += 1
+            except Exception:
+                continue
+        if changed or closed > 0:
+            try:
+                db.flush()
+            except Exception:
+                try: db.rollback()
+                except Exception: pass
+                closed = 0
+    except Exception:
+        closed = 0
+    return closed
+
+
+def _sync_client_offline_3days_and_alerts(db: Session, client_id: int) -> int:
+    """PERCORRE TODAS as impressoras de 1 CLIENTE e:
+    (1) Se last_seen < (now - 3 DIAS) e NAO esta offline ainda → marca status=offline.
+    (2) Se marcou offline e NAO TEM alerta ativo igual → cria alerta device \"Impressora sem comunicação há X dias (modelo xxx)\".
+    (3) Tambem fecha alerta se a impressora voltou (nao vai cair aqui porque este sync eh por ultimo visto).
+    Chamado NO FIM do POST agent/report (antes do commit) para pegar TUDO do cliente,
+    inclusive impressoras que NAO foram coletadas NESTE report (as que estao paradas!).
+    """
+    OFFLINE_DAYS = 3
+    alerts_created = 0
+    try:
+        if not client_id:
+            return 0
+        ts = _now()
+        cutoff = ts - timedelta(days=OFFLINE_DAYS)
+        all_printers = (
+            db.query(Printer)
+            .filter(Printer.client_id == client_id, Printer.ignored == False)
+            .all()
+        )
+        for p in all_printers or []:
+            try:
+                last_ok = getattr(p, "last_seen", None)
+                if last_ok is None:
+                    last_ok = getattr(p, "created_at", None)
+                if last_ok is None:
+                    continue
+                is_offline = bool(last_ok < cutoff)
+                if is_offline and getattr(p, "status", None) != "offline":
+                    p.status = "offline"
+                    try: db.flush()
+                    except Exception:
+                        try: db.rollback()
+                        except Exception: pass
+                if is_offline:
+                    dias_sem = OFFLINE_DAYS
+                    try:
+                        dias_sem = max(OFFLINE_DAYS, (ts - last_ok).days)
+                    except Exception:
+                        dias_sem = OFFLINE_DAYS
+                    model = _s_strn(getattr(p, "model", None) or "", 80) or "Impressora"
+                    ip = _s_strn(getattr(p, "ip_address", None) or "", 50) or ""
+                    mensagem = f"{model} sem comunicação há {dias_sem} dias"
+                    if ip:
+                        mensagem += f" (IP: {ip})"
+                    existe = (
+                        db.query(Alert.id)
+                        .filter(Alert.printer_id == p.id, Alert.resolved == False, Alert.message == mensagem)
+                        .first()
+                    )
+                    if not existe:
+                        alerta = Alert(
+                            printer_id=p.id,
+                            alert_type="device",
+                            message=_s_strn(mensagem, 200),
+                            severity="warning" if dias_sem <= 7 else "critical",
+                        )
+                        db.add(alerta)
+                        try:
+                            db.flush()
+                            alerts_created += 1
+                        except Exception:
+                            try: db.rollback()
+                            except Exception: pass
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return alerts_created
+
+
 def _sync_alerts(db: Session, printer: Printer, alert_messages: list[str]) -> None:
     """Sincroniza alertas. TUDO envolto em try/except para NUNCA crashar
     (mesmo que um alerta tenha caractere proibido, ou SQL engasgue).
@@ -2760,6 +2872,16 @@ async def agent_report(
                     pass
 
                 # ================================================================
+                # 🔥 PASSO 3.2: SE IMPRESSORA VOLTOU (AGORA FOI COLETADA!)
+                #    - Se estava OFFLINE: muda status para ONLINE automaticamente!
+                #    - FECHA alertas de "sem comunicacao ha X dias" dela automaticamente
+                # ================================================================
+                try:
+                    _auto_mark_online_and_close_offline_alerts(db, printer)
+                except Exception:
+                    pass
+
+                # ================================================================
                 #  CRITICO: printer.id PRECISA EXISTIR (int valido > 0)
                 #  Se ainda for None aqui, Reading vai dar FK NULL.
                 #  Forcamos flush se necessario.
@@ -2858,6 +2980,21 @@ async def agent_report(
         try:
             if agent and getattr(agent, "client_id", None):
                 _cleanup_false_color_alerts(db, client_id=int(agent.client_id))
+        except Exception:
+            pass
+
+        # ================================================================
+        # 🔥 PASSO 6: SYNC GLOBAL OFFLINE 3 DIAS (Julio pediu!)
+        #    PERCORRE TUDO do cliente (INCLUSIVE impressoras NAO coletadas
+        #    NESTE report!) e:
+        #    (1) Se last_seen > 3 dias atras → status = offline automaticamente
+        #    (2) Cria alerta device automatico "Impressora sem comunicacao ha X dias"
+        #        (somente se NAO existir alerta IGUAL ativo ja para nao duplicar!)
+        #    Severidade: warning (3-7 dias) / critical (>=8 dias!)
+        # ================================================================
+        try:
+            if agent and getattr(agent, "client_id", None):
+                _sync_client_offline_3days_and_alerts(db, client_id=int(agent.client_id))
         except Exception:
             pass
 
