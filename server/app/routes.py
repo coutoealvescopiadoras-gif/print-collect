@@ -56,6 +56,7 @@ from app.schemas import (
     PrinterCreate,
     PrinterOut,
     PrinterUpdate,
+    ReadingOut,
     Token,
     UserCreate,
     UserOut,
