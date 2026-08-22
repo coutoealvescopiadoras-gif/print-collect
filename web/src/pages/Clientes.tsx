@@ -508,6 +508,7 @@ export default function Clientes() {
                 <th>Nome</th>
                 <th>CNPJ</th>
                 <th>Contato</th>
+                <th>📞 Telefone</th>
                 <th>E-mail</th>
                 <th>Status</th>
                 <th style={{ width: 260, textAlign: "right" }}>Ações</th>
@@ -547,6 +548,7 @@ export default function Clientes() {
                     </td>
                     <td>{c.cnpj || "—"}</td>
                     <td>{c.contact_name || "—"}</td>
+                    <td>{c.contact_phone || "—"}</td>
                     <td>{c.contact_email || "—"}</td>
                     <td>
                       <span className={`badge ${c.active ? "online" : "offline"}`}>
@@ -562,13 +564,6 @@ export default function Clientes() {
                             style={{ marginRight: "0.35rem" }}
                           >
                             ✏️ Editar
-                          </button>
-                          <button
-                            className="btn btn-secondary"
-                            onClick={() => openPairing(c)}
-                            style={{ marginRight: "0.35rem" }}
-                          >
-                            🔗 Pareamento
                           </button>
                           <button
                             className="btn btn-ghost"
@@ -894,6 +889,14 @@ Qualquer dúvida é só chamar a gente!`}
                           type="button"
                           className="btn btn-secondary"
                           style={{ fontSize: 12, padding: "0.35rem 0.75rem" }}
+                          onClick={() => { handleFecharModalCliente(); openPairing(clienteModal); }}
+                        >
+                          🔗 Gerar Pareamento (instalar agente)
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ fontSize: 12, padding: "0.35rem 0.75rem" }}
                           onClick={() => copyText(buildPairingMessage(clienteModal))}
                         >
                           📩 Copiar mensagem
@@ -933,17 +936,9 @@ Qualquer dúvida é só chamar a gente!`}
                 ) : impressorasClienteModal.length === 0 ? (
                   <div style={{ color: "var(--text-muted)", padding: "1.5rem 1rem", textAlign: "center", border: "1px dashed var(--border)", borderRadius: 10 }}>
                     Nenhuma impressora encontrada para este cliente ainda.
-                    {canManageClients && (
-                      <div style={{ marginTop: "0.75rem" }}>
-                        <button
-                          className="btn btn-secondary"
-                          style={{ fontSize: 13, padding: "0.3rem 0.7rem" }}
-                          onClick={() => { handleFecharModalCliente(); openPairing(clienteModal); }}
-                        >
-                          🔗 Gerar pareamento para instalar o agente
-                        </button>
-                      </div>
-                    )}
+                    <div style={{ marginTop: "0.75rem", fontSize: "0.85rem" }}>
+                      💡 Use o botão <strong>"🔗 Gerar Pareamento"</strong> na caixa verde acima (código do cliente) para criar um código curto e instalar o agente na máquina do cliente!
+                    </div>
                   </div>
                 ) : (
                   <table style={{ width: "100%" }}>
