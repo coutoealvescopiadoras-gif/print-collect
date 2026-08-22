@@ -113,7 +113,7 @@ export default function Clientes() {
 
   const handleOpenCreate = () => {
     setEditingClientId(null);
-    setForm({ name: "", cnpj: "", contact_name: "", contact_email: "" });
+    setForm({ name: "", cnpj: "", contact_name: "", contact_phone: "", contact_email: "" });
     setShowModal(true);
   };
 
