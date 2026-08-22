@@ -15,6 +15,22 @@ function isVercelPreview(hostname: string) {
 }
 
 export function resolveBaseUrl() {
+  const STORAGE_KEY = "pc_debug_api_url";
+
+  // ==================================================================
+  // NIVEIS DE PRIORIDADE (DE MAIOR para MENOR):
+  //   A) localStorage pc_debug_api_url → MENU SECRETO Login.tsx (clica 7x no logo PrintCollect!)
+  //      Julio tem o POD TOTAL de escolher a URL que quiser.
+  //   B) import.meta.env.VITE_API_URL → Painel Vercel Settings / .env
+  //   C) Regras do dominio (printcollect.com.br = VERCEL SERVERLESS FUNCTION etc)
+  // ==================================================================
+  if (typeof window !== "undefined") {
+    const debugOverride = (window.localStorage.getItem(STORAGE_KEY) || "").trim();
+    if (debugOverride) {
+      return debugOverride.replace(/\/$/, "");
+    }
+  }
+
   const configuredBase = (import.meta.env.VITE_API_URL || "").trim();
 
   if (configuredBase) {

@@ -1,10 +1,13 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, __version__ as fastapi_version
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.config import settings
 from app.database import Agent, Client, Location, Printer, init_db, SessionLocal, engine
 from app.routes import router
+from app.routes import __name__ as _routes_mod_name  # garantia import deu certo
+import app.schemas  # garantia que ReadingOut existe agora (para nao crashar runtime)
+import os, sys, time
 
 
 def seed_demo_data() -> None:
@@ -116,6 +119,42 @@ def create_app() -> FastAPI:
         if db_error:
             payload["error"] = db_error
         return payload
+
+    @app.get("/debug-init")
+    def debug_init():
+        db_status = "unknown"
+        db_error = None
+        try:
+            _safe_init_db()
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            db_status = "postgresql" if settings.is_postgres else "sqlite"
+        except Exception as e:
+            db_status = "error"
+            db_error = str(e)[:500]
+        rotas = []
+        for r in app.routes:
+            if hasattr(r, "path") and hasattr(r, "methods"):
+                rotas.append(f"{sorted(list(r.methods or set()))!s} {r.path!s}")
+        return {
+            "status": "ok",
+            "initialized_at_unix": int(time.time()),
+            "python_version": sys.version.split()[0],
+            "fastapi_version": fastapi_version,
+            "routes_total": len(app.routes),
+            "cors_origins": settings.cors_origins[:300],
+            "cors_regex_len": len(settings.cors_origin_regex or ""),
+            "database_type": db_status,
+            "database_error": db_error,
+            "database_url_preview": (settings.database_url[:40] + "...") if settings.database_url and len(settings.database_url) > 40 else "***",
+            "secret_key_preview": (settings.secret_key[:5] + "...") if len(settings.secret_key or "") > 5 else "?",
+            "env_has_direct_url": bool(settings.direct_url),
+            "imports": {
+                "app.routes": _routes_mod_name or "ok",
+                "app.schemas": f"OK (ReadingOut? {hasattr(app.schemas, 'ReadingOut')})" if 'app.schemas' in sys.modules else "NOT_IMPORTED",
+            },
+            "routes_sample": sorted(rotas)[:25],
+        }
 
     return app
 
