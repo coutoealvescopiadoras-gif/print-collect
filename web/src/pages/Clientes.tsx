@@ -493,15 +493,10 @@ export default function Clientes() {
                             (e.currentTarget as HTMLButtonElement).style.background = "transparent";
                           }}
                         >
-                          🪟 <strong>{c.name}</strong>
+                          <strong>{c.name}</strong>
                         </button>
                       </div>
                     </td>
-                    {(isSuperadmin || hasAnyPartnerVisible) && (
-                      <td style={{ color: "var(--text-muted)" }}>
-                        {c.partner_name || <span style={{ opacity: 0.6 }}>—</span>}
-                      </td>
-                    )}
                     <td>{c.cnpj || "—"}</td>
                     <td>{c.contact_name || "—"}</td>
                     <td>{c.contact_email || "—"}</td>
