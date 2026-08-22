@@ -167,7 +167,7 @@ export default function Layout() {
           <NavLink to="/" end>Dashboard</NavLink>
           {isSuperadmin && <NavLink to="/revendedores">Revendedores</NavLink>}
           {canManageResources && <NavLink to="/clientes">Clientes</NavLink>}
-          {canManageInstaller && <NavLink to="/instalador">📦 Instalador</NavLink>}
+          {canManageInstaller && <NavLink to="/instalador">Instalador</NavLink>}
           <NavLink to="/alertas">Alertas</NavLink>
           {canManageResources && <NavLink to="/agentes">Agentes</NavLink>}
           {canManageUsers && <NavLink to="/usuarios">Usuários</NavLink>}

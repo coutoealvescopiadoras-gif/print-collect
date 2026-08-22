@@ -940,7 +940,7 @@ Qualquer dúvida é só chamar a gente!`}
                     <thead>
                       <tr>
                         <th>🖨️ Impressora mapeada (clique para ver ficha completa)</th>
-                        {canEditSector && <th style={{ width: 260, minWidth: 240 }}>📍 Setor / Local (clique para editar)</th>}
+                        {canEditSector && <th style={{ width: 260, minWidth: 240 }}>Setor / Local (clique para editar)</th>}
                         <th style={{ width: 160, textAlign: "center" }}>Ações</th>
                       </tr>
                     </thead>
