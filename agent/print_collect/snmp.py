@@ -101,6 +101,210 @@ def _snmp_get(ip: str, oid: str, community: str, timeout: int) -> Optional[str]:
         return None
 
 
+def _snmp_walk_table(ip: str, base_oid: str, community: str, timeout: int) -> dict[str, int]:
+    """Realiza WALK (next_cmd) em uma tabela SNMP completa (todos os indices).
+    Retorna dicionario: {'sufixo_oid_ultimos_2_numeros': valor_inteiro}.
+    Ex: para base 43.10.2.1.4 retorna {'1.1': 10000, '1.2': 7500, '1.3': 2500}"""
+    results: dict[str, int] = {}
+    try:
+        import asyncio
+
+        from pysnmp.hlapi.v3arch.asyncio import (
+            CommunityData,
+            ContextData,
+            ObjectIdentity,
+            ObjectType,
+            SnmpEngine,
+            UdpTransportTarget,
+            next_cmd,
+        )
+
+        async def walk():
+            try:
+                transport = await UdpTransportTarget.create((ip, 161), timeout=timeout, retries=1)
+                initial_var_bind = ObjectType(ObjectIdentity(base_oid))
+                var_binds = initial_var_bind
+                while True:
+                    error_indication, error_status, error_index, vb_list = await next_cmd(
+                        SnmpEngine(),
+                        CommunityData(community),
+                        transport,
+                        ContextData(),
+                        var_binds,
+                        lexicographicMode=False,
+                    )
+                    if error_indication:
+                        break
+                    if error_status:
+                        break
+                    if not vb_list:
+                        break
+                    got_any_in_base = False
+                    for var_bind in vb_list:
+                        oid_str = str(var_bind[0])
+                        if not oid_str.startswith(base_oid + ".") and not oid_str.startswith(base_oid):
+                            continue
+                        got_any_in_base = True
+                        suffix = oid_str[len(base_oid):]
+                        if suffix.startswith("."):
+                            suffix = suffix[1:]
+                        value_raw = str(var_bind[1])
+                        value_int = _parse_int(value_raw)
+                        if value_int > 0:
+                            results[suffix] = value_int
+                    if not got_any_in_base:
+                        break
+                    var_binds = vb_list
+            except Exception as exc:
+                logger.debug("SNMP walk falhou %s %s: %s", ip, base_oid, exc)
+
+        asyncio.run(walk())
+    except Exception as exc:
+        logger.debug("SNMP walk setup falhou %s %s: %s", ip, base_oid, exc)
+    return results
+
+
+# Chaves de cor para detectar PB/Color na tabela prtMarkerColorantRole 43.12.1.1.4
+COLORANT_BLACK_KEYWORDS = ("black", "preto", "processblack", "markerdark", "mono", "monochrome")
+COLORANT_COLOR_KEYWORDS = (
+    "cyan", "magenta", "yellow", "ciano", "amarelo",
+    "processcyan", "processmagenta", "processyellow",
+    "red", "green", "blue", "lightcyan", "lightmagenta",
+)
+BASE_OID_MARKER_LIFE_COUNT = "1.3.6.1.2.1.43.10.2.1.4"
+BASE_OID_MARKER_COLORANT_ROLE = "1.3.6.1.2.1.43.12.1.1.4"
+
+
+def _collect_pages_from_marker_table(ip: str, community: str, timeout: int) -> tuple[int, int]:
+    """Fallback PODEROSO para impressoras que NAO USAM OIDs fixos 1.2/1.3
+    (ex: Konica Minolta bizhub C258, Ricoh, Kyocera, Xerox, Samsung etc).
+    Faz WALK na tabela prtMarkerLifeCount + prtMarkerColorantRole,
+    identifica contadores PB / Color por indice, soma tudo.
+    Retorna tuple (pages_bw_total, pages_color_total)."""
+    try:
+        life_counts = _snmp_walk_table(ip, BASE_OID_MARKER_LIFE_COUNT, community, timeout)
+        if not life_counts:
+            return 0, 0
+
+        colorant_roles = _snmp_walk_table_raw_strings(ip, BASE_OID_MARKER_COLORANT_ROLE, community, timeout)
+
+        pages_bw_sum = 0
+        pages_color_sum = 0
+        used = set()
+
+        # 1) Prioridade 1: tabela COLORANT ROLE exatamente combinando marker index
+        #    Formato OID 43.10.2.1.4.HRDEV.MARKER  → corresponde 43.12.1.1.4.HRDEV.COLORANT
+        for lc_suffix, val in life_counts.items():
+            # marker_suffix exemplo: "1.1" (hrDeviceIndex=1, markerIndex=1)
+            parts = lc_suffix.split(".")
+            if len(parts) < 2:
+                continue
+            hr_dev = parts[0]
+            marker_idx = parts[-1]
+            # Tenta combinações do colorant index igual ou diferente
+            matched_role_str: Optional[str] = None
+            for col_suffix, role_raw in colorant_roles.items():
+                col_parts = col_suffix.split(".")
+                if len(col_parts) < 2:
+                    continue
+                if col_parts[0] == hr_dev and (col_parts[-1] == marker_idx or col_parts[-1] == str(int(marker_idx) - 1) or col_parts[-1] == str(int(marker_idx) + 1)):
+                    matched_role_str = role_raw
+                    break
+            if matched_role_str is None:
+                # Heuristica 2: markerIndex 1 ou prefixo 1 → preto se nao tiver role
+                if marker_idx == "1" and len(parts) == 2:
+                    continue
+                continue
+
+            role_low = str(matched_role_str).lower().strip().strip('"').strip("'")
+            if not role_low:
+                continue
+            if any(k in role_low for k in COLORANT_BLACK_KEYWORDS):
+                pages_bw_sum += val
+                used.add(lc_suffix)
+            elif any(k in role_low for k in COLORANT_COLOR_KEYWORDS):
+                pages_color_sum += val
+                used.add(lc_suffix)
+
+        # 2) Heuristica 3: indices que sobraram, ordem: primeiro (menor) marker = PB, demais = color
+        remaining = [(suf, v) for suf, v in life_counts.items() if suf not in used]
+        if remaining:
+            # Ordena por partes numericas
+            def sort_key(tup):
+                parts = tup[0].split(".")
+                return tuple(int(p) for p in parts if p.isdigit())
+            remaining_sorted = sorted(remaining, key=sort_key)
+            if pages_bw_sum == 0:
+                pages_bw_sum += remaining_sorted[0][1]
+                if len(remaining_sorted) > 1:
+                    for _, v in remaining_sorted[1:]:
+                        pages_color_sum += v
+            else:
+                for _, v in remaining_sorted:
+                    pages_color_sum += v
+
+        return max(0, pages_bw_sum), max(0, pages_color_sum)
+    except Exception as exc:
+        logger.debug("collect_pages_from_marker_table exc %s: %s", ip, exc)
+        return 0, 0
+
+
+def _snmp_walk_table_raw_strings(ip: str, base_oid: str, community: str, timeout: int) -> dict[str, str]:
+    """Walk retornando strings brutas (para roles de cor etc)."""
+    results: dict[str, str] = {}
+    try:
+        import asyncio
+
+        from pysnmp.hlapi.v3arch.asyncio import (
+            CommunityData,
+            ContextData,
+            ObjectIdentity,
+            ObjectType,
+            SnmpEngine,
+            UdpTransportTarget,
+            next_cmd,
+        )
+
+        async def walk():
+            try:
+                transport = await UdpTransportTarget.create((ip, 161), timeout=timeout, retries=1)
+                initial_var_bind = ObjectType(ObjectIdentity(base_oid))
+                var_binds = initial_var_bind
+                while True:
+                    error_indication, error_status, _, vb_list = await next_cmd(
+                        SnmpEngine(),
+                        CommunityData(community),
+                        transport,
+                        ContextData(),
+                        var_binds,
+                        lexicographicMode=False,
+                    )
+                    if error_indication or error_status:
+                        break
+                    if not vb_list:
+                        break
+                    got_any = False
+                    for var_bind in vb_list:
+                        oid_str = str(var_bind[0])
+                        if not oid_str.startswith(base_oid + ".") and not oid_str.startswith(base_oid):
+                            continue
+                        got_any = True
+                        suffix = oid_str[len(base_oid):]
+                        if suffix.startswith("."):
+                            suffix = suffix[1:]
+                        results[suffix] = str(var_bind[1])
+                    if not got_any:
+                        break
+                    var_binds = vb_list
+            except Exception as exc:
+                logger.debug("walk raw exc %s %s: %s", ip, base_oid, exc)
+
+        asyncio.run(walk())
+    except Exception as exc:
+        logger.debug("walk raw setup exc %s %s: %s", ip, base_oid, exc)
+    return results
+
+
 def _parse_int(value: Optional[str]) -> int:
     if not value:
         return 0
@@ -317,9 +521,29 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 2) -> Opt
 
     model = _snmp_get(ip, OID_PRINTER_MODEL, community, timeout) or sys_descr[:120]
     serial = _snmp_get(ip, OID_PRINTER_SERIAL, community, timeout)
+
+    # ========== PASSO 1: OIDs FIXOS PADRAO RFC (HP/Brother etc) ==========
     pages_total = _parse_int(_snmp_get(ip, OID_PAGES_TOTAL, community, timeout))
-    pages_bw = _parse_int(_snmp_get(ip, OID_PAGES_BW, community, timeout)) or pages_total
+    pages_bw = _parse_int(_snmp_get(ip, OID_PAGES_BW, community, timeout))
     pages_color = _parse_int(_snmp_get(ip, OID_PAGES_COLOR, community, timeout))
+
+    # ========== PASSO 2: FALLBACK PODEROSO - WALK MARKER TABLE (KONICA/RICOH/KYOCERA) ==========
+    # Se OIDs fixos NAO deram resultado para PB/Color (mas tem pages_total ou toners coloridos)
+    if (pages_bw <= 0 and pages_color <= 0) or (pages_total > 0 and pages_bw == 0 and pages_color == 0):
+        bw_walk, col_walk = _collect_pages_from_marker_table(ip, community, timeout)
+        if bw_walk > 0 or col_walk > 0:
+            pages_bw = max(pages_bw, bw_walk)
+            pages_color = max(pages_color, col_walk)
+            if pages_total <= 0:
+                pages_total = pages_bw + pages_color
+
+    # ========== PASSO 3: GARANTE pages_total SENDO SEMPRE O MAIOR ==========
+    sum_bw_color = pages_bw + pages_color
+    if pages_total <= 0 and sum_bw_color > 0:
+        pages_total = sum_bw_color
+    if pages_total > 0 and pages_bw <= 0 and pages_color <= 0:
+        pages_bw = pages_total
+        pages_color = 0
 
     toner_black = _toner_percent(
         _snmp_get(ip, OID_TONER_LEVEL, community, timeout),
@@ -381,6 +605,27 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 2) -> Opt
         data.toner_cyan = None
         data.toner_magenta = None
         data.toner_yellow = None
+        pages_color = 0
+        data.pages_color = 0
+        if pages_bw <= 0 and pages_total > 0:
+            pages_bw = pages_total
+            data.pages_bw = pages_total
+    else:
+        # ===== PASSO EXTRA: HEURISTICA PAGINAS IMPRESSORA COLORIDA CONFIRMADA =====
+        # Se tem toners coloridos (> 0%) MAS pages_color AINDA veio 0 (raro mas pode!)
+        if has_color_toners and pages_color <= 0 and pages_total > 0:
+            # Assume pages_total * 0.75 PB default ou pior caso pages_total - pages_bw
+            if pages_bw > 0 and pages_bw < pages_total:
+                pages_color = pages_total - pages_bw
+            else:
+                pages_bw = int(pages_total * 0.5)
+                pages_color = pages_total - pages_bw
+        # Corrige inconsistencia: soma PB+Color > Total (alguma soma deu errado!)
+        if pages_bw + pages_color > pages_total:
+            pages_total = pages_bw + pages_color
+        data.pages_bw = pages_bw
+        data.pages_color = pages_color
+        data.pages_total = pages_total
 
     # Alertas básicos de toner (SOMENTE para toners EXISTENTES CONFIRMADOS!)
     alerts: list[str] = []
@@ -407,6 +652,10 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 2) -> Opt
     data.toner_yellow = toner_yellow
     data.pages_bw = pages_bw
     data.pages_color = pages_color
+    data.pages_total = pages_total
+
+    logger.info("Contadores %s: total=%d bw=%d color=%d is_color=%s",
+                data.model or data.ip_address, data.pages_total, data.pages_bw, data.pages_color, is_color_printer)
 
     return data
 

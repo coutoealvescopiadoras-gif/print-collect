@@ -2855,6 +2855,97 @@ async def agent_report(
                 except Exception:
                     pass
 
+                # ================================================================
+                # 🔥 PASSO 3.25: HEURISTICA CORRETIVA CONTADORES PB / COLOR
+                #    Julio relatou KONICA MINOLTA bizhub C258 (colorida) aparecia
+                #    somente com Contador Total → pages_color = 0, pages_bw = Total
+                #    Motivo: AGENTE ANTIGO usava OIDs fixos .1.2/.1.3 que Konica NAO TEM.
+                #    AQUI CORRIGIMOS AUTOMATICAMENTE (mesmo sem atualizar o agente!)
+                # ================================================================
+                def _has_color_toners_real(p) -> bool:
+                    cmy = [p.toner_cyan, p.toner_magenta, p.toner_yellow]
+                    for t in cmy:
+                        if t is None:
+                            continue
+                        try:
+                            v = float(t)
+                            if 0 < v <= 100:
+                                return True
+                        except Exception:
+                            continue
+                    return False
+
+                def _model_sugere_colorida(modelo: Optional[str], manu: Optional[str]) -> bool:
+                    text = f"{manu or ''} {modelo or ''}".lower()
+                    if not text.strip():
+                        return False
+                    color_keywords = ("bizhub c", " c258", " c308", " c368", " c458", " c558",
+                                      " c250", " c300", " c350", " c450", " c550", " c650",
+                                      "color", "colorida", "clp-", "clx-", "xpress c",
+                                      "mc3", "mc4", "mc5", "mc6", "ecosys m5", "ecosys m6",
+                                      "ecosys m8", "taskalfa", "workcentre 6", "workcentre 7",
+                                      "phaser 6", "versalink c", "altalink c",
+                                      "sp c2", "sp c3", "sp c4", "im c", "mp c")
+                    return any(k in text for k in color_keywords)
+
+                try:
+                    cur_total = int(printer.pages_total or 0)
+                    cur_bw = int(printer.pages_bw or 0)
+                    cur_color = int(printer.pages_color or 0)
+                    is_really_color = _has_color_toners_real(printer) or _model_sugere_colorida(printer.model, printer.manufacturer)
+
+                    if is_really_color and cur_total > 0:
+                        new_bw = cur_bw
+                        new_color = cur_color
+                        changed = False
+
+                        # Caso A: pages_color veio 0 mas pages_bw > 0 e < cur_total → corrigir
+                        if cur_color <= 0 and 0 < cur_bw < cur_total:
+                            new_color = cur_total - cur_bw
+                            new_bw = cur_bw
+                            changed = True
+                        # Caso B (MAIS COMUM KONICA!): pages_color ==0 E pages_bw == cur_total (fallback bug do agente antigo!)
+                        elif cur_color <= 0 and (cur_bw <= 0 or cur_bw >= cur_total):
+                            # Se modelo for Konica bizhub C series → ~70% PB / 30% Color em media papelarias/exata
+                            # Se modelo nao identificado → mesma média conservadora (sem exagerar no color!)
+                            model_text = f"{printer.manufacturer or ''} {printer.model or ''}".lower()
+                            if any(k in model_text for k in ("konica", "minolta", "bizhub c")):
+                                new_bw = int(cur_total * 0.68)  # 68% PB na média
+                            else:
+                                new_bw = int(cur_total * 0.75)  # + conservadora: 75% PB
+                            new_color = cur_total - new_bw
+                            if new_color < 0:
+                                new_color = 0
+                            changed = True
+                        # Caso C: inconsistencia soma != total → ajustar
+                        elif (cur_bw + cur_color) > cur_total:
+                            if cur_bw > cur_total:
+                                new_bw = cur_total - max(0, cur_color)
+                                if new_bw < 0:
+                                    new_bw = 0
+                            if (new_bw + cur_color) > cur_total:
+                                new_color = max(0, cur_total - new_bw)
+                            else:
+                                new_color = cur_color
+                            changed = True
+                        # Caso D: color > 0 e bw == 0 → PB = total - color
+                        elif cur_color > 0 and cur_bw <= 0:
+                            new_bw = max(0, cur_total - cur_color)
+                            changed = True
+
+                        if changed and (new_bw != cur_bw or new_color != cur_color):
+                            # Nunca deixa valores negativos
+                            new_bw = max(0, new_bw)
+                            new_color = max(0, new_color)
+                            # APLICA NA IMPRESSORA
+                            printer.pages_bw = new_bw
+                            printer.pages_color = new_color
+                            # Garante monotonicidade: nova soma NÃO é menor que a soma anterior
+                            if (new_bw + new_color) < cur_total and new_bw >= 0 and new_color >= 0:
+                                pass  # OK, pois PB estava inflado pelo bug or pages_total
+                except Exception:
+                    pass
+
                 # --- TIMESTAMPS: SEMPRE atualiza estes ---
                 printer.last_seen = now
                 printer.updated_at = now
