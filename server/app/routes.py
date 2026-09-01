@@ -73,10 +73,11 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 43200
 ROLE_SUPERADMIN = "superadmin"
 ROLE_PARTNER_ADMIN = "partner_admin"
+ROLE_PARTNER_STAFF = "partner_staff"
 ROLE_CLIENT_MANAGER = "client_manager"
 ROLE_CLIENT_VIEWER = "client_viewer"
-MANAGE_ROLES = {ROLE_SUPERADMIN, ROLE_PARTNER_ADMIN, ROLE_CLIENT_MANAGER}
-VALID_ROLES = {ROLE_SUPERADMIN, ROLE_PARTNER_ADMIN, ROLE_CLIENT_MANAGER, ROLE_CLIENT_VIEWER}
+MANAGE_ROLES = {ROLE_SUPERADMIN, ROLE_PARTNER_ADMIN, ROLE_PARTNER_STAFF, ROLE_CLIENT_MANAGER}
+VALID_ROLES = {ROLE_SUPERADMIN, ROLE_PARTNER_ADMIN, ROLE_PARTNER_STAFF, ROLE_CLIENT_MANAGER, ROLE_CLIENT_VIEWER}
 
 
 # --- Helpers de SANITIZACAO DEFENSIVA (defense-in-depth, redundantes com schemas)
@@ -274,12 +275,20 @@ def _is_partner_admin(user: User) -> bool:
     return _user_role(user) == ROLE_PARTNER_ADMIN
 
 
+def _is_partner_staff(user: User) -> bool:
+    return _user_role(user) == ROLE_PARTNER_STAFF
+
+
+def _is_partner(user: User) -> bool:
+    return _user_role(user) in {ROLE_PARTNER_ADMIN, ROLE_PARTNER_STAFF}
+
+
 def _can_manage_resources(user: User) -> bool:
     return _user_role(user) in MANAGE_ROLES
 
 
 def _can_create_clients(user: User) -> bool:
-    return _is_superadmin(user) or _is_partner_admin(user)
+    return _is_superadmin(user) or _is_partner(user)
 
 
 def _required_client_id(user: User) -> int:
@@ -298,7 +307,7 @@ def _scoped_client_id(current_user: User, requested_client_id: Optional[int] = N
     if _is_superadmin(current_user):
         return requested_client_id
 
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         return requested_client_id
 
     client_id = _required_client_id(current_user)
@@ -308,7 +317,7 @@ def _scoped_client_id(current_user: User, requested_client_id: Optional[int] = N
 
 
 def _assert_partner_owns_client(db: Session, current_user: User, client_id: int) -> None:
-    if not _is_partner_admin(current_user):
+    if not _is_partner(current_user):
         return
     partner_id = _required_partner_id(current_user)
     exists = (
@@ -331,7 +340,7 @@ def _get_scoped_client(db: Session, current_user: User, client_id: int) -> Clien
     query = db.query(Client).filter(Client.id == client_id)
     if scoped_client_id is not None:
         query = query.filter(Client.id == scoped_client_id)
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         query = query.filter(Client.partner_id == _required_partner_id(current_user))
     client = query.first()
     if not client:
@@ -341,7 +350,7 @@ def _get_scoped_client(db: Session, current_user: User, client_id: int) -> Clien
 
 def _get_scoped_printer(db: Session, current_user: User, printer_id: int) -> Printer:
     query = db.query(Printer).filter(Printer.id == printer_id)
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         query = query.join(Client).filter(Client.partner_id == _required_partner_id(current_user))
     elif not _is_superadmin(current_user):
         query = query.filter(Printer.client_id == _required_client_id(current_user))
@@ -353,7 +362,7 @@ def _get_scoped_printer(db: Session, current_user: User, printer_id: int) -> Pri
 
 def _get_scoped_agent(db: Session, current_user: User, agent_id: int) -> Agent:
     query = db.query(Agent).filter(Agent.id == agent_id)
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         query = query.join(Client).filter(Client.partner_id == _required_partner_id(current_user))
     elif not _is_superadmin(current_user):
         query = query.filter(Agent.client_id == _required_client_id(current_user))
@@ -365,7 +374,7 @@ def _get_scoped_agent(db: Session, current_user: User, agent_id: int) -> Agent:
 
 def _get_scoped_alert(db: Session, current_user: User, alert_id: int) -> Alert:
     query = db.query(Alert).join(Printer).filter(Alert.id == alert_id)
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         query = query.join(Client, Client.id == Printer.client_id).filter(Client.partner_id == _required_partner_id(current_user))
     elif not _is_superadmin(current_user):
         query = query.filter(Printer.client_id == _required_client_id(current_user))
@@ -455,7 +464,7 @@ def list_users(db: Session = Depends(get_db), current_user: User = Depends(get_c
         raise HTTPException(status_code=403, detail="Sem permissão para listar usuários")
 
     query = db.query(User)
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         query = query.filter(User.partner_id == _required_partner_id(current_user))
     elif not _is_superadmin(current_user):
         query = query.filter(User.client_id == _required_client_id(current_user))
@@ -470,6 +479,16 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db), current_user
     role = (payload.role or ROLE_CLIENT_VIEWER).strip().lower()
     if role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail="Perfil de usuário inválido")
+
+    # ========== 🔥 BLOQUEIOS QUE JULIO PEDIU: REVENDEDOR NAO CRIA REVENDEDOR ==========
+    if not _is_superadmin(current_user) and role == ROLE_SUPERADMIN:
+        raise HTTPException(status_code=403, detail="Apenas superadmin pode criar outro superadmin")
+    if not _is_superadmin(current_user) and role == ROLE_PARTNER_ADMIN:
+        # 🚫 REGRAS JULIO: "revendedores parceiros nao ter opcao de cadstrar outro revendedores"
+        raise HTTPException(status_code=403, detail="Apenas superadmin pode cadastrar um revendedor administrador. Revendedores não podem revender o software.")
+    if not _is_superadmin(current_user) and not _is_partner_admin(current_user) and role == ROLE_PARTNER_STAFF:
+        # Apenas superadmin OU revendedor ADMIN podem criar colaboradores
+        raise HTTPException(status_code=403, detail="Apenas superadmin ou o administrador do revendedor podem cadastrar colaboradores da equipe")
 
     normalized_email = payload.email.strip().lower()
     login_name = (payload.username or normalized_email).strip().lower()
@@ -486,9 +505,9 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db), current_user
         if role == ROLE_SUPERADMIN:
             client_id = None
             partner_id = None
-        elif role == ROLE_PARTNER_ADMIN:
+        elif role in {ROLE_PARTNER_ADMIN, ROLE_PARTNER_STAFF}:
             if partner_id is None:
-                raise HTTPException(status_code=400, detail="partner_id é obrigatório para usuários revendedores")
+                raise HTTPException(status_code=400, detail="partner_id é obrigatório para usuários revendedores / colaboradores")
             client_id = None
         else:
             if client_id is None:
@@ -497,19 +516,19 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db), current_user
             if not client:
                 raise HTTPException(status_code=404, detail="Cliente não encontrado")
             partner_id = client.partner_id
-    elif _is_partner_admin(current_user):
-        if role == ROLE_SUPERADMIN:
-            raise HTTPException(status_code=403, detail="Revendedor não pode criar superadmin")
+    elif _is_partner(current_user):
         partner_id = _required_partner_id(current_user)
-        if role == ROLE_PARTNER_ADMIN:
+        if role in {ROLE_PARTNER_ADMIN, ROLE_PARTNER_STAFF}:
+            # ROLE_PARTNER_ADMIN já foi bloqueado acima, mantém safe.
+            # Staff: colaborador do revendedor = NAO tem client_id!
             client_id = None
         else:
             if client_id is None:
                 raise HTTPException(status_code=400, detail="client_id é obrigatório para usuários de cliente")
             _assert_partner_owns_client(db, current_user, client_id)
     else:
-        if role in {ROLE_SUPERADMIN, ROLE_PARTNER_ADMIN}:
-            raise HTTPException(status_code=403, detail="Cliente não pode criar superadmin/revendedor")
+        if role in {ROLE_SUPERADMIN, ROLE_PARTNER_ADMIN, ROLE_PARTNER_STAFF}:
+            raise HTTPException(status_code=403, detail="Cliente não pode criar contas administrativas")
         client_id = _required_client_id(current_user)
         client = db.query(Client).filter(Client.id == client_id).first()
         partner_id = client.partner_id if client else None
@@ -540,7 +559,7 @@ def update_user(
         raise HTTPException(status_code=403, detail="Sem permissão para editar usuários")
 
     query = db.query(User).filter(User.id == user_id)
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         query = query.filter(User.partner_id == _required_partner_id(current_user))
     elif not _is_superadmin(current_user):
         query = query.filter(User.client_id == _required_client_id(current_user))
@@ -553,28 +572,37 @@ def update_user(
         updates["role"] = str(updates["role"]).strip().lower()
         if updates["role"] not in VALID_ROLES:
             raise HTTPException(status_code=400, detail="Perfil de usuário inválido")
+        # ========== 🔥 BLOQUEIOS JULIO: Ninguem que nao seja superadmin vira superadmin / revendedor admin ==========
         if not _is_superadmin(current_user) and updates["role"] == ROLE_SUPERADMIN:
-            raise HTTPException(status_code=403, detail="Cliente não pode promover para superadmin")
+            raise HTTPException(status_code=403, detail="Apenas superadmin pode promover para superadmin")
         if not _is_superadmin(current_user) and updates["role"] == ROLE_PARTNER_ADMIN:
-            raise HTTPException(status_code=403, detail="Apenas superadmin pode promover para revendedor")
+            # 🚫 JULIO: "revendedores parceiros nao ter opcao de cadstrar outro revendedores"
+            raise HTTPException(status_code=403, detail="Apenas superadmin pode promover para revendedor administrador. Revendedores não podem revender o software.")
+        # ========== Staff: só superadmin OU partner_admin pode conceder ==========
+        if not _is_superadmin(current_user) and not _is_partner_admin(current_user) and updates["role"] == ROLE_PARTNER_STAFF:
+            raise HTTPException(status_code=403, detail="Apenas superadmin ou o administrador do revendedor podem promover para colaborador")
 
     if "client_id" in updates:
         if _is_superadmin(current_user):
-            if updates.get("role", user.role) == ROLE_SUPERADMIN:
+            final_role = updates.get("role", user.role)
+            if final_role in {ROLE_SUPERADMIN, ROLE_PARTNER_ADMIN, ROLE_PARTNER_STAFF}:
                 updates["client_id"] = None
-                updates["partner_id"] = None
-            elif updates.get("role", user.role) == ROLE_PARTNER_ADMIN:
-                updates["client_id"] = None
+                if final_role == ROLE_SUPERADMIN:
+                    updates["partner_id"] = None
             elif updates["client_id"] is not None:
                 client = db.query(Client).filter(Client.id == updates["client_id"]).first()
                 if not client:
                     raise HTTPException(status_code=404, detail="Cliente não encontrado")
                 updates["partner_id"] = client.partner_id
-        elif _is_partner_admin(current_user):
-            if updates["client_id"] is None:
-                raise HTTPException(status_code=400, detail="client_id é obrigatório para usuários de cliente")
-            _assert_partner_owns_client(db, current_user, updates["client_id"])
-            updates["partner_id"] = _required_partner_id(current_user)
+        elif _is_partner(current_user):
+            final_role = updates.get("role", user.role)
+            if final_role in {ROLE_PARTNER_ADMIN, ROLE_PARTNER_STAFF}:
+                updates["client_id"] = None
+            else:
+                if updates["client_id"] is None:
+                    raise HTTPException(status_code=400, detail="client_id é obrigatório para usuários de cliente")
+                _assert_partner_owns_client(db, current_user, updates["client_id"])
+                updates["partner_id"] = _required_partner_id(current_user)
         else:
             updates["client_id"] = _required_client_id(current_user)
             client = db.query(Client).filter(Client.id == updates["client_id"]).first()
@@ -582,9 +610,10 @@ def update_user(
 
     if "partner_id" in updates:
         if _is_superadmin(current_user):
-            if updates.get("role", user.role) == ROLE_SUPERADMIN:
+            final_role = updates.get("role", user.role)
+            if final_role == ROLE_SUPERADMIN:
                 updates["partner_id"] = None
-        elif _is_partner_admin(current_user):
+        elif _is_partner(current_user):
             updates["partner_id"] = _required_partner_id(current_user)
         else:
             updates.pop("partner_id", None)
@@ -605,10 +634,13 @@ def update_user(
     for key, value in updates.items():
         setattr(user, key, value)
 
+    # ========== VALIDACAO FINAL: cada role precisa dos campos obrigatorios ==========
     if user.role in {ROLE_CLIENT_MANAGER, ROLE_CLIENT_VIEWER} and user.client_id is None:
-        raise HTTPException(status_code=400, detail="Usuários de cliente precisam de client_id")
+        raise HTTPException(status_code=400, detail="Usuários de cliente (gestor ou cliente final) precisam de client_id vinculado")
     if user.role == ROLE_PARTNER_ADMIN and user.partner_id is None:
         raise HTTPException(status_code=400, detail="Usuários revendedores precisam de partner_id")
+    if user.role == ROLE_PARTNER_STAFF and user.partner_id is None:
+        raise HTTPException(status_code=400, detail="Usuários colaboradores da equipe revenda precisam de partner_id vinculado")
 
     db.commit()
     db.refresh(user)
@@ -622,7 +654,7 @@ def delete_user(
     current_user: User = Depends(get_current_active_user),
 ):
     """Exclui um usuário permanentemente. Não é possível excluir seu próprio login.
-    Superadmin exclui qualquer um. Partner exclui só usuários de seu escopo (do seu revendedor).
+    Superadmin exclui qualquer um. Partner Admin/Staff exclui só usuários de seu escopo.
     Cliente (manager) exclui só do seu cliente."""
 
     if not _can_manage_resources(current_user):
@@ -633,9 +665,7 @@ def delete_user(
         raise HTTPException(status_code=400, detail="Você não pode excluir seu próprio usuário. Peça a outro administrador.")
 
     query = db.query(User).filter(User.id == user_id)
-    if _is_partner_admin(current_user):
-        # Revendedor só exclui usuários DO SEU PROPRIO REVENDEDOR (partner_id igual ao seu)
-        # OU usuarios de clientes do seu revendedor
+    if _is_partner(current_user):
         my_partner_id = _required_partner_id(current_user)
         query = query.filter(
             (User.partner_id == my_partner_id) |
@@ -643,30 +673,27 @@ def delete_user(
                 db.query(Client.id).filter(Client.partner_id == my_partner_id).scalar_subquery()
             ))
         )
-        # Revendedor NUNCA exclui superadmin nem outro partner admin (mesmo do mesmo partner)
+        # Revendedor (admin ou staff) NUNCA exclui superadmin nem OUTRO partner admin
         user_check = query.first()
         if user_check and user_check.role in {ROLE_SUPERADMIN, ROLE_PARTNER_ADMIN}:
-            # Exceto se for superadmin... mas aqui é partner_admin, entao BLOQUEIA!
             if not _is_superadmin(current_user):
-                raise HTTPException(status_code=403, detail="Revendedor não pode excluir contas de superadmin ou outro revendedor admin.")
+                raise HTTPException(status_code=403, detail="Revendedor não pode excluir contas de superadmin ou de outro revendedor administrador.")
+        # Partner_staff NÃO PODE excluir usuários com perfil staff também? Vamos liberar (é da mesma equipe)
+        # mas ele NÃO PODE excluir o partner_admin (já bloqueado acima).
     elif not _is_superadmin(current_user):
-        # Cliente manager: só exclui do SEU cliente (nao pode excluir gestor nem viewer de outros clientes)
         my_client_id = _required_client_id(current_user)
         query = query.filter(User.client_id == my_client_id)
         user_check = query.first()
-        if user_check and user_check.role in {ROLE_SUPERADMIN, ROLE_PARTNER_ADMIN}:
-            raise HTTPException(status_code=403, detail="Cliente não pode excluir contas de superadmin/revendedor.")
+        if user_check and user_check.role in {ROLE_SUPERADMIN, ROLE_PARTNER_ADMIN, ROLE_PARTNER_STAFF}:
+            raise HTTPException(status_code=403, detail="Cliente não pode excluir contas administrativas")
         if user_check and user_check.role == ROLE_CLIENT_MANAGER and user_check.id != current_user.id:
-            # Nao deixa gestor excluir outro gestor (mesmo do mesmo cliente)
             if not _is_superadmin(current_user):
-                # Permite apenas se superadmin
                 pass
 
     user_to_delete = query.first()
     if not user_to_delete:
         raise HTTPException(status_code=404, detail="Usuário não encontrado (ou não pertence ao seu escopo de permissão)")
 
-    # Ultima protecao: NUNCA exclui superadmin se nao for superadmin
     if user_to_delete.role == ROLE_SUPERADMIN and not _is_superadmin(current_user):
         raise HTTPException(status_code=403, detail="Apenas superadmin pode excluir outro superadmin")
 
@@ -814,9 +841,11 @@ def _role_label_for(current_user: User) -> str:
         if r == ROLE_SUPERADMIN
         else "Revendedor"
         if r == ROLE_PARTNER_ADMIN
+        else "Colaborador"
+        if r == ROLE_PARTNER_STAFF
         else "Gestor"
         if r == ROLE_CLIENT_MANAGER
-        else "Cliente"
+        else "Cliente Final"
     )
 
 

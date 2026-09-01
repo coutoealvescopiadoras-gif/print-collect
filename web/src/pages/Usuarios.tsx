@@ -3,19 +3,97 @@ import { api } from "../api";
 import { useAuth } from "../context/AuthContext";
 import type { Client, Partner, User } from "../types";
 
-const ROLE_OPTIONS = [
-  { value: "superadmin", label: "Superadmin" },
-  { value: "partner_admin", label: "Revendedor" },
-  { value: "client_manager", label: "Gestor do cliente" },
-  { value: "client_viewer", label: "Cliente" },
-] as const;
+type RoleValue = User["role"];
+
+interface RoleOption {
+  value: RoleValue;
+  label: string;
+  badgeClass: string;
+}
+
+const ROLE_DEFS: Record<RoleValue, RoleOption> = {
+  superadmin: {
+    value: "superadmin",
+    label: "👑 Superadmin",
+    badgeClass: "badge"
+  },
+  partner_admin: {
+    value: "partner_admin",
+    label: "🏢 Revendedor (Admin)",
+    badgeClass: "badge online"
+  },
+  partner_staff: {
+    value: "partner_staff",
+    label: "👷 Colaborador (equipe revenda)",
+    badgeClass: "badge"
+  },
+  client_manager: {
+    value: "client_manager",
+    label: "⚙️ Gestor do Cliente (edita tudo)",
+    badgeClass: "badge offline"
+  },
+  client_viewer: {
+    value: "client_viewer",
+    label: "🧑‍💼 Cliente Final (acompanha só suas máquinas)",
+    badgeClass: "badge"
+  },
+} as const;
+
+function RoleBadge({ role }: { role: RoleValue }) {
+  const def = ROLE_DEFS[role] || { label: role, badgeClass: "badge" };
+  const customStyle: React.CSSProperties | null = (() => {
+    switch (role) {
+      case "superadmin":
+        return {
+          background: "rgba(124, 58, 237, 0.12)",
+          color: "#7c3aed",
+          border: "1px solid rgba(124, 58, 237, 0.3)",
+          fontWeight: 700,
+        };
+      case "partner_admin":
+        return null;
+      case "partner_staff":
+        return {
+          background: "rgba(37, 99, 235, 0.12)",
+          color: "#2563eb",
+          border: "1px solid rgba(37, 99, 235, 0.3)",
+          fontWeight: 600,
+        };
+      case "client_manager":
+        return null;
+      case "client_viewer":
+        return {
+          background: "rgba(71, 85, 105, 0.08)",
+          color: "#334155",
+          border: "1px solid rgba(71, 85, 105, 0.2)",
+          fontWeight: 500,
+        };
+      default:
+        return null;
+    }
+  })();
+  const shortLabel: Record<RoleValue, string> = {
+    superadmin: "👑 Admin Geral",
+    partner_admin: "🏢 Revendedor",
+    partner_staff: "👷 Colaborador",
+    client_manager: "⚙️ Gestor",
+    client_viewer: "🧑‍💼 Cliente Final",
+  };
+  return (
+    <span className={def.badgeClass} style={customStyle || undefined} title={def.label}>
+      {shortLabel[role] || role}
+    </span>
+  );
+}
 
 export default function Usuarios() {
   const { user: currentUser, loading: authLoading } = useAuth();
-  const effectiveRole = currentUser?.role || "superadmin";
+  const effectiveRole: RoleValue = (currentUser?.role as RoleValue) || "superadmin";
   const isSuperadmin = effectiveRole === "superadmin";
   const isPartnerAdmin = effectiveRole === "partner_admin";
-  const canManageUsers = isSuperadmin || isPartnerAdmin || effectiveRole === "client_manager";
+  const isPartnerStaff = effectiveRole === "partner_staff";
+  const canManageUsers = isSuperadmin || isPartnerAdmin; // partner_staff e client_manager NAO CRIAM usuarios (mais seguro)
+
   const [users, setUsers] = useState<User[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
@@ -30,16 +108,27 @@ export default function Usuarios() {
   const [form, setForm] = useState({
     email: "",
     password: "",
-    role: "client_viewer" as User["role"],
-    client_id: currentUser?.client_id || 0,
-    partner_id: currentUser?.partner_id || 0,
+    role: "client_viewer" as RoleValue,
+    client_id: (currentUser?.client_id as number) || 0,
+    partner_id: (currentUser?.partner_id as number) || 0,
   });
 
   const load = async () => {
+    const usersPromise = api.getUsers();
+    const clientsPromise = (() => {
+      if (isPartnerAdmin || isPartnerStaff) {
+        // Revendedor: filtrar clientes SEU (já o backend já filtra mas por seguranca filtra no front também)
+        return api.getClients().then((list) =>
+          list.filter((c) => !currentUser?.partner_id || c.partner_id === currentUser.partner_id || !c.partner_id)
+        );
+      }
+      return api.getClients();
+    })();
+    const partnersPromise = isSuperadmin ? api.getPartners() : Promise.resolve<Partner[]>([]);
     const [usersData, clientsData, partnersData] = await Promise.all([
-      api.getUsers(),
-      api.getClients(),
-      isSuperadmin ? api.getPartners() : Promise.resolve([]),
+      usersPromise,
+      clientsPromise,
+      partnersPromise,
     ]);
     setUsers(usersData);
     setClients(clientsData);
@@ -56,20 +145,32 @@ export default function Usuarios() {
     setSaving(true);
     setError("");
     try {
+      const isStaff = form.role === "partner_staff";
+      const isPartnerRole = form.role === "partner_admin" || isStaff;
+      const payloadClientId =
+        form.role === "superadmin" || isPartnerRole ? null : (form.client_id || currentUser?.client_id || null) as number | null;
+      const payloadPartnerId =
+        form.role === "partner_admin"
+          ? (isSuperadmin ? (form.partner_id || null) : (currentUser?.partner_id || null))
+          : isStaff
+          ? (currentUser?.partner_id || null)
+          : isSuperadmin && form.role !== "superadmin"
+          ? null
+          : null;
       await api.createUser({
         email: form.email,
         password: form.password,
         role: form.role,
-        client_id: form.role === "superadmin" || form.role === "partner_admin" ? null : form.client_id || currentUser?.client_id || null,
-        partner_id: form.role === "partner_admin" ? (isSuperadmin ? (form.partner_id || null) : (currentUser?.partner_id || null)) : null,
+        client_id: payloadClientId,
+        partner_id: payloadPartnerId,
       });
       setShowModal(false);
       setForm({
         email: "",
         password: "",
         role: "client_viewer",
-        client_id: currentUser?.client_id || 0,
-        partner_id: currentUser?.partner_id || 0,
+        client_id: (currentUser?.client_id as number) || 0,
+        partner_id: (currentUser?.partner_id as number) || 0,
       });
       await load();
     } catch (err) {
@@ -85,8 +186,9 @@ export default function Usuarios() {
   };
 
   const handleDelete = async (item: User) => {
+    const roleLabel = ROLE_DEFS[item.role]?.label || item.role;
     const confirm1 = window.confirm(
-      `⚠️ EXCLUIR USUÁRIO PERMANENTEMENTE?\n\nLogin: ${item.email}\nPerfil: ${ROLE_OPTIONS.find((r) => r.value === item.role)?.label || item.role}\n\n📢 ESTA AÇÃO NÃO PODE SER DESFEITA!`
+      `⚠️ EXCLUIR USUÁRIO PERMANENTEMENTE?\n\nLogin: ${item.email}\nPerfil: ${roleLabel}\n\n📢 ESTA AÇÃO NÃO PODE SER DESFEITA!`
     );
     if (!confirm1) return;
     const confirm2 = window.confirm(
@@ -140,6 +242,9 @@ export default function Usuarios() {
     );
   }
 
+  const showPartnerDropdown = isSuperadmin && (form.role === "partner_admin" || form.role === "partner_staff");
+  const showClientDropdown = form.role !== "superadmin" && form.role !== "partner_admin" && form.role !== "partner_staff";
+
   return (
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
@@ -157,7 +262,7 @@ export default function Usuarios() {
                 <th>Login</th>
                 <th>E-mail</th>
                 <th>Perfil</th>
-                <th>Cliente</th>
+                <th>Cliente vinculado</th>
                 <th>Status</th>
                 <th></th>
               </tr>
@@ -167,7 +272,7 @@ export default function Usuarios() {
                 <tr key={item.id}>
                   <td>{item.email}</td>
                   <td>{item.email}</td>
-                  <td>{ROLE_OPTIONS.find((role) => role.value === item.role)?.label || item.role}</td>
+                  <td><RoleBadge role={item.role} /></td>
                   <td>{clients.find((client) => client.id === item.client_id)?.name || (item.client_id ? `#${item.client_id}` : "—")}</td>
                   <td>
                     <span className={`badge ${item.active ? "online" : "offline"}`}>
@@ -214,32 +319,58 @@ export default function Usuarios() {
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Novo usuário</h3>
+            {!isSuperadmin && (
+              <div
+                style={{
+                  padding: "0.8rem 1rem",
+                  marginBottom: "1rem",
+                  borderRadius: "var(--radius)",
+                  background: "rgba(37, 99, 235, 0.08)",
+                  border: "1px solid rgba(37, 99, 235, 0.25)",
+                  color: "#1d4ed8",
+                  fontSize: "0.9rem",
+                }}
+              >
+                ℹ️ Como revendedor, você pode criar:
+                <br /><strong>👷 Colaborador</strong> (sua equipe, vê tudo do seu revendedor)
+                <br /><strong>⚙️ Gestor do Cliente</strong> (edita um cliente específico seu)
+                <br /><strong>🧑‍💼 Cliente Final</strong> (só visualiza as máquinas do cliente vinculado)
+              </div>
+            )}
             <form onSubmit={handleCreate}>
               <div className="form-group">
                 <label>E-mail / Login *</label>
                 <input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
               </div>
               <div className="form-group">
-                <label>Senha *</label>
-                <input required type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+                <label>Senha * (mínimo 6 caracteres)</label>
+                <input required type="password" minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
               </div>
               <div className="form-group">
                 <label>Perfil *</label>
                 <select
                   value={form.role}
-                  onChange={(e) => setForm({ ...form, role: e.target.value as User["role"] })}
+                  onChange={(e) => setForm({ ...form, role: e.target.value as RoleValue })}
                   style={{ width: "100%", padding: "0.6rem", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "var(--radius)", color: "var(--text)" }}
                 >
-                  {ROLE_OPTIONS.filter((role) => {
-                    if (isSuperadmin) return true;
-                    if (isPartnerAdmin) return role.value !== "superadmin";
-                    return role.value === "client_manager" || role.value === "client_viewer";
-                  }).map((role) => (
-                    <option key={role.value} value={role.value}>{role.label}</option>
-                  ))}
+                  {Object.values(ROLE_DEFS)
+                    .filter((role) => {
+                      if (isSuperadmin) return true;
+                      // ===== REGRAS JULIO NO FRONTEND: =====
+                      // Partner_admin (revendedor): NUNCA vê opcao "Superadmin" e NUNCA vê "Revendedor (Admin)"!
+                      // Partner_admin PODE criar: Colaborador, Gestor, Cliente Final
+                      if (isPartnerAdmin) {
+                        return role.value === "partner_staff" || role.value === "client_manager" || role.value === "client_viewer";
+                      }
+                      // Qualquer outro perfil: NENHUM (canManageUsers já bloqueia acima, mas safe)
+                      return false;
+                    })
+                    .map((role) => (
+                      <option key={role.value} value={role.value}>{role.label}</option>
+                    ))}
                 </select>
               </div>
-              {isSuperadmin && form.role === "partner_admin" && (
+              {showPartnerDropdown && (
                 <div className="form-group">
                   <label>Revendedor *</label>
                   <select
@@ -255,9 +386,9 @@ export default function Usuarios() {
                   </select>
                 </div>
               )}
-              {form.role !== "superadmin" && form.role !== "partner_admin" && (
+              {showClientDropdown && (
                 <div className="form-group">
-                  <label>Cliente *</label>
+                  <label>Cliente * (vincular a este cliente)</label>
                   <select
                     required
                     value={form.client_id || ""}
@@ -270,6 +401,16 @@ export default function Usuarios() {
                       <option key={client.id} value={client.id}>{client.name}</option>
                     ))}
                   </select>
+                </div>
+              )}
+              {form.role === "partner_staff" && (
+                <div style={{ padding: "0.6rem 0.9rem", marginBottom: "1rem", borderRadius: "var(--radius)", background: "rgba(37, 99, 235, 0.06)", border: "1px solid rgba(37, 99, 235, 0.2)", color: "#1e40af", fontSize: "0.88rem" }}>
+                  ✅ Este colaborador será automaticamente vinculado ao seu revendedor e terá acesso a todos os clientes do seu revendedor, mas NÃO poderá criar outros revendedores.
+                </div>
+              )}
+              {form.role === "client_viewer" && (
+                <div style={{ padding: "0.6rem 0.9rem", marginBottom: "1rem", borderRadius: "var(--radius)", background: "rgba(71, 85, 105, 0.06)", border: "1px solid rgba(71, 85, 105, 0.2)", color: "#334155", fontSize: "0.88rem" }}>
+                  🧑‍💼 O cliente final só acessa as impressoras e histórico do cliente selecionado acima. Não pode editar nada.
                 </div>
               )}
               {error && (
@@ -300,6 +441,7 @@ export default function Usuarios() {
                 <input
                   required
                   type="password"
+                  minLength={6}
                   value={resetPassword}
                   onChange={(e) => setResetPassword(e.target.value)}
                 />
