@@ -21,8 +21,12 @@ export default function Clientes() {
   const effectiveRole = user?.role || "superadmin";
   const isSuperadmin = effectiveRole === "superadmin";
   const isPartnerAdmin = effectiveRole === "partner_admin";
-  const canManageClients = isSuperadmin || isPartnerAdmin;
-  const canEditSector = isSuperadmin || isPartnerAdmin || effectiveRole === "client_manager";
+  const isPartnerStaff = effectiveRole === "partner_staff";
+  const isClientManager = effectiveRole === "client_manager";
+  const canCreateClients = isSuperadmin || isPartnerAdmin || isPartnerStaff; // Colaborador PODE criar cliente (Julio pediu!)
+  const canEditClients = isSuperadmin || isPartnerAdmin || isPartnerStaff || isClientManager; // Colaborador/Gestor PODEM editar
+  const canDeleteClients = isSuperadmin || isPartnerAdmin; // Colaborador NUNCA exclui cliente (Julio pediu!)
+  const canEditSector = canEditClients; // Setor/local = mesma regra de editar
 
   const [partners, setPartners] = useState<Partner[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -346,7 +350,7 @@ export default function Clientes() {
               Atualizado em {formatDateTimeBrasil(lastRefreshAt)}
             </div>
           )}
-          {canManageClients && (
+          {canCreateClients && (
             <button className="btn btn-primary" onClick={handleOpenCreate}>
               + Novo cliente
             </button>
@@ -557,7 +561,7 @@ export default function Clientes() {
                       </span>
                     </td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      {canManageClients && (
+                      {canEditClients && (
                         <>
                           <button
                             className="btn btn-secondary"
@@ -566,14 +570,16 @@ export default function Clientes() {
                           >
                             ✏️ Editar
                           </button>
-                          <button
-                            className="btn btn-ghost"
-                            onClick={() => handleDelete(c.id, c.name)}
-                            disabled={deletingClientId === c.id}
-                            style={{ color: "var(--danger)" }}
-                          >
-                            {deletingClientId === c.id ? "Excluindo..." : "Excluir"}
-                          </button>
+                          {canDeleteClients && (
+                            <button
+                              className="btn btn-ghost"
+                              onClick={() => handleDelete(c.id, c.name)}
+                              disabled={deletingClientId === c.id}
+                              style={{ color: "var(--danger)" }}
+                            >
+                              {deletingClientId === c.id ? "Excluindo..." : "Excluir"}
+                            </button>
+                          )}
                         </>
                       )}
                     </td>
@@ -585,7 +591,7 @@ export default function Clientes() {
         )}
       </div>
 
-      {showModal && canManageClients && (
+      {showModal && (canCreateClients || canEditClients) && (
         <div className="modal-overlay" onClick={handleCloseModal}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>{editingClientId !== null ? "Editar cliente" : "Novo cliente"}</h3>

@@ -1057,8 +1057,8 @@ def update_client(client_id: int, payload: ClientUpdate, db: Session = Depends(g
 
 @router.delete("/clients/{client_id}")
 def delete_client(client_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
-    if not _can_create_clients(current_user):
-        raise HTTPException(status_code=403, detail="Sem permissão para excluir clientes")
+    if not _is_superadmin(current_user) and not _is_partner_admin(current_user):
+        raise HTTPException(status_code=403, detail="Apenas superadmin ou o administrador do revendedor podem excluir clientes. Colaboradores não podem excluir.")
     client = _get_scoped_client(db, current_user, client_id)
     db.delete(client)
     db.commit()
