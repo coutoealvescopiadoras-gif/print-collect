@@ -64,19 +64,25 @@ export default function Layout() {
   const effectiveRole = user ? (user.role || "superadmin") : null;
   const isSuperadmin = effectiveRole === "superadmin";
   const isPartnerAdmin = effectiveRole === "partner_admin";
-  const canManageResources = effectiveRole === "superadmin" || effectiveRole === "partner_admin" || effectiveRole === "client_manager";
-  const canManageUsers = canManageResources;
+  const isPartnerStaff = effectiveRole === "partner_staff";
+  const isClientManager = effectiveRole === "client_manager";
+  const isPartner = isPartnerAdmin || isPartnerStaff; // unifica revendedor + colaborador da revenda
+  const canViewClients = !!user; // TODOS usuarios logados VEEM aba Clientes (viewer ve o seu; staff/admin veem do parceiro)
+  const canViewAgents = isSuperadmin || isPartner || isClientManager; // Cliente Final NAO VE Agentes
+  const canManageUsers = isSuperadmin || isPartnerAdmin; // Colaborador NAO gerencia outros usuarios (mais seguro!)
   const canManageInstaller = isSuperadmin || isPartnerAdmin;
   const roleLabel =
     effectiveRole === "superadmin"
       ? "Superadmin"
       : effectiveRole === "partner_admin"
         ? "Revendedor"
-        : effectiveRole === "client_manager"
-          ? "Gestor"
-          : effectiveRole === "client_viewer"
-            ? "Cliente"
-            : "";
+        : effectiveRole === "partner_staff"
+          ? "Colaborador"
+          : effectiveRole === "client_manager"
+            ? "Gestor"
+            : effectiveRole === "client_viewer"
+              ? "Cliente Final"
+              : "";
 
   async function handlePassword(e: React.FormEvent) {
     e.preventDefault();
@@ -166,10 +172,10 @@ export default function Layout() {
         <nav>
           <NavLink to="/" end>Dashboard</NavLink>
           {isSuperadmin && <NavLink to="/revendedores">Revendedores</NavLink>}
-          {canManageResources && <NavLink to="/clientes">Clientes</NavLink>}
+          {canViewClients && <NavLink to="/clientes">Clientes</NavLink>}
           {canManageInstaller && <NavLink to="/instalador">Instalador</NavLink>}
           <NavLink to="/alertas">Alertas</NavLink>
-          {canManageResources && <NavLink to="/agentes">Agentes</NavLink>}
+          {canViewAgents && <NavLink to="/agentes">Agentes</NavLink>}
           {canManageUsers && <NavLink to="/usuarios">Usuários</NavLink>}
         </nav>
 

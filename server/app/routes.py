@@ -489,6 +489,9 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db), current_user
     if not _is_superadmin(current_user) and not _is_partner_admin(current_user) and role == ROLE_PARTNER_STAFF:
         # Apenas superadmin OU revendedor ADMIN podem criar colaboradores
         raise HTTPException(status_code=403, detail="Apenas superadmin ou o administrador do revendedor podem cadastrar colaboradores da equipe")
+    if not _is_superadmin(current_user) and role == ROLE_CLIENT_MANAGER:
+        # 🚫 REGRAS JULIO 01/09: Revendedor NAO cria Gestor do Cliente, so Colaborador ou Cliente Final
+        raise HTTPException(status_code=403, detail="Apenas superadmin pode cadastrar gestores de cliente. O revendedor cria somente colaboradores da equipe ou clientes finais.")
 
     normalized_email = payload.email.strip().lower()
     login_name = (payload.username or normalized_email).strip().lower()
@@ -581,6 +584,9 @@ def update_user(
         # ========== Staff: só superadmin OU partner_admin pode conceder ==========
         if not _is_superadmin(current_user) and not _is_partner_admin(current_user) and updates["role"] == ROLE_PARTNER_STAFF:
             raise HTTPException(status_code=403, detail="Apenas superadmin ou o administrador do revendedor podem promover para colaborador")
+        if not _is_superadmin(current_user) and updates["role"] == ROLE_CLIENT_MANAGER:
+            # 🚫 REGRAS JULIO 01/09: Revendedor NAO promove ninguem para Gestor do Cliente
+            raise HTTPException(status_code=403, detail="Apenas superadmin pode promover para gestor de cliente. O revendedor pode criar somente colaboradores da equipe ou clientes finais.")
 
     if "client_id" in updates:
         if _is_superadmin(current_user):
@@ -913,7 +919,7 @@ def dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(
 
     # LIMPEZA AUTOMATICA: fecha alertas falsos de toner colorido em impressoras PB!
     # Roda SEMPRE que carregar o Dashboard, por user scope (superadmin/partner/client)
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         partner_id = _required_partner_id(current_user)
         _cleanup_false_color_alerts(db, partner_id=partner_id, client_id=None)
     elif _is_superadmin(current_user):
@@ -927,7 +933,7 @@ def dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(
     alerts_query = db.query(Alert).join(Printer).filter(Printer.ignored == False)
     clients_query = db.query(Client).filter(Client.active == True)
 
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         partner_id = _required_partner_id(current_user)
         printers_query = printers_query.join(Client).filter(Client.partner_id == partner_id)
         alerts_query = alerts_query.join(Client, Client.id == Printer.client_id).filter(Client.partner_id == partner_id)
@@ -974,7 +980,7 @@ def list_clients(
     except Exception:
         Partner = None
 
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         query = query.filter(Client.partner_id == _required_partner_id(current_user))
     elif _is_superadmin(current_user):
         if own_only == True:
@@ -1021,7 +1027,7 @@ def create_client(payload: ClientCreate, db: Session = Depends(get_db), current_
     if not _can_create_clients(current_user):
         raise HTTPException(status_code=403, detail="Sem permissão para criar clientes")
     data = payload.model_dump()
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         data["partner_id"] = _required_partner_id(current_user)
     data["client_code"] = _generate_client_code(db)
     client = Client(**data)
@@ -1062,7 +1068,7 @@ def delete_client(client_id: int, db: Session = Depends(get_db), current_user: U
 @router.get("/clients/{client_id}/locations", response_model=list[LocationOut])
 def list_locations(client_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     scoped_client_id = _scoped_client_id(current_user, client_id)
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         _assert_partner_owns_client(db, current_user, client_id)
     query = db.query(Location).filter(Location.client_id == client_id)
     if scoped_client_id is not None:
@@ -1111,7 +1117,7 @@ def list_printers(
     # Join com Client para poder filtrar por partner_id / search / own_only e tambem para exibir nome cliente/parceiro no front
     query = query.join(Client, Client.id == Printer.client_id, isouter=False)
 
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         partner_id_forced = _required_partner_id(current_user)
         query = query.filter(Client.partner_id == partner_id_forced)
         if client_id is not None:
@@ -1187,7 +1193,7 @@ def get_printer_detail(
         .join(Client, Client.id == Printer.client_id, isouter=False)
         .filter(Printer.id == printer_id)
     )
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         partner_id_forced = _required_partner_id(current_user)
         query = query.filter(Client.partner_id == partner_id_forced)
 
@@ -1329,7 +1335,7 @@ def list_alerts(resolved: Optional[bool] = None, db: Session = Depends(get_db), 
 
     # LIMPEZA AUTOMATICA: fecha alertas falsos de toner colorido em impressoras PB
     # (roda tambem ao abrir a tela de Alertas)
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         _cleanup_false_color_alerts(db, partner_id=_required_partner_id(current_user))
     elif _is_superadmin(current_user):
         _cleanup_false_color_alerts(db)
@@ -1338,7 +1344,7 @@ def list_alerts(resolved: Optional[bool] = None, db: Session = Depends(get_db), 
     db.commit()
 
     query = db.query(Alert).join(Printer).filter(Printer.ignored == False)
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         query = query.join(Client, Client.id == Printer.client_id).filter(Client.partner_id == _required_partner_id(current_user))
     elif not _is_superadmin(current_user):
         query = query.filter(Alert.printer_id == Printer.id).filter(Printer.client_id == _required_client_id(current_user))
@@ -1485,7 +1491,7 @@ def clean_false_color_alerts_endpoint(
     ⚠️ Quando chamado MANUALMENTE pelo botão: roda SEMPRE, ignorando cache TTL."""
     _require_manage_any(current_user)
     closed = 0
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         closed = _cleanup_false_color_alerts(db, partner_id=_required_partner_id(current_user), force=True)
     elif _is_superadmin(current_user):
         closed = _cleanup_false_color_alerts(db, force=True)
@@ -1511,7 +1517,7 @@ def resolve_alert(alert_id: int, db: Session = Depends(get_db), current_user: Us
 def list_agents(client_id: Optional[int] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     scoped_client_id = _scoped_client_id(current_user, client_id)
     query = db.query(Agent)
-    if _is_partner_admin(current_user):
+    if _is_partner(current_user):
         partner_id = _required_partner_id(current_user)
         query = query.join(Client).filter(Client.partner_id == partner_id)
         if client_id is not None:
@@ -2642,7 +2648,7 @@ def _get_scoped_printer(db: Session, current_user: User, printer_id: int, includ
     if not include_ignored:
         q = q.filter(Printer.ignored == False)
     if not _is_superadmin(current_user):
-        if _is_partner_admin(current_user):
+        if _is_partner(current_user):
             q = q.join(Client, Client.id == Printer.client_id).filter(
                 Client.partner_id == _required_partner_id(current_user)
             )

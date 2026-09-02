@@ -356,13 +356,12 @@ export default function Usuarios() {
                   {Object.values(ROLE_DEFS)
                     .filter((role) => {
                       if (isSuperadmin) return true;
-                      // ===== REGRAS JULIO NO FRONTEND: =====
-                      // Partner_admin (revendedor): NUNCA vê opcao "Superadmin" e NUNCA vê "Revendedor (Admin)"!
-                      // Partner_admin PODE criar: Colaborador, Gestor, Cliente Final
+                      // ===== REGRAS JULIO 01/09 NO FRONTEND: =====
+                      // Partner_admin (revendedor): NUNCA vê opcao "Superadmin" e NUNCA vê "Revendedor (Admin)" e NUNCA vê "Gestor do Cliente"!
+                      // Partner_admin PODE criar SOMENTE: Colaborador (partner_staff) + Cliente Final (client_viewer)
                       if (isPartnerAdmin) {
-                        return role.value === "partner_staff" || role.value === "client_manager" || role.value === "client_viewer";
+                        return role.value === "partner_staff" || role.value === "client_viewer";
                       }
-                      // Qualquer outro perfil: NENHUM (canManageUsers já bloqueia acima, mas safe)
                       return false;
                     })
                     .map((role) => (
