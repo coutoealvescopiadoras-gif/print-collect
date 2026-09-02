@@ -2914,20 +2914,71 @@ async def agent_report(
                     text = f"{manu or ''} {modelo or ''}".lower()
                     if not text.strip():
                         return False
+                    # ===== REGRA RAPIDA ANTI-FALSO POSITIVO JULIO 02/09 =====
+                    # Brother P&B e Ricoh MP "501/3710/4510 etc" (SEM "C" depois de MP/SP) NAO SAO COLORIDAS!
+                    # Só Ricoh "MP C" / "IM C" / "SP C" (tem C na frente!) = colorida de verdade.
+                    # Brother: tem modelos coloridos (HL-L3xxx etc), MAS se vier pages_color=0 na 1a coleta → NÃO PEGA!
+                    if ("ricoh" in text) and ("mp " in text) and ("mp c" not in text):
+                        return False  # Ricoh MP COMUM = P&B (ex: Ricoh MP 501 = P&B!)
+                    if ("ricoh" in text) and ("sp " in text) and ("sp c" not in text):
+                        return False  # Ricoh SP COMUM = P&B (ex: Ricoh SP 3710 = P&B!)
                     color_keywords = ("bizhub c", " c258", " c308", " c368", " c458", " c558",
                                       " c250", " c300", " c350", " c450", " c550", " c650",
                                       "color", "colorida", "clp-", "clx-", "xpress c",
                                       "mc3", "mc4", "mc5", "mc6", "ecosys m5", "ecosys m6",
                                       "ecosys m8", "taskalfa", "workcentre 6", "workcentre 7",
                                       "phaser 6", "versalink c", "altalink c",
-                                      "sp c2", "sp c3", "sp c4", "im c", "mp c")
+                                      "sp c2", "sp c3", "sp c4", "im c", "mp c",
+                                      # Brother Color: HL-L3, DCP-L3, MFC-L3, L8, L9 series
+                                      "hl-l3", "dcp-l3", "mfc-l3", "hl-l8", "hl-l9", "mfc-l8", "mfc-l9",
+                                      # Samsung / HP Color
+                                      "clp-", "clx-", "xpress c")
                     return any(k in text for k in color_keywords)
 
                 try:
                     cur_total = int(printer.pages_total or 0)
                     cur_bw = int(printer.pages_bw or 0)
                     cur_color = int(printer.pages_color or 0)
-                    is_really_color = _has_color_toners_real(printer) or _model_sugere_colorida(printer.model, printer.manufacturer)
+
+                    # ====================================================================
+                    # 🔥 PRIORIDADE 1 (REGRA DE OURO JULIO 02/09):
+                    #    Usa o HELPER OFICIAL _is_color_printer_real que já tem todas as
+                    #    defesas contra falso colorido (pages_color=0 → PB!).
+                    #    Só usamos _model_sugere_colorida como TIE-BREAKER QUANDO TUDO = 0
+                    #    (primeira coleta, sem nenhum dado ainda, impressora acabou de cadastrar).
+                    # ====================================================================
+                    is_really_color = False
+                    if (cur_total > 0 or cur_bw > 0 or cur_color > 0) and cur_color >= 1:
+                        # Já tem páginas coloridas registradas → é colorida de verdade
+                        is_really_color = _is_color_printer_real(printer)
+                    elif (cur_total > 0 or cur_bw > 0) and cur_color <= 0:
+                        # 🚨 TEM PÁGINAS PB MAS NENHUMA COLORIDA REGISTRADA → É P&B, NUNCA DIVIDE!
+                        # Julio Brother P&B + Ricoh MP 501 P&B caem AQUI!
+                        is_really_color = False
+                    else:
+                        # Caso extremo: NADA preenchido ainda (primeira coleta, zero páginas)
+                        # Usamos modelo como guia (só se tiver certeza!)
+                        has_cmy = _has_color_toners_real(printer)
+                        is_really_color = has_cmy or _model_sugere_colorida(printer.model, printer.manufacturer)
+
+                    # ====================================================================
+                    # 🔥 CORREÇÃO RETROATIVA JULIO 02/09:
+                    #    Impressoras P&B que foram marcadas ERRADAS como coloridas HOJE
+                    #    (Brother P&B + Ricoh MP 501 P&B): Resetamos pages_color = 0
+                    #    e pages_bw = pages_total para corrigir os cards automaticamente
+                    #    NA PRÓXIMA COLETA (não precisa recadastrar nada manualmente!)
+                    # ====================================================================
+                    if not is_really_color and cur_total > 0:
+                        # É PRETO & BRANCO DE VERDADE!
+                        resetou = False
+                        if cur_color > 0:
+                            resetou = True
+                        if cur_bw != cur_total:
+                            resetou = True
+                        if resetou:
+                            printer.pages_bw = cur_total
+                            printer.pages_color = 0
+                            db.flush()
 
                     if is_really_color and cur_total > 0:
                         new_bw = cur_bw
