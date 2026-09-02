@@ -393,7 +393,6 @@ export default function Usuarios() {
                     required
                     value={form.client_id || ""}
                     onChange={(e) => setForm({ ...form, client_id: Number(e.target.value) })}
-                    disabled={effectiveRole === "client_manager"}
                     style={{ width: "100%", padding: "0.6rem", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "var(--radius)", color: "var(--text)" }}
                   >
                     <option value="">Selecione...</option>

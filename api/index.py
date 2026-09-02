@@ -44,18 +44,7 @@ try:
     _DEBUG_OUTPUT.append("[api/index.py] create_app() invoking...")
     _real_app = create_app()
 
-    # === SUBSTITUI O PLACEHOLDER APP PELO APP REAL (TODAS AS ROTAS, MIDDLEWARES etc) ===
-    app.title = _real_app.title
-    app.description = _real_app.description
-    app.version = _real_app.version
-    app.debug = _real_app.debug
-    app.state = _real_app.state  # type: ignore[assignment]
-    app.router = _real_app.router
-    app.routes = _real_app.routes
-    app.dependency_overrides = _real_app.dependency_overrides
-    app.exception_handlers = _real_app.exception_handlers
-    app.middleware_stack = _real_app.middleware_stack
-    app.user_middleware = _real_app.user_middleware
+    app = _real_app
 
     _INIT_OK = True
     _DEBUG_OUTPUT.append(f"[api/index.py] CREATE_APP OK. Routes loaded={len(app.routes) if hasattr(app, 'routes') else 'n/a'}.")

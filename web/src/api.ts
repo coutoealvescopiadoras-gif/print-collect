@@ -205,7 +205,7 @@ export const api = {
     username?: string;
     email: string;
     password: string;
-    role: "superadmin" | "partner_admin" | "client_manager" | "client_viewer";
+    role: "superadmin" | "partner_admin" | "partner_staff" | "client_manager" | "client_viewer";
     client_id?: number | null;
     partner_id?: number | null;
   }) =>
@@ -218,7 +218,7 @@ export const api = {
     data: Partial<{
       email: string;
       password: string;
-      role: "superadmin" | "partner_admin" | "client_manager" | "client_viewer";
+      role: "superadmin" | "partner_admin" | "partner_staff" | "client_manager" | "client_viewer";
       client_id: number | null;
       partner_id: number | null;
       active: boolean;
