@@ -70,7 +70,7 @@ export default function Layout() {
   const canViewClients = !!user; // TODOS usuarios logados VEEM aba Clientes (viewer ve o seu; staff/admin veem do parceiro)
   const canViewAgents = isSuperadmin || isPartner || isClientManager; // Cliente Final NAO VE Agentes
   const canManageUsers = isSuperadmin || isPartnerAdmin; // Colaborador NAO gerencia outros usuarios (mais seguro!)
-  const canManageInstaller = isSuperadmin || isPartnerAdmin;
+  const canManageInstaller = isSuperadmin || isPartner; // Superadmin, Revendedor ADMIN e Colaborador VEEM aba Instalador (Julio pediu 01/09)
   const roleLabel =
     effectiveRole === "superadmin"
       ? "Superadmin"
