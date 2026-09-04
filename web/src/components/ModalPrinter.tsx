@@ -238,7 +238,7 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
                           <tr>
                             <th>Data / Hora</th>
                             <th>Total</th>
-                            {isColor && <th>Preto</th>}
+                            {isColor && <th>PEB</th>}
                             {isColor && <th>Cor</th>}
                             <th style={{ textAlign: "center" }}>🖤</th>
                             {isColor && <th style={{ textAlign: "center" }}>🔵</th>}
@@ -312,9 +312,10 @@ function InfoCard({ label, value }: { label: string; value: React.ReactNode }) {
 function ContadoresPrinter({ printer }: { printer: Printer }) {
   const isColor =
     !!printer.toner_cyan || !!printer.toner_magenta || !!printer.toner_yellow || Number(printer.pages_color || 0) > 0;
-  const total = Number(printer.pages_total || 0);
+  const rawTotal = Number(printer.pages_total || 0);
   const pb = Number(printer.pages_bw || 0);
   const cor = Number(printer.pages_color || 0);
+  const total = isColor ? Math.max(rawTotal, pb + cor) : rawTotal;
 
   if (!isColor) {
     return (
@@ -338,9 +339,9 @@ function ContadoresPrinter({ printer }: { printer: Printer }) {
         gap: 12,
       }}
     >
-      <CardCounter label="Preto & Branco" value={formatNumberBrasil(pb)} accent="#4b5563" sub={"Páginas"} />
+      <CardCounter label="PEB (Preto + Branco)" value={formatNumberBrasil(pb)} accent="#4b5563" sub={"Páginas"} />
       <CardCounter label="Coloridas" value={formatNumberBrasil(cor)} accent="#2563eb" sub={""} />
-      <CardCounter label="Total" value={formatNumberBrasil(total)} accent="#0f172a" sub={"Páginas"} />
+      <CardCounter label="Total" value={formatNumberBrasil(total)} accent="#0f172a" sub={"PEB + Coloridas"} />
     </div>
   );
 }

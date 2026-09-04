@@ -312,7 +312,7 @@ export default function Impressoras() {
                 <th>
                   Contadores
                   <div style={{ fontWeight: 400, fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2 }}>
-                    Total · Preto · Cor
+                    Total · PEB · Cor
                   </div>
                 </th>
                 <th>Toner</th>
@@ -372,20 +372,28 @@ export default function Impressoras() {
                     <span className={`badge ${p.status}`}>{p.status}</span>
                   </td>
                   <td style={{ lineHeight: 1.35, fontSize: "0.92rem" }}>
-                    <div>
-                      <strong style={{ fontSize: "1rem" }}>{formatNumberBrasil(p.pages_total)}</strong>
-                      <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>total</span>
-                    </div>
-                    {isColorPrinter ? (
-                      <div style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginTop: 2 }}>
-                        <span style={{ color: "var(--text)" }}>{formatNumberBrasil(p.pages_bw)}</span> preto ·{" "}
-                        <span style={{ color: "var(--primary)" }}>{formatNumberBrasil(p.pages_color)}</span> cor
-                      </div>
-                    ) : Number(p.pages_bw || 0) > 0 ? (
-                      <div style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginTop: 2 }}>
-                        {formatNumberBrasil(p.pages_bw)} preto &amp; branco
-                      </div>
-                    ) : null}
+                    {(() => {
+                      const total = Number(p.pages_total || 0);
+                      const bw = Number(p.pages_bw || 0);
+                      const color = Number(p.pages_color || 0);
+                      const displayTotal = isColorPrinter ? Math.max(total, bw + color) : total;
+                      return (
+                        <>
+                          <div>
+                            <strong style={{ fontSize: "1rem" }}>{formatNumberBrasil(displayTotal)}</strong>
+                            <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>
+                              {isColorPrinter ? "total (PEB + cor)" : "total"}
+                            </span>
+                          </div>
+                          {isColorPrinter && (
+                            <div style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginTop: 2 }}>
+                              <span style={{ color: "var(--text)" }}>{formatNumberBrasil(bw)}</span> PEB ·{" "}
+                              <span style={{ color: "var(--primary)" }}>{formatNumberBrasil(color)}</span> cor
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </td>
                   <td>
                     <TonerBar level={p.toner_black} />

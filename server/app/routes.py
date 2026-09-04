@@ -2990,27 +2990,27 @@ async def agent_report(
                             new_color = cur_total - cur_bw
                             new_bw = cur_bw
                             changed = True
-                        # Caso B (MAIS COMUM KONICA!): pages_color ==0 E pages_bw == cur_total (fallback bug do agente antigo!)
+                        # Caso B (antes dividia 68/32 ou 75/25):
+                        # ⛔ NÃO FAZEMOS MAIS DIVISÃO HEURÍSTICA!
+                        # Se pages_color == 0 e pages_bw está inconsistente (== 0 ou >= total),
+                        # significa que a impressora NÃO reporta contadores separados.
+                        # TUDO fica como PB, pois PEB e páginas sem classificação NÃO são coloridas.
                         elif cur_color <= 0 and (cur_bw <= 0 or cur_bw >= cur_total):
-                            # Se modelo for Konica bizhub C series → ~70% PB / 30% Color em media papelarias/exata
-                            # Se modelo nao identificado → mesma média conservadora (sem exagerar no color!)
-                            model_text = f"{printer.manufacturer or ''} {printer.model or ''}".lower()
-                            if any(k in model_text for k in ("konica", "minolta", "bizhub c")):
-                                new_bw = int(cur_total * 0.68)  # 68% PB na média
-                            else:
-                                new_bw = int(cur_total * 0.75)  # + conservadora: 75% PB
-                            new_color = cur_total - new_bw
-                            if new_color < 0:
-                                new_color = 0
+                            new_bw = cur_total
+                            new_color = 0
                             changed = True
-                        # Caso C: inconsistencia soma != total → ajustar
+                        # Caso C: inconsistencia soma != total → ATUALIZA TOTAL para a soma.
+                        # Como PEB e contadores não classificados já estão em pages_bw
+                        # (Heurística 3 corrigida no agente), PB + Color = produção REAL.
+                        # Soma prevalece sobre pages_total (OID único que pode faltar detalhes).
                         elif (cur_bw + cur_color) > cur_total:
-                            if cur_bw > cur_total:
-                                new_bw = cur_total - max(0, cur_color)
-                                if new_bw < 0:
-                                    new_bw = 0
-                            if (new_bw + cur_color) > cur_total:
-                                new_color = max(0, cur_total - new_bw)
+                            new_total_expected = cur_bw + cur_color
+                            if cur_bw < 0:
+                                new_bw = 0
+                            else:
+                                new_bw = cur_bw
+                            if cur_color < 0:
+                                new_color = 0
                             else:
                                 new_color = cur_color
                             changed = True
@@ -3020,15 +3020,13 @@ async def agent_report(
                             changed = True
 
                         if changed and (new_bw != cur_bw or new_color != cur_color):
-                            # Nunca deixa valores negativos
                             new_bw = max(0, new_bw)
                             new_color = max(0, new_color)
-                            # APLICA NA IMPRESSORA
                             printer.pages_bw = new_bw
                             printer.pages_color = new_color
-                            # Garante monotonicidade: nova soma NÃO é menor que a soma anterior
-                            if (new_bw + new_color) < cur_total and new_bw >= 0 and new_color >= 0:
-                                pass  # OK, pois PB estava inflado pelo bug or pages_total
+                            new_sum = new_bw + new_color
+                            if new_sum > cur_total:
+                                printer.pages_total = new_sum
                 except Exception:
                     pass
 

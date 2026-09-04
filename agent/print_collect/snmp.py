@@ -226,22 +226,18 @@ def _collect_pages_from_marker_table(ip: str, community: str, timeout: int) -> t
                 pages_color_sum += val
                 used.add(lc_suffix)
 
-        # 2) Heuristica 3: indices que sobraram, ordem: primeiro (menor) marker = PB, demais = color
+        # 2) Heuristica 3: indices que sobraram (não tiveram role de cor reconhecida).
+        #    Estes índices são PEB (páginas em branco), contador duplex, alimentador,
+        #    ou OUTROS contadores NÃO-coloridos. Portanto:
+        #    ✅ SOMA TUDO EM pages_bw_sum (PEB é PB! NUNCA vai para color!)
         remaining = [(suf, v) for suf, v in life_counts.items() if suf not in used]
         if remaining:
-            # Ordena por partes numericas
             def sort_key(tup):
                 parts = tup[0].split(".")
                 return tuple(int(p) for p in parts if p.isdigit())
             remaining_sorted = sorted(remaining, key=sort_key)
-            if pages_bw_sum == 0:
-                pages_bw_sum += remaining_sorted[0][1]
-                if len(remaining_sorted) > 1:
-                    for _, v in remaining_sorted[1:]:
-                        pages_color_sum += v
-            else:
-                for _, v in remaining_sorted:
-                    pages_color_sum += v
+            for _, v in remaining_sorted:
+                pages_bw_sum += v
 
         return max(0, pages_bw_sum), max(0, pages_color_sum)
     except Exception as exc:
@@ -544,6 +540,11 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 2) -> Opt
     if pages_total > 0 and pages_bw <= 0 and pages_color <= 0:
         pages_bw = pages_total
         pages_color = 0
+    # ✅ PEB e contadores não classificados AGORA VÃO PARA PB (Heurística 3 corrigida).
+    # Então a soma PB + Color é a produção REAL completa. Se for > pages_total OID,
+    # a soma prevalece (pois os markers separados têm mais detalhes que o total único).
+    if sum_bw_color > pages_total:
+        pages_total = sum_bw_color
 
     toner_black = _toner_percent(
         _snmp_get(ip, OID_TONER_LEVEL, community, timeout),
@@ -614,13 +615,20 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 2) -> Opt
         # ===== PASSO EXTRA: HEURISTICA PAGINAS IMPRESSORA COLORIDA CONFIRMADA =====
         # Se tem toners coloridos (> 0%) MAS pages_color AINDA veio 0 (raro mas pode!)
         if has_color_toners and pages_color <= 0 and pages_total > 0:
-            # Assume pages_total * 0.75 PB default ou pior caso pages_total - pages_bw
+            # ⛔ NÃO FAZEMOS MAIS DIVISÃO HEURÍSTICA (ex: 50/50) que distorce
+            # o contador real do cliente e transforma PEB em páginas coloridas!
+            # SÓ calculamos pages_color SE pages_bw tiver um valor real
+            # (entre 0 e pages_total) → nesse caso é matemática, não chute.
             if pages_bw > 0 and pages_bw < pages_total:
                 pages_color = pages_total - pages_bw
             else:
-                pages_bw = int(pages_total * 0.5)
-                pages_color = pages_total - pages_bw
-        # Corrige inconsistencia: soma PB+Color > Total (alguma soma deu errado!)
+                # Sem contadores separados reais → TUDO fica como PB.
+                # Páginas em branco (PEB) NÃO são coloridas, nunca.
+                pages_bw = pages_total
+                pages_color = 0
+        # ✅ PEB e contadores não classificados já estão em pages_bw (Heurística 3 corrigida).
+        # Então a soma PB + Color é a produção REAL completa.
+        # Se PB + Color > pages_total (OID fixo), a soma prevalece.
         if pages_bw + pages_color > pages_total:
             pages_total = pages_bw + pages_color
         data.pages_bw = pages_bw
