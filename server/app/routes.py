@@ -1136,6 +1136,19 @@ def list_printers(
     except Exception:
         pass
 
+    # 🔧 PATCH RETROATIVO IMEDIATO (force=True!) — Julio 04/09 22:30
+    # Ao ABRIR o painel (aba Impressoras OU modal cliente), SEM esperar nova coleta,
+    # o servidor já CORRIGE o SQL de TODAS impressoras P&B contaminadas no bug 02/09:
+    #   - Samsung M4070 / M2020 etc
+    #   - Konica bizhub 284e / 224e etc (sem "C" antes!)
+    #   - Ricoh MP 501, Brother 5652, Canon iR, HP LaserJet P&B etc
+    # Resolve problemas: (I) marcada como colorida quando P&B; (II) contadores
+    # inchados (ex: 4M) por soma bw+color errada na época.
+    try:
+        _retroactive_patch_pb_printers_2026_09_04(db, force=True)
+    except Exception:
+        pass
+
     scoped_client_id = _scoped_client_id(current_user, client_id)
     query = db.query(Printer).filter(Printer.ignored == False)
     # =================== 🔥 HOTFIX PAPELARIA EXATA 500 ===================
@@ -1253,6 +1266,13 @@ def get_printer_detail(
     """Abre FICHA DETALHADA de 1 impressora (para modal no front).
     Verifica permissões de escopo (client/partner) igual list_printers."""
     _ensure_printer_ignored_column(db)
+
+    # 🔧 PATCH RETROATIVO IMEDIATO (chama se o helper de cache permitir)
+    # Ao abrir modal da impressora, garante correção PB se necessário.
+    try:
+        _retroactive_patch_pb_printers_2026_09_04(db)
+    except Exception:
+        pass
 
     # Query com JOIN para poder checar permissões — HOTFIX LEFT JOIN (Papelaria Exata!)
     query = (
@@ -2129,7 +2149,109 @@ def _is_color_printer_real(printer) -> bool:
         "epson" in text and
         not any(k in text for k in ("wf-c", "workforce pro", "workforce c", "color", "cor"))
     )
-    model_confirmado_pb = ricoh_pb_common or brother_pb_common or epson_pb_common
+    # ============================================================================
+    # SAMSUNG P&B CONFIRMADO (Julio 04/09 - M4070 etc = P&B!)
+    #   Coloridas Samsung = "clp-", "clx-", "xpress c" (já estão em color_model_keywords).
+    #   P&B Samsung = contém "samsung" OU "xpress" OU "proxpress" E
+    #                 tem " m" + numero (ex: M2020, M2070, M2825, M2835, M2875,
+    #                 M2885, M3015, M3065, M3320, M3370, M3820, M3870, M4020,
+    #                 M4024, M4070, M4075, M4580 etc)
+    #                 E NÃO tem indicadores coloridos (clp/clx/xpress c/color).
+    # ============================================================================
+    def _samsung_has_m_series(_t: str) -> bool:
+        import re as _re
+        return bool(_re.search(r"\sm\d{3,5}", _t)) or bool(_re.search(r"-m\d{3,5}", _t))
+    samsung_pb_common = (
+        ("samsung" in text or "xpress" in text or "proxpress" in text) and
+        _samsung_has_m_series(text) and
+        not any(k in text for k in ("clp-", "clx-", "xpress c", "samsung c", "color", "cor", "sl-c"))
+    )
+    # ============================================================================
+    # KONICA MINOLTA P&B CONFIRMADO (Julio 04/09 - bizhub 284e, 224e, 364e etc)
+    #   Coloridas Konica = "bizhub c" ou " c258"/" c308"/etc (em color_model_keywords).
+    #   P&B Konica = contém "bizhub" E modelo NÃO TEM "c" antes de 3 ou 4 dígitos:
+    #     bizhub 223, 283, 363, 423, 224e, 284e, 364e, 454e, 554e, 654e, 754e,
+    #     bizhub 227, 287, 367, 7528, 306i, 266i, 246i, 226i, 225i, 215i, etc.
+    #   OU (develop / ineo + numero sem c / Olivetti d-color etc P&B)
+    # ============================================================================
+    def _konica_bizhub_pb(_t: str) -> bool:
+        import re as _re
+        # Nao tem "bizhub c" (colorido) MAS tem "bizhub" seguido de espaço e numero (PB)
+        if "bizhub c" in _t or "bizhubc" in _t:
+            return False
+        m = _re.search(r"bizhub\s*(\d{3,4}[a-z]?)", _t)
+        if m:
+            return True
+        # Desenvolvedoras da Konica: Develop Ineo / Olivetti d-series sem color
+        if ("develop" in _t or "ineo" in _t) and "ineo+" not in _t and "ineo c" not in _t and "color" not in _t:
+            m2 = _re.search(r"ineo\s*(\d{3,4})", _t)
+            if m2: return True
+        return False
+    konica_pb_common = (
+        ("konica" in text or "minolta" in text or "bizhub" in text or "develop" in text or "ineo" in text) and
+        _konica_bizhub_pb(text)
+    )
+    # ============================================================================
+    # CANON P&B CONFIRMADO
+    #   Coloridas Canon = "canon c", "lbpc", "mf c", "c1225", "c1325", "c1335",
+    #                     "c250i", "c256i", "c3025", "c3120", "c3125", "c3320",
+    #                     "c3325", "c3330", "c3520", "c3525", "c3530", "c3720",
+    #                     "c3725", "c3730", "c3822", "c3826", "c3830", "c3835",
+    #                     "c3922", "c3926", "c3930", "c3935", "c454", "c5030",
+    #                     "c5035", "c5045", "c5051", "c5235", "c5240", "c5250",
+    #                     "c5255", "c5535", "c5540", "c5550", "c5560", "c5735",
+    #                     "c5740", "c5750", "c5760", "c5840", "c5850", "c5860",
+    #                     "c5870", "c6000", "c650", "c700", "c750", "c800",
+    #                     "c850", "c910", "c920", "c925", "c928", "c929", "c10000"
+    #                     ou "imagepress c" / "imagerunner c" / "ir c" / "ir adv c"
+    #                     ou "satera mf" com c
+    #   P&B Canon = restante (imageRunner, LBP, MF, Satera, MAXIFY não-color etc).
+    # ============================================================================
+    def _canon_pb(_t: str) -> bool:
+        import re as _re
+        if "canon" not in _t and "imagerunner" not in _t and "image runner" not in _t and "ir adv" not in _t and "lbp" not in _t and "satera" not in _t and "maxify" not in _t:
+            return False
+        # Coloridas: tem "c" imediatamente antes de 3+ dígitos (ex: C3320, C3025)
+        #   ou keywords color
+        color_hit = any(k in _t for k in (
+            "canon c", "ir c", "ir-adv c", "ir adv c", "imagepress c", "imagerunner c", "image runner c",
+            "lbpc", "mfc c", "color", "cor",
+            "c1225", "c1325", "c1335", "c250i", "c256i", "c255i", "c355i", "c350i",
+            "c3025", "c3120", "c3125", "c3222", "c3226", "c3230", "c3320", "c3325", "c3330",
+            "c3520", "c3525", "c3530", "c3720", "c3725", "c3730",
+            "c3822", "c3826", "c3830", "c3835", "c3922", "c3926", "c3930", "c3935",
+        ))
+        if color_hit:
+            return False
+        # Padroes coloridos: "-cXXXX" (ex: iR-ADV C3320) ou " cXXXX"
+        if _re.search(r"[\s-]c\d{3,5}", _t):
+            return False
+        # É CANON e não caiu em nenhuma keyword color → P&B!
+        return True
+    canon_pb_common = _canon_pb(text)
+
+    # HP P&B CONFIRMADO (HP LaserJet / MFP / Laser não tem "color" / "Color Laserjet" / "CLJ" / CP1025 / M479 etc → P&B)
+    def _hp_pb(_t: str) -> bool:
+        import re as _re
+        if "hp " not in _t and "hewlett" not in _t and "laserjet" not in _t and "laser jet" not in _t and "officejet" not in _t:
+            return False
+        color_hit = any(k in _t for k in ("color laserjet", "colorlaserjet", "clj", "laserjet pro m", "hp color", "m479", "m454", "m455", "m551", "m552", "m553", "m554", "m555", "m570", "m575", "m577", "m578", "m651", "m652", "m653", "m680", "m681", "m682", "m750", "m751", "m775", "m776", "m855", "m856", "m880", "cp102", "cp1025", "cp121", "cp1215", "cp151", "cp1515", "cp1518", "cp1525", "cp202", "cp2025", "cp350", "cp3505", "cp3525", "cp400", "cp4025", "cp4525", "cp5225", "cp5525", "cp6015", "color", "cor", "cm1312", "cm1415", "cm2320"))
+        if color_hit:
+            return False
+        if _re.search(r"[\s-]m\d{3,5}f?dw?n?dn?fdn?fw?$", _t):
+            return True
+        if _re.search(r"[\s-]p\d{3,5}dn?$", _t):
+            return True
+        if "laserjet" in _t or "laser jet" in _t:
+            return True
+        return False
+    hp_pb_common = _hp_pb(text)
+
+    model_confirmado_pb = (
+        ricoh_pb_common or brother_pb_common or epson_pb_common or
+        samsung_pb_common or konica_pb_common or canon_pb_common or
+        hp_pb_common
+    )
     if model_confirmado_pb:
         return False
 
@@ -2575,24 +2697,29 @@ _RETRO_PB_PATCH_CACHE_TTL_SECONDS = 600
 _RETRO_PB_PATCH_LAST_RUN: float = 0.0
 
 
-def _retroactive_patch_pb_printers_2026_09_04(db: Session) -> int:
+def _retroactive_patch_pb_printers_2026_09_04(db: Session, force: bool = False) -> int:
     """PATCH RETROATIVO DE 04/09 — corrige IMPRESSORAS P&B que foram
     contaminadas no bug do dia 02/09 com toners CMY falsos e pages_color > 0
     no banco, que criavam um LOOP INFINITO de NÃO apagar CMY nunca.
 
+    Também corrige contadores INCHADOS por classificação errada como colorida
+    (ex: Brother/Ricoh com 4M por pages_total = bw + color inchado na época).
+
     Solução: VAI LÁ NO BANCO DIRETAMENTE e conserta TODAS impressoras
     cadastradas que (após o helper `_is_color_printer_real` atualizado)
     são reconhecidas como P&B, mas possuem toner_cyan/magenta/yellow
-    != None OU pages_color > 0.
+    != None OU pages_color > 0 OU bw != total.
 
-    Roda NO MÁXIMO 1 vez a cada 10 minutos para não sobrecarregar o DB.
+    Roda NO MÁXIMO 1 vez a cada X minutos para não sobrecarregar o DB
+    (exceto se force=True, chamado direto do endpoint de listagem quando
+    Julio ABRE o painel — correção IMEDIATA sem esperar coleta nova!).
 
     Retorna: total de impressoras corrigidas.
     """
     import time as _t
     global _RETRO_PB_PATCH_LAST_RUN
     _now_ts = _t.time()
-    if (_now_ts - _RETRO_PB_PATCH_LAST_RUN) < _RETRO_PB_PATCH_CACHE_TTL_SECONDS:
+    if not force and (_now_ts - _RETRO_PB_PATCH_LAST_RUN) < _RETRO_PB_PATCH_CACHE_TTL_SECONDS:
         return 0
     _RETRO_PB_PATCH_LAST_RUN = _now_ts
 
@@ -2610,7 +2737,7 @@ def _retroactive_patch_pb_printers_2026_09_04(db: Session) -> int:
         if is_color:
             continue
 
-        # Impressora é P&B! Vamos ver se tem lixo do dia 02/09 no banco.
+        # Impressora é P&B! Vamos varrer TODAS inconsistências do bug 02/09.
         needs_fix = False
         try:
             _total = int(p.pages_total or 0)
@@ -2619,15 +2746,28 @@ def _retroactive_patch_pb_printers_2026_09_04(db: Session) -> int:
         except Exception:
             _total = _bw = _col = 0
 
+        # 1) Apaga toners CMY se existiam (falsos do bug 02/09)
         if p.toner_cyan is not None:    p.toner_cyan = None;    needs_fix = True
         if p.toner_magenta is not None: p.toner_magenta = None; needs_fix = True
         if p.toner_yellow is not None:  p.toner_yellow = None;  needs_fix = True
-        if _col != 0:                   p.pages_color = 0;      needs_fix = True
-        if _bw != _total or _total > 0:
+        # 2) Zera pages_color para SEMPRE (P&B não tem páginas coloridas!)
+        if _col != 0:
+            p.pages_color = 0
+            needs_fix = True
+        # 3) FORÇA pages_bw = pages_total (1 contador real de P&B!)
+        #    Mesmo que pages_total esteja inchado (4M por erro antigo), a UI
+        #    agora mostra 1 card só de Total Geral, e bw = total para não
+        #    dar impressão de "contadores quebrados".
+        if _total > 0 and _bw != _total:
+            # BW sempre MAIOR (nao quebra monotonicidade!)
             _new_bw = _total if _total >= _bw else _bw
             if _new_bw != _bw:
                 p.pages_bw = _new_bw
                 needs_fix = True
+        # 4) Se pages_total estiver 0 mas bw > 0, total recebe bw (monotônico)
+        if _bw > 0 and _total < _bw:
+            p.pages_total = _bw
+            needs_fix = True
 
         if needs_fix:
             fixed_count += 1
