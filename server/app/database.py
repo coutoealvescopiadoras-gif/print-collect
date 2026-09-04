@@ -157,8 +157,36 @@ class Reading(Base):
     toner_yellow = Column(Float, nullable=True)
     status = Column(String(50), default="online")
     collected_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    agent_ip_address = Column(String(45), nullable=True)
 
     printer = relationship("Printer", back_populates="readings")
+
+
+# =====================================================================
+# HistoricoColeta — 4ª camada de defesa. Registro VALIDADO pós regras
+# de monotonicidade/anti-inchado/detecção de pico. Base para cobrança!
+# =====================================================================
+class HistoricoColeta(Base):
+    __tablename__ = "historico_coletas"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    printer_id = Column(Integer, ForeignKey("printers.id"), nullable=True, index=True)
+    cliente_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
+    ip_impressora = Column(String(50), nullable=False, index=True)
+    fabricante = Column(String(100), nullable=True)
+    modelo = Column(String(200), nullable=True)
+    tipo_contador = Column(String(20), nullable=False, index=True)  # PB | COLOR | TOTAL
+    valor_contador = Column(Integer, nullable=False)
+    status_coleta = Column(String(40), nullable=False, default="SUCESSO", index=True)
+    valor_anterior = Column(Integer, nullable=True)
+    delta_paginas = Column(Integer, nullable=True)
+    observacao = Column(Text, nullable=True)
+    data_registro = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        index=True,
+    )
 
 
 class User(Base):

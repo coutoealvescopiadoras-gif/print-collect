@@ -2,6 +2,7 @@ import secrets
 import asyncio
 import io
 import os
+import csv
 import zipfile
 import json
 import urllib.request
@@ -9,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status, Request, Query, Path, Body, Form, UploadFile, File
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 import bcrypt
@@ -1371,6 +1372,169 @@ def get_printer_readings(
         except Exception:
             continue
     return safe_readings
+
+
+# ==================================================================
+# EXPORT CSV 1: /api/printers/{id}/readings/csv — Histórico Reading da impressora
+# ==================================================================
+@router.get("/printers/{printer_id}/readings/csv")
+def export_printer_readings_csv(
+    printer_id: int,
+    data_inicio: Optional[str] = Query(None, description="Formato YYYY-MM-DD (inclusivo)"),
+    data_fim: Optional[str] = Query(None, description="Formato YYYY-MM-DD (inclusivo)"),
+    limit: int = Query(default=5000, ge=1, le=20000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    printer = get_printer_detail(printer_id=printer_id, db=db, current_user=current_user)
+    if printer is None:
+        raise HTTPException(status_code=404, detail="Printer nao encontrado")
+
+    q = db.query(Reading).filter(Reading.printer_id == int(printer_id))
+    # Filtros data (opcionais)
+    try:
+        if data_inicio:
+            q = q.filter(Reading.collected_at >= datetime.strptime(data_inicio, "%Y-%m-%d").replace(tzinfo=timezone.utc))
+    except Exception:
+        pass
+    try:
+        if data_fim:
+            _fim = datetime.strptime(data_fim, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
+            q = q.filter(Reading.collected_at < _fim)
+    except Exception:
+        pass
+    rows = q.order_by(Reading.collected_at.desc(), Reading.id.desc()).limit(int(limit)).all()
+
+    out = io.StringIO()
+    writer = csv.writer(out, delimiter=";", quoting=csv.QUOTE_MINIMAL)
+    writer.writerow([
+        "ID Reading", "Data Coleta (UTC)", "Impressora ID", "Cliente ID",
+        "Páginas Total", "Páginas P&B", "Páginas Cor",
+        "Toner Preto %", "Ciano %", "Magenta %", "Amarelo %",
+        "Status", "IP Agente",
+    ])
+    _cid = int(getattr(printer, "client_id", 0) or 0)
+    for r in rows or []:
+        try:
+            _data = ""
+            d = getattr(r, "collected_at", None)
+            if d:
+                try:
+                    if d.tzinfo is None:
+                        d = d.replace(tzinfo=timezone.utc)
+                    _data = d.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    _data = str(d)[:19]
+            writer.writerow([
+                int(getattr(r, "id", 0) or 0),
+                _data,
+                int(getattr(r, "printer_id", printer_id) or 0),
+                _cid,
+                _safe_int_out(getattr(r, "pages_total", 0)),
+                _safe_int_out(getattr(r, "pages_bw", 0)),
+                _safe_int_out(getattr(r, "pages_color", 0)),
+                (str(_safe_float_out(getattr(r, "toner_black", None))).replace(".", ",") if getattr(r, "toner_black", None) is not None else ""),
+                (str(_safe_float_out(getattr(r, "toner_cyan", None))).replace(".", ",") if getattr(r, "toner_cyan", None) is not None else ""),
+                (str(_safe_float_out(getattr(r, "toner_magenta", None))).replace(".", ",") if getattr(r, "toner_magenta", None) is not None else ""),
+                (str(_safe_float_out(getattr(r, "toner_yellow", None))).replace(".", ",") if getattr(r, "toner_yellow", None) is not None else ""),
+                _safe_str_out(getattr(r, "status", None), default=""),
+                _safe_str_out(getattr(r, "agent_ip_address", None), default=""),
+            ])
+        except Exception:
+            continue
+    csv_bytes = out.getvalue().encode("utf-8-sig")  # BOM p/ Excel Brasil abrir PT-BR correto!
+    filename = f"readings_impressora_{int(printer_id)}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(content=csv_bytes, media_type="text/csv; charset=utf-8", headers=headers)
+
+
+# ==================================================================
+# EXPORT CSV 2: /api/historico-coletas.csv — Tabela segura HistoricoColeta (NOVA)
+# ==================================================================
+@router.get("/historico-coletas.csv")
+def export_historico_coletas_csv(
+    printer_id: Optional[int] = Query(None),
+    cliente_id: Optional[int] = Query(None),
+    status_coleta: Optional[str] = Query(None, description="SUCESSO|ERRO_DECRESCIMO|INCHADO_CORRIGIDO|PICO_PENDENTE|ERRO_BANCO"),
+    data_inicio: Optional[str] = Query(None, description="Formato YYYY-MM-DD"),
+    data_fim: Optional[str] = Query(None, description="Formato YYYY-MM-DD"),
+    limit: int = Query(default=10000, ge=1, le=50000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    # Permissão: MASTER vê tudo, demais usuários só vêem o seu escopo (cliente_id permitido!)
+    from app.database import HistoricoColeta as _HC  # NOQA — import aqui para não importar circular
+    q = db.query(_HC)
+    # Aplicar escopo do usuário (se não for admin/master, filtra cliente permitido)
+    try:
+        _is_admin = bool(getattr(current_user, "role", "") in {"admin", "master", "ADMIN", "MASTER", "Admin"})
+        if not _is_admin:
+            _allowed_clients = _get_user_allowed_client_ids(db, current_user)
+            if _allowed_clients is None or len(_allowed_clients) == 0:
+                q = q.filter(False)
+            else:
+                q = q.filter(_HC.cliente_id.in_(_allowed_clients))
+    except Exception:
+        pass
+    if printer_id and int(printer_id) > 0:
+        q = q.filter(_HC.printer_id == int(printer_id))
+    if cliente_id and int(cliente_id) > 0:
+        q = q.filter(_HC.cliente_id == int(cliente_id))
+    if status_coleta and str(status_coleta).strip():
+        q = q.filter(_HC.status_coleta == str(status_coleta).strip().upper())
+    try:
+        if data_inicio:
+            q = q.filter(_HC.data_registro >= datetime.strptime(data_inicio, "%Y-%m-%d").replace(tzinfo=timezone.utc))
+    except Exception:
+        pass
+    try:
+        if data_fim:
+            _fim = datetime.strptime(data_fim, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
+            q = q.filter(_HC.data_registro < _fim)
+    except Exception:
+        pass
+    rows = q.order_by(_HC.data_registro.desc(), _HC.id.desc()).limit(int(limit)).all()
+
+    out = io.StringIO()
+    w = csv.writer(out, delimiter=";", quoting=csv.QUOTE_MINIMAL)
+    w.writerow([
+        "ID Registro", "Data (UTC)", "Printer ID", "Cliente ID", "IP Impressora",
+        "Fabricante", "Modelo", "Tipo Contador", "Valor Contador",
+        "Status", "Valor Anterior", "Delta Páginas", "Observação",
+    ])
+    for r in rows or []:
+        try:
+            _data = ""
+            d = getattr(r, "data_registro", None)
+            if d:
+                try:
+                    if d.tzinfo is None:
+                        d = d.replace(tzinfo=timezone.utc)
+                    _data = d.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    _data = str(d)[:19]
+            w.writerow([
+                int(getattr(r, "id", 0) or 0),
+                _data,
+                (int(getattr(r, "printer_id", 0)) if getattr(r, "printer_id", None) else ""),
+                (int(getattr(r, "cliente_id", 0)) if getattr(r, "cliente_id", None) else ""),
+                _safe_str_out(getattr(r, "ip_impressora", None), default=""),
+                _safe_str_out(getattr(r, "fabricante", None), default=""),
+                _safe_str_out(getattr(r, "modelo", None), default=""),
+                _safe_str_out(getattr(r, "tipo_contador", None), default=""),
+                int(getattr(r, "valor_contador", 0) or 0),
+                _safe_str_out(getattr(r, "status_coleta", None), default=""),
+                (int(getattr(r, "valor_anterior", 0)) if getattr(r, "valor_anterior", None) is not None else ""),
+                (int(getattr(r, "delta_paginas", 0)) if getattr(r, "delta_paginas", None) is not None else ""),
+                _safe_str_out(getattr(r, "observacao", None), default=""),
+            ])
+        except Exception:
+            continue
+    csv_bytes = out.getvalue().encode("utf-8-sig")  # BOM Excel PT-BR!
+    filename = f"historico_coletas_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(content=csv_bytes, media_type="text/csv; charset=utf-8", headers=headers)
+
 
 
 @router.post("/printers", response_model=PrinterOut, status_code=201)

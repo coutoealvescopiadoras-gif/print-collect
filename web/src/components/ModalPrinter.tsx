@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Printer, Reading } from "../types";
 import { formatDateTimeBrasil, formatNumberBrasil, modelConfirmadoColorido } from "../utils";
+import { useAuth } from "../context/AuthContext";
 
 interface Props {
   printerId: number | null;
@@ -17,6 +18,9 @@ interface Props {
  *   - Tabela HISTORICO com as últimas 50 leituras (Readings)
  */
 export default function ModalPrinter({ printerId, onClose }: Props) {
+  const { user } = useAuth();
+  const effectiveRole = user ? (user.role || "superadmin") : null;
+  const isSuperadmin = effectiveRole === "superadmin";
   const [printer, setPrinter] = useState<Printer | null>(null);
   const [readings, setReadings] = useState<Reading[]>([]);
   const [loading, setLoading] = useState(true);
@@ -300,6 +304,59 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
                         </tbody>
                       </table>
                     )}
+
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 16 }}>
+                      <button
+                        type="button"
+                        className="btn"
+                        style={{
+                          background: "linear-gradient(135deg,#16a34a,#15803d)",
+                          color: "#fff",
+                          border: "1px solid rgba(22,163,74,0.3)",
+                          fontWeight: 600,
+                        }}
+                        onClick={async () => {
+                          if (!printerId) return;
+                          try {
+                            setLoading(true);
+                            await api.downloadPrinterReadingsCSV(printerId, { limit: 5000 });
+                          } catch (e: any) {
+                            alert("❌ Erro ao exportar leituras CSV:\n" + (e?.message || String(e)));
+                          } finally {
+                            setLoading(false);
+                          }
+                        }}
+                        title="Baixa CSV completo (UTF-8 BOM para Excel) de TODAS as leituras brutas (Reading) desta impressora, até 5000 registros. Inclui toners, status, IP do agente e data coleta UTC."
+                      >
+                        📥 Exportar Leituras (CSV desta impressora)
+                      </button>
+
+                      {isSuperadmin && (
+                        <button
+                          type="button"
+                          className="btn"
+                          style={{
+                            background: "linear-gradient(135deg,#2563eb,#1d4ed8)",
+                            color: "#fff",
+                            border: "1px solid rgba(37,99,235,0.3)",
+                            fontWeight: 600,
+                          }}
+                          onClick={async () => {
+                            try {
+                              setLoading(true);
+                              await api.downloadHistoricoColetasCSV({ limit: 20000 });
+                            } catch (e: any) {
+                              alert("❌ Erro ao exportar Histórico Geral CSV:\n" + (e?.message || String(e)));
+                            } finally {
+                              setLoading(false);
+                            }
+                          }}
+                          title="⚠️ APENAS MASTER/ADMIN. Baixa CSV completo (até 20k registros) da NOVA tabela historico_coletas (4ª camada de defesa, registros validados pós regras de monotonicidade). Base de cobrança oficial Julio."
+                        >
+                          📋 Exportar Histórico Geral de Coletas (CSV)
+                        </button>
+                      )}
+                    </div>
                   </div>
                 );
               })()}

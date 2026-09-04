@@ -179,6 +179,43 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   throw lastError;
 }
 
+/**
+ * Download AUTENTICADO de CSV/arquivo via Blob + trigger click a tag.
+ * Usa o mesmo token do request() para passar pela proteção de rotas.
+ */
+async function _downloadAuthenticated(path: string, fallbackFileName: string): Promise<void> {
+  const headers: Record<string, string> = {};
+  const currentToken = readTokenFromStorage();
+  if (currentToken) {
+    headers["Authorization"] = `Bearer ${currentToken}`;
+  }
+  const response = await fetch(`${BASE}${path}`, { headers });
+  if (!response.ok) {
+    const text = await response.text().catch(() => response.statusText);
+    throw new Error(text || `Erro ${response.status} no download`);
+  }
+  const blob = await response.blob();
+  // Tenta extrair filename do Content-Disposition
+  let fileName = fallbackFileName;
+  try {
+    const cd = response.headers.get("Content-Disposition") || "";
+    const m = /filename="?([^";]+)"?/.exec(cd);
+    if (m && m[1]) fileName = m[1];
+  } catch {}
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => {
+    try {
+      window.URL.revokeObjectURL(url);
+    } catch {}
+  }, 5000);
+}
+
 export const api = {
   login: (email: string, password: string) => {
     const formData = new URLSearchParams();
@@ -331,6 +368,44 @@ export const api = {
     request<import("./types").Printer>(`/api/printers/${printerId}`),
   getPrinterReadings: (printerId: number, limit = 50) =>
     request<import("./types").Reading[]>(`/api/printers/${printerId}/readings?limit=${limit}`),
+
+  // ----- EXPORT CSV DOWNLOADS (usa fetch com token + blob download) -----
+  downloadPrinterReadingsCSV: async (printerId: number, filtros?: {
+    data_inicio?: string;
+    data_fim?: string;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (filtros) {
+      if (filtros.data_inicio) qs.set("data_inicio", filtros.data_inicio);
+      if (filtros.data_fim) qs.set("data_fim", filtros.data_fim);
+      if (filtros.limit != null) qs.set("limit", String(filtros.limit));
+    }
+    const q = qs.toString();
+    const path = q ? `/api/printers/${printerId}/readings/csv?${q}` : `/api/printers/${printerId}/readings/csv`;
+    return _downloadAuthenticated(path, `leituras_impressora_${printerId}.csv`);
+  },
+  downloadHistoricoColetasCSV: async (filtros?: {
+    printer_id?: number;
+    cliente_id?: number;
+    status_coleta?: string;
+    data_inicio?: string;
+    data_fim?: string;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (filtros) {
+      if (filtros.printer_id != null) qs.set("printer_id", String(filtros.printer_id));
+      if (filtros.cliente_id != null) qs.set("cliente_id", String(filtros.cliente_id));
+      if (filtros.status_coleta) qs.set("status_coleta", filtros.status_coleta);
+      if (filtros.data_inicio) qs.set("data_inicio", filtros.data_inicio);
+      if (filtros.data_fim) qs.set("data_fim", filtros.data_fim);
+      if (filtros.limit != null) qs.set("limit", String(filtros.limit));
+    }
+    const q = qs.toString();
+    const path = q ? `/api/historico-coletas.csv?${q}` : "/api/historico-coletas.csv";
+    return _downloadAuthenticated(path, "historico_coletas.csv");
+  },
   getAlerts: (resolved?: boolean) =>
     request<import("./types").Alert[]>(
       resolved !== undefined ? `/api/alerts?resolved=${resolved}` : "/api/alerts",
