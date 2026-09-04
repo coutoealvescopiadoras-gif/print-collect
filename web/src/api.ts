@@ -297,6 +297,10 @@ export const api = {
     request<import("./types").Printer>(`/api/printers/${printerId}/ignore`, {
       method: "POST",
     }),
+  normalizePrinterForPinch: (printerId: number) =>
+    request<import("./types").Printer>(`/api/printers/${printerId}/normalize_for_pinch`, {
+      method: "POST",
+    }),
   getPrinters: (params?: {
     client_id?: number;
     partner_id?: number;

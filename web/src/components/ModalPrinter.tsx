@@ -104,7 +104,7 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
               Cliente: <strong>{printer?.client_name || "—"}</strong>
             </div>
           </div>
-          <button
+              <button
             type="button"
             className="btn btn-ghost"
             onClick={onClose}
@@ -132,6 +132,37 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
           )}
           {!loading && !error && printer && (
             <>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: "1rem" }}>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{
+                    background: "linear-gradient(135deg,#f59e0b,#ef4444)",
+                    color: "#fff",
+                    border: "1px solid rgba(239,68,68,0.3)",
+                    fontWeight: 600,
+                  }}
+                  onClick={async () => {
+                    try {
+                      setLoading(true);
+                      const r = await api.normalizePrinterForPinch(printer.id);
+                      setPrinter(r);
+                      try {
+                        const rs = await api.getPrinterReadings(printer.id, 30);
+                        setReadings(rs || []);
+                      } catch {}
+                      alert("✅ Contador recalibrado com sucesso!\n\n• Total da impressora redefinido para o último valor REAL reportado pela última coleta física.\n• Toners CMY apagados se impressora P&B.\n\nRecarregue a página se quiser confirmar os valores na listagem geral.");
+                    } catch (e: any) {
+                      alert("❌ Erro ao recalcular contador:\n" + (e?.message || String(e)));
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                  title="Útil para casos onde pages_total está com valor INCHADO (ex: 4M em Brother/Ricoh após bug 02/09). Redefine pages_total para o ÚLTIMO VALOR REAL FÍSICO lido pela impressora na última coleta, apaga toners CMY falsos, zera pages_color e ajusta bw = total."
+                >
+                  ⚠️ Recalcular Contador REAL (Última Leitura Física)
+                </button>
+              </div>
               <div
                 style={{
                   display: "grid",

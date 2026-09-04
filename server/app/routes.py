@@ -1451,6 +1451,101 @@ def update_printer(printer_id: int, payload: PrinterUpdate, db: Session = Depend
         raise HTTPException(status_code=400, detail=detail + f" Detalhes: {str(e)[:200]}")
 
 
+@router.post("/printers/{printer_id}/normalize_for_pinch", response_model=PrinterOut)
+def normalize_printer_for_pinch(printer_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
+    printer = _get_scoped_printer(db, current_user, printer_id)
+    _require_manage_scope(current_user, printer.client_id)
+
+    _pb = False
+    try:
+        _pb = not _is_color_printer_real(printer)
+    except Exception:
+        _pb = False
+
+    _last_r = None
+    try:
+        from sqlalchemy import desc as _desc_norm
+        _last_r = (
+            db.query(Reading)
+            .filter(Reading.printer_id == int(printer.id))
+            .order_by(_desc_norm(Reading.collected_at), _desc_norm(Reading.id))
+            .first()
+        )
+    except Exception:
+        _last_r = None
+
+    _last_real_total = 0
+    if _last_r and getattr(_last_r, "pages_total", None) is not None:
+        try:
+            _last_real_total = int(_last_r.pages_total or 0)
+        except Exception:
+            _last_real_total = 0
+
+    if _pb:
+        printer.pages_color = 0
+        if _last_real_total > 0:
+            printer.pages_total = _last_real_total
+            printer.pages_bw = _last_real_total
+            printer.pages_color = 0
+        else:
+            if printer.pages_total and int(printer.pages_total) > 0:
+                printer.pages_bw = int(printer.pages_total)
+                printer.pages_color = 0
+        try:
+            printer.toner_cyan_cur = None
+            printer.toner_cyan_max = None
+            printer.toner_magenta_cur = None
+            printer.toner_magenta_max = None
+            printer.toner_yellow_cur = None
+            printer.toner_yellow_max = None
+        except Exception:
+            pass
+        if _last_r:
+            try:
+                _last_r.pages_color = 0
+                if _last_real_total > 0:
+                    _last_r.pages_total = _last_real_total
+                    _last_r.pages_bw = _last_real_total
+                    _last_r.pages_color = 0
+                else:
+                    if _last_r.pages_total and int(_last_r.pages_total) > 0:
+                        _last_r.pages_bw = int(_last_r.pages_total)
+                        _last_r.pages_color = 0
+                try:
+                    _last_r.toner_cyan_cur = None
+                    _last_r.toner_cyan_max = None
+                    _last_r.toner_magenta_cur = None
+                    _last_r.toner_magenta_max = None
+                    _last_r.toner_yellow_cur = None
+                    _last_r.toner_yellow_max = None
+                except Exception:
+                    pass
+            except Exception:
+                pass
+    else:
+        if _last_r:
+            try:
+                if _last_real_total > 0 and printer.pages_total and int(printer.pages_total) > 0:
+                    if int(printer.pages_total) >= int(1.5 * _last_real_total):
+                        printer.pages_total = _last_real_total
+            except Exception:
+                pass
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+    try:
+        db.refresh(printer)
+    except Exception:
+        pass
+    try:
+        _sanitize_printer_for_out(printer)
+    except Exception:
+        pass
+    return printer
+
+
 @router.get("/alerts", response_model=list[AlertOut])
 def list_alerts(resolved: Optional[bool] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     _ensure_printer_ignored_column(db)
@@ -2803,7 +2898,7 @@ def _retroactive_patch_pb_printers_2026_09_04(db: Session, force: bool = False) 
             needs_fix = True
         # 3) CORREÇÃO INCHADO: Printer.total >= 2x o último reading real?
         #    → usa o contador FÍSICO REAL da máquina (última leitura SNMP!)
-        if _last_reading_total > 0 and _total >= (2 * _last_reading_total):
+        if _last_reading_total > 0 and _total >= int(1.5 * _last_reading_total):
             _total = _last_reading_total
             p.pages_total = _total
             needs_fix = True
@@ -3497,7 +3592,7 @@ async def agent_report(
                         # 2) Se o total salvo é 2x ou MAIS que o contador REAL da impressora,
                         #    o salvo é FALSO (inchado na classificação errada). O contador
                         #    SNMP real da máquina TEM PRIORIDADE.
-                        if _new_total > 0 and _saved_total >= (2 * _new_total):
+                        if _new_total > 0 and _saved_total >= int(1.5 * _new_total):
                             _saved_total = _new_total
                             _saved_bw    = _new_total
                         else:
