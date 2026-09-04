@@ -162,6 +162,58 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
                 >
                   ⚠️ Recalcular Contador REAL (Última Leitura Física)
                 </button>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{
+                    background: "linear-gradient(135deg,#2563eb,#1d4ed8)",
+                    color: "#fff",
+                    border: "1px solid rgba(37,99,235,0.3)",
+                    fontWeight: 600,
+                  }}
+                  onClick={async () => {
+                    const hint =
+                      "Digite o valor EXATO do contador TOTAL DE PÁGINAS que aparece na TELA FÍSICA da impressora (painel LCD / menu status da impressora):\n\n• Brother DCP-L5652DN: Menu > Contador\n• Ricoh MP 501: Botão Status > Contadores > Total Geral\n\nUse APENAS números (sem pontos, vírgulas, R$ ou letras). Exemplo: se a tela mostra 1.850.247 → digite 1850247";
+                    const raw = window.prompt(hint, "");
+                    if (raw == null) return;
+                    const cleaned = String(raw).replace(/[^0-9]/g, "").trim();
+                    if (!cleaned) {
+                      alert("❌ Valor vazio. Digite apenas números.");
+                      return;
+                    }
+                    const n = Number(cleaned);
+                    if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+                      alert("❌ Valor inválido. Digite apenas números inteiros >= 0 (sem pontos, vírgulas ou letras).");
+                      return;
+                    }
+                    if (!confirm(
+                      "Confirma forçar o contador TOTAL da impressora para: " +
+                        Intl.NumberFormat("pt-BR").format(n) +
+                        " páginas?\n\nEssa ação altera: Printer.pages_total (atual + último Reading), pages_bw = total, pages_color = 0, toners CMY apagados se P&B.",
+                    )) return;
+                    try {
+                      setLoading(true);
+                      const r = await api.forceSetPrinterTotal(printer.id, n);
+                      setPrinter(r);
+                      try {
+                        const rs = await api.getPrinterReadings(printer.id, 30);
+                        setReadings(rs || []);
+                      } catch {}
+                      alert(
+                        "✅ Contador definido com sucesso!\n\nNovo total: " +
+                          Intl.NumberFormat("pt-BR").format(Number(r.pages_total || 0)) +
+                          "\n\n• Toners CMY apagados se impressora P&B.\n• Próximas coletas do agente vão manter esse valor base (monotônico).",
+                      );
+                    } catch (e: any) {
+                      alert("❌ Erro ao definir contador:\n" + (e?.message || String(e)));
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                  title="Correção FORÇADA e 100% confiável: pegue o valor exato do contador na tela LCD da impressora (física) e digite aqui. Valor tem prioridade máxima sobre qualquer cálculo antigo inchado."
+                >
+                  ✏️ Definir Contador Manual (Valor da Tela da Impressora)
+                </button>
               </div>
               <div
                 style={{

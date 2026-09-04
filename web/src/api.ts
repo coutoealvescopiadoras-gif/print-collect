@@ -301,6 +301,11 @@ export const api = {
     request<import("./types").Printer>(`/api/printers/${printerId}/normalize_for_pinch`, {
       method: "POST",
     }),
+  forceSetPrinterTotal: (printerId: number, pages_total: number) =>
+    request<import("./types").Printer>(`/api/printers/${printerId}/force_set_total`, {
+      method: "POST",
+      body: JSON.stringify({ pages_total }),
+    }),
   getPrinters: (params?: {
     client_id?: number;
     partner_id?: number;

@@ -1546,6 +1546,101 @@ def normalize_printer_for_pinch(printer_id: int, db: Session = Depends(get_db), 
     return printer
 
 
+try:
+    from pydantic import BaseModel as _BMForceTotal
+
+    class _ForceTotalPayload(_BMForceTotal):
+        pages_total: int
+except Exception:
+    _ForceTotalPayload = None  # type: ignore
+
+
+@router.post("/printers/{printer_id}/force_set_total", response_model=PrinterOut)
+def force_set_printer_total(
+    printer_id: int,
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    printer = _get_scoped_printer(db, current_user, printer_id)
+    _require_manage_scope(current_user, printer.client_id)
+
+    _raw_total = payload.get("pages_total") if isinstance(payload, dict) else None
+    try:
+        if _raw_total is None and hasattr(payload, "pages_total"):
+            _raw_total = getattr(payload, "pages_total")
+    except Exception:
+        pass
+    if _raw_total is None:
+        raise HTTPException(status_code=400, detail="Campo pages_total é obrigatório.")
+
+    _user_total: int
+    try:
+        _user_total = int(_raw_total)
+        if _user_total < 0:
+            raise ValueError("total negativo")
+    except Exception:
+        raise HTTPException(status_code=400, detail="pages_total deve ser número inteiro >= 0.")
+
+    _pb = False
+    try:
+        _pb = not _is_color_printer_real(printer)
+    except Exception:
+        _pb = False
+
+    printer.pages_total = _user_total
+    if _pb:
+        printer.pages_bw = _user_total
+        printer.pages_color = 0
+        try:
+            printer.toner_cyan_cur = None
+            printer.toner_cyan_max = None
+            printer.toner_magenta_cur = None
+            printer.toner_magenta_max = None
+            printer.toner_yellow_cur = None
+            printer.toner_yellow_max = None
+        except Exception:
+            pass
+    try:
+        from sqlalchemy import desc as _desc_force
+        _last_r = (
+            db.query(Reading)
+            .filter(Reading.printer_id == int(printer.id))
+            .order_by(_desc_force(Reading.collected_at), _desc_force(Reading.id))
+            .first()
+        )
+        if _last_r is not None:
+            _last_r.pages_total = _user_total
+            if _pb:
+                _last_r.pages_bw = _user_total
+                _last_r.pages_color = 0
+                try:
+                    _last_r.toner_cyan_cur = None
+                    _last_r.toner_cyan_max = None
+                    _last_r.toner_magenta_cur = None
+                    _last_r.toner_magenta_max = None
+                    _last_r.toner_yellow_cur = None
+                    _last_r.toner_yellow_max = None
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+    try:
+        db.refresh(printer)
+    except Exception:
+        pass
+    try:
+        _sanitize_printer_for_out(printer)
+    except Exception:
+        pass
+    return printer
+
+
 @router.get("/alerts", response_model=list[AlertOut])
 def list_alerts(resolved: Optional[bool] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     _ensure_printer_ignored_column(db)
