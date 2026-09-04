@@ -518,33 +518,81 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 2) -> Opt
     model = _snmp_get(ip, OID_PRINTER_MODEL, community, timeout) or sys_descr[:120]
     serial = _snmp_get(ip, OID_PRINTER_SERIAL, community, timeout)
 
-    # ========== PASSO 1: OIDs FIXOS PADRAO RFC (HP/Brother etc) ==========
-    pages_total = _parse_int(_snmp_get(ip, OID_PAGES_TOTAL, community, timeout))
-    pages_bw = _parse_int(_snmp_get(ip, OID_PAGES_BW, community, timeout))
-    pages_color = _parse_int(_snmp_get(ip, OID_PAGES_COLOR, community, timeout))
+    # ==================================================================
+    # 🏆 REGRAS DE OURO — COBRANÇA SEGURA (JULIO NÃO PODE COBRAR ERRADO!)
+    # ==================================================================
+    #
+    # REGRA 1 — NUNCA INVENTA PÁGINAS COLORIDAS (prioridade MÁXIMA!)
+    #   Só confia em pages_color se OID FIXO RFC .1.3 > 0 OU
+    #   se marker table retornou COLORIDO > 0 (col_walk > 0) E (OID .1.3 = 0/inválido)
+    #   → Qualquer outra situação = pages_color = 0 (Tudo P&B!).
+    #
+    # REGRA 2 — SE TIVER DÚVIDA, TUDO VAI PARA P&B!
+    #   PEB (páginas em branco), feeder, duplex, toners sem role de cor → TUDO PB.
+    #   Melhor você NÃO cobrar por uma cor que a impressora não confirmou
+    #   do que cobrar errado e ter problema com cliente!
+    #
+    # REGRA 3 — PRIORIDADE DE FONTE (do mais seguro pro menos seguro):
+    #   1) 🔵 OID FIXO RFC .1.1 (total), .1.2 (pb), .1.3 (color)  [MELHOR / OFICIAL]
+    #   2) 🟣 Marker table COM roles CMYK detectados                 [SEGURO]
+    #   3) 🟢 Só o .1.1 (total) existe → pages_bw = total, color=0  [FALLBACK PB]
+    #
+    # REGRA 4 — pages_total SEMPRE = max(OID total, pb+color_real)
+    #   Nunca deixa o total ser MENOR que o split correto (pois split real = realidade).
+    # ==================================================================
 
-    # ========== PASSO 2: FALLBACK PODEROSO - WALK MARKER TABLE (KONICA/RICOH/KYOCERA) ==========
-    # Se OIDs fixos NAO deram resultado para PB/Color (mas tem pages_total ou toners coloridos)
-    if (pages_bw <= 0 and pages_color <= 0) or (pages_total > 0 and pages_bw == 0 and pages_color == 0):
-        bw_walk, col_walk = _collect_pages_from_marker_table(ip, community, timeout)
-        if bw_walk > 0 or col_walk > 0:
-            pages_bw = max(pages_bw, bw_walk)
-            pages_color = max(pages_color, col_walk)
-            if pages_total <= 0:
-                pages_total = pages_bw + pages_color
+    # ========== PASSO 1: OIDs FIXOS PADRAO RFC (MELHOR FONTE, 100% confiavel) ==========
+    oid_total = _parse_int(_snmp_get(ip, OID_PAGES_TOTAL, community, timeout)) or 0
+    oid_pb    = _parse_int(_snmp_get(ip, OID_PAGES_BW,    community, timeout)) or 0
+    oid_color = _parse_int(_snmp_get(ip, OID_PAGES_COLOR, community, timeout)) or 0
 
-    # ========== PASSO 3: GARANTE pages_total SENDO SEMPRE O MAIOR ==========
-    sum_bw_color = pages_bw + pages_color
-    if pages_total <= 0 and sum_bw_color > 0:
-        pages_total = sum_bw_color
+    # ========== PASSO 2: MARKER TABLE (RICOH / KONICA / KYOCERA — SÓ SE OIDs RFC VAZIOS!) ==========
+    marker_pb = 0
+    marker_color = 0
+    _oid_rfc_split_ok = (oid_pb > 0) or (oid_color > 0)
+    if not _oid_rfc_split_ok:
+        marker_pb, marker_color = _collect_pages_from_marker_table(ip, community, timeout)
+        marker_pb    = marker_pb    or 0
+        marker_color = marker_color or 0
+
+    # ========== PASSO 3: APLICA REGRAS — NUNCA INVENTA COLORIDO! ==========
+    pages_total = oid_total or 0
+    pages_bw    = 0
+    pages_color = 0
+
+    # --- (FONTE 1) OID FIXO RFC .1.2 e .1.3 são os MELHORES. Usa eles primeiro! ---
+    if oid_pb > 0 or oid_color > 0:
+        pages_bw    = oid_pb
+        pages_color = oid_color  # só usa colorido SE OID .1.3 REALMENTE disse >0!
+    # --- (FONTE 2) MARKER TABLE — só se OIDs RFC split não existiam ---
+    elif marker_pb > 0 or marker_color > 0:
+        pages_bw    = marker_pb
+        pages_color = marker_color  # só usa colorido SE marker disse color>0 REALMENTE!
+        if pages_total <= 0:
+            pages_total = pages_bw + pages_color
+    # --- (FONTE 3) NENHUM contador separado REAL existe → TUDO P&B! ---
+    else:
+        pages_bw    = pages_total  # Tudo = P&B!
+        pages_color = 0
+        # Se só tem pages_total (sem split), já está correto acima.
+
+    # ========== PASSO 4: pages_total NUNCA fica MENOR que o split real ==========
+    sum_real_split = pages_bw + pages_color
+    if sum_real_split > pages_total:
+        pages_total = sum_real_split
+    # pages_bw nunca pode ser 0 se temos total. Se split ainda é 0 por nao ter fontes,
+    # joga tudo para PB.
     if pages_total > 0 and pages_bw <= 0 and pages_color <= 0:
         pages_bw = pages_total
         pages_color = 0
-    # ✅ PEB e contadores não classificados AGORA VÃO PARA PB (Heurística 3 corrigida).
-    # Então a soma PB + Color é a produção REAL completa. Se for > pages_total OID,
-    # a soma prevalece (pois os markers separados têm mais detalhes que o total único).
-    if sum_bw_color > pages_total:
-        pages_total = sum_bw_color
+
+    # ========== REGRA EXTRA: NUNCA DEIXA pages_color MAIOR QUE TOTAL! ==========
+    # (segurança extra contra qualquer bug de SNMP)
+    if pages_total > 0 and pages_color > pages_total:
+        pages_color = max(0, pages_total - pages_bw) if pages_bw > 0 else 0
+        if pages_color < 0: pages_color = 0
+    if pages_total > 0 and pages_bw > pages_total:
+        pages_bw = pages_total
 
     toner_black = _toner_percent(
         _snmp_get(ip, OID_TONER_LEVEL, community, timeout),
@@ -606,9 +654,9 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 2) -> Opt
         data.toner_cyan = None
         data.toner_magenta = None
         data.toner_yellow = None
-        # PRETO & BRANCO: SEMPRE entrega 1 contador = TOTAL REAL.
-        # pages_color ZERO e pages_bw = pages_total (contador real da impressora).
-        # NUNCA calcula nem divide nada. Usa o OID total bruto (ou soma se maior).
+        # PRETO & BRANCO (COBRANÇA SEGURA):
+        #   1 contador = TOTAL REAL DO SNMP (oid_total).
+        #   Não calcula, não divide, não inventa.
         pages_color = 0
         data.pages_color = 0
         if pages_total > 0:
@@ -618,23 +666,16 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 2) -> Opt
             pages_total = pages_bw
             data.pages_total = pages_total
     else:
-        # ===== PASSO EXTRA: HEURISTICA PAGINAS IMPRESSORA COLORIDA CONFIRMADA =====
-        # Se tem toners coloridos (> 0%) MAS pages_color AINDA veio 0 (raro mas pode!)
-        if has_color_toners and pages_color <= 0 and pages_total > 0:
-            # ⛔ NÃO FAZEMOS MAIS DIVISÃO HEURÍSTICA (ex: 50/50) que distorce
-            # o contador real do cliente e transforma PEB em páginas coloridas!
-            # SÓ calculamos pages_color SE pages_bw tiver um valor real
-            # (entre 0 e pages_total) → nesse caso é matemática, não chute.
-            if pages_bw > 0 and pages_bw < pages_total:
-                pages_color = pages_total - pages_bw
-            else:
-                # Sem contadores separados reais → TUDO fica como PB.
-                # Páginas em branco (PEB) NÃO são coloridas, nunca.
-                pages_bw = pages_total
-                pages_color = 0
-        # ✅ PEB e contadores não classificados já estão em pages_bw (Heurística 3 corrigida).
-        # Então a soma PB + Color é a produção REAL completa.
-        # Se PB + Color > pages_total (OID fixo), a soma prevalece.
+        # ===== IMPRESSORA COLORIDA — JÁ COLETADA COM REGRAS SEGURAS ACIMA =====
+        # A coleta (PASSOS 1-4) já garantiu:
+        #   pages_color = 0 A MENOS QUE oid_color > 0 REAL OU marker_color > 0 REAL.
+        #   NÃO INVENTA pages_color = total - bw. NÃO há chutes.
+        # Só garantimos aqui a monotonicidade básica e salvamos.
+        # Se a impressora é colorida mas NÃO reportou split reais (color=0):
+        #   → NÃO cobramos por cor de qualquer jeito. pages_color = 0 e bw = total.
+        if pages_color <= 0 and pages_total > 0:
+            pages_bw = pages_total
+            pages_color = 0
         if pages_bw + pages_color > pages_total:
             pages_total = pages_bw + pages_color
         data.pages_bw = pages_bw

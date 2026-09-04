@@ -2891,11 +2891,64 @@ async def agent_report(
                     pass
 
                 # ================================================================
-                # 🔥 PASSO 3.25: HEURISTICA CORRETIVA CONTADORES PB / COLOR
-                #    Julio relatou KONICA MINOLTA bizhub C258 (colorida) aparecia
-                #    somente com Contador Total → pages_color = 0, pages_bw = Total
-                #    Motivo: AGENTE ANTIGO usava OIDs fixos .1.2/.1.3 que Konica NAO TEM.
-                #    AQUI CORRIGIMOS AUTOMATICAMENTE (mesmo sem atualizar o agente!)
+                # 🏆 MONOTONICIDADE OBRIGATÓRIA — NÃO TEM PREJUÍZO (JULIO PEDIU!)
+                # ================================================================
+                # PASSO 0 (MAIS IMPORTANTE DE TODOS!):
+                #   Contadores de páginas NUNCA DIMINUEM. Se impressora reportar um
+                #   valor MENOR que o último SALVO no banco (ex: reset na placa, erro
+                #   SNMP transitório, troca de máquina mas mesmo IP), NÓS MANTEMOS
+                #   O VALOR MAIOR (último salvo). Garante NUNCA COBRAR A MENOS.
+                #
+                #   REGRA RÍGIDA:
+                #     - pages_total novo = MAX(novo recebido, último salvo)
+                #     - pages_bw    novo = MAX(novo recebido, último salvo)
+                #     - pages_color novo = MAX(novo recebido, último salvo)
+                #
+                #   Se a monotonicidade corrigiu algo, força total = bw + color
+                #   (pois os dois agora são reais monotônicos = soma é a real produção).
+                # ================================================================
+                try:
+                    _saved_total = int(getattr(printer, "pages_total", None) or 0)
+                    _saved_bw    = int(getattr(printer, "pages_bw",    None) or 0)
+                    _saved_color = int(getattr(printer, "pages_color", None) or 0)
+                    _new_total   = int(r_pages_total or 0)
+                    _new_bw      = int(r_pages_bw    or 0)
+                    _new_color   = int(r_pages_color or 0)
+
+                    _mono_total = max(_new_total, _saved_total)
+                    _mono_bw    = max(_new_bw,    _saved_bw)
+                    _mono_color = max(_new_color, _saved_color)
+
+                    # Nunca deixa bw + color < total (monotonicidade pode gerar isso!)
+                    _sum_mono = _mono_bw + _mono_color
+                    if _sum_mono > _mono_total:
+                        _mono_total = _sum_mono
+                    # Também nunca deixa bw > total ou color > total (sanity total-safe!)
+                    if _mono_bw > _mono_total and _mono_total > 0:
+                        _mono_bw = _mono_total
+                    if _mono_color > _mono_total and _mono_total > 0:
+                        _mono_color = _mono_total
+
+                    if (_mono_total != _saved_total or
+                        _mono_bw    != _saved_bw    or
+                        _mono_color != _saved_color):
+                        printer.pages_total = _mono_total
+                        printer.pages_bw    = _mono_bw
+                        printer.pages_color = _mono_color
+                        # Atualiza também o objeto reading (para gravar linha do histórico correta!)
+                        reading.pages_total = _mono_total
+                        reading.pages_bw    = _mono_bw
+                        reading.pages_color = _mono_color
+                except Exception:
+                    # Qualquer falha = NÃO MEXE EM NADA (evita piorar a situação)
+                    pass
+
+                # ================================================================
+                # 🔥 PASSO 3.25: VALIDAÇÃO CONTADORES — 100% REAL (NÃO INVENTA!)
+                # Julio pediu MÁXIMA SEGURANÇA para COBRANÇA:
+                #   - NENHUM CHUTE, NENHUMA DIVISÃO, NENHUMA DIFERENÇA "total - bw = color"
+                #   - Só confia em OIDs/markers reportados pela IMPRESSORA via agente.
+                #   - Qualquer DÚVIDA → TUDO em P&B (melhor não cobrar cor que cobrar errado!).
                 # ================================================================
                 def _has_color_toners_real(p) -> bool:
                     cmy = [p.toner_cyan, p.toner_magenta, p.toner_yellow]
@@ -2940,93 +2993,56 @@ async def agent_report(
                     cur_bw = int(printer.pages_bw or 0)
                     cur_color = int(printer.pages_color or 0)
 
+                    # ---- FONTE DE VERDADE: O QUE VEIO NA LEITURA (reportado pela IMPRESSORA!) ----
+                    reading_bw_real    = bool(reading.pages_bw    and int(reading.pages_bw)    > 0)
+                    reading_color_real = bool(reading.pages_color and int(reading.pages_color) > 0)
+                    reading_total_real = bool(reading.pages_total and int(reading.pages_total) > 0)
+
                     # ====================================================================
-                    # 🔥 PRIORIDADE 1 (REGRA DE OURO JULIO 02/09):
-                    #    Usa o HELPER OFICIAL _is_color_printer_real que já tem todas as
-                    #    defesas contra falso colorido (pages_color=0 → PB!).
-                    #    Só usamos _model_sugere_colorida como TIE-BREAKER QUANDO TUDO = 0
-                    #    (primeira coleta, sem nenhum dado ainda, impressora acabou de cadastrar).
+                    # PRIORIDADE 1: Helper Oficial _is_color_printer_real
+                    #   -> pages_color = 0 ou None → PB
                     # ====================================================================
                     is_really_color = False
                     if (cur_total > 0 or cur_bw > 0 or cur_color > 0) and cur_color >= 1:
-                        # Já tem páginas coloridas registradas → é colorida de verdade
                         is_really_color = _is_color_printer_real(printer)
                     elif (cur_total > 0 or cur_bw > 0) and cur_color <= 0:
-                        # 🚨 TEM PÁGINAS PB MAS NENHUMA COLORIDA REGISTRADA → É P&B, NUNCA DIVIDE!
-                        # Julio Brother P&B + Ricoh MP 501 P&B caem AQUI!
                         is_really_color = False
                     else:
-                        # Caso extremo: NADA preenchido ainda (primeira coleta, zero páginas)
-                        # Usamos modelo como guia (só se tiver certeza!)
                         has_cmy = _has_color_toners_real(printer)
                         is_really_color = has_cmy or _model_sugere_colorida(printer.model, printer.manufacturer)
 
                     # ====================================================================
-                    # 🔥 CORREÇÃO RETROATIVA JULIO 02/09:
-                    #    Impressoras P&B que foram marcadas ERRADAS como coloridas HOJE
-                    #    (Brother P&B + Ricoh MP 501 P&B): Resetamos pages_color = 0
-                    #    e pages_bw = pages_total para corrigir os cards automaticamente
-                    #    NA PRÓXIMA COLETA (não precisa recadastrar nada manualmente!)
+                    # 🏆 REGRA PRINCIPAL COBRANÇA SEGURA — NÃO INVENTA NADA!
                     # ====================================================================
                     if not is_really_color and cur_total > 0:
-                        # É PRETO & BRANCO DE VERDADE!
-                        resetou = False
-                        if cur_color > 0:
-                            resetou = True
-                        if cur_bw != cur_total:
-                            resetou = True
-                        if resetou:
+                        # PRETO & BRANCO: bw = total / color = 0  (SÓ 1 CONTADOR REAL!)
+                        if cur_bw != cur_total or cur_color != 0:
                             printer.pages_bw = cur_total
                             printer.pages_color = 0
-                            db.flush()
-
-                    if is_really_color and cur_total > 0:
-                        new_bw = cur_bw
-                        new_color = cur_color
-                        changed = False
-
-                        # Caso A: pages_color veio 0 mas pages_bw > 0 e < cur_total → corrigir
-                        if cur_color <= 0 and 0 < cur_bw < cur_total:
-                            new_color = cur_total - cur_bw
-                            new_bw = cur_bw
-                            changed = True
-                        # Caso B (antes dividia 68/32 ou 75/25):
-                        # ⛔ NÃO FAZEMOS MAIS DIVISÃO HEURÍSTICA!
-                        # Se pages_color == 0 e pages_bw está inconsistente (== 0 ou >= total),
-                        # significa que a impressora NÃO reporta contadores separados.
-                        # TUDO fica como PB, pois PEB e páginas sem classificação NÃO são coloridas.
-                        elif cur_color <= 0 and (cur_bw <= 0 or cur_bw >= cur_total):
-                            new_bw = cur_total
-                            new_color = 0
-                            changed = True
-                        # Caso C: inconsistencia soma != total → ATUALIZA TOTAL para a soma.
-                        # Como PEB e contadores não classificados já estão em pages_bw
-                        # (Heurística 3 corrigida no agente), PB + Color = produção REAL.
-                        # Soma prevalece sobre pages_total (OID único que pode faltar detalhes).
-                        elif (cur_bw + cur_color) > cur_total:
-                            new_total_expected = cur_bw + cur_color
-                            if cur_bw < 0:
-                                new_bw = 0
-                            else:
-                                new_bw = cur_bw
-                            if cur_color < 0:
-                                new_color = 0
-                            else:
-                                new_color = cur_color
-                            changed = True
-                        # Caso D: color > 0 e bw == 0 → PB = total - color
-                        elif cur_color > 0 and cur_bw <= 0:
-                            new_bw = max(0, cur_total - cur_color)
-                            changed = True
-
-                        if changed and (new_bw != cur_bw or new_color != cur_color):
-                            new_bw = max(0, new_bw)
-                            new_color = max(0, new_color)
-                            printer.pages_bw = new_bw
-                            printer.pages_color = new_color
-                            new_sum = new_bw + new_color
-                            if new_sum > cur_total:
-                                printer.pages_total = new_sum
+                            reading.pages_bw = int(reading.pages_total or reading.pages_bw or cur_total)
+                            reading.pages_color = 0
+                    elif is_really_color and cur_total > 0:
+                        # COLORIDA: NÃO FAZEMOS NENHUM CÁLCULO AQUI!
+                        #   Só aceitamos o que veio reportado REALMENTE pela impressora via agente
+                        #   (OID RFC .1.2 + .1.3, ou marker table real).
+                        #   NÃO calculamos pages_color = total - bw.
+                        #   Única regra aqui: se TANTO bw QUANTO color reais existirem,
+                        #   total = max(total, bw + color) — a soma real prevalece.
+                        if cur_bw > 0 and cur_color > 0:
+                            _soma = cur_bw + cur_color
+                            if _soma > cur_total:
+                                printer.pages_total = _soma
+                                if reading_total_real:
+                                    reading.pages_total = _soma
+                        # Se a impressora COLORIDA reportou só pages_color real >0 e pages_bw=0:
+                        #   bw = max(0, total - color) — É MATEMÁTICA OBRIGATÓRIA (não é chute!).
+                        #   A soma precisa bater com total real (monotônico já garantido antes).
+                        elif cur_color > 0 and (cur_bw is None or cur_bw <= 0):
+                            _bw_mat = max(0, cur_total - cur_color)
+                            if _bw_mat != cur_bw:
+                                printer.pages_bw = _bw_mat
+                                if reading_color_real:
+                                    reading.pages_bw = _bw_mat
                 except Exception:
                     pass
 
