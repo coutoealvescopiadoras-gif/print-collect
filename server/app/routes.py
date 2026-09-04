@@ -2980,6 +2980,87 @@ def _retroactive_patch_pb_printers_2026_09_04(db: Session, force: bool = False) 
                         if _lr_fix: needs_fix = True
                     except Exception:
                         pass
+
+                # ================================================================
+                # 🔍 MIN-READING 7 DIAS (Julio 04/09 V3 — correção IMEDIATA sem
+                #    esperar próxima coleta):
+                #    Sabemos que TODOS os Readings do dia 02/09 foram gravados
+                #    INCHADOS (4M). Mas — a TABELA Reading tem MONOTONICIDADE
+                #    PUSH-ONLY: Reading.pages_total só fica MENOR ou IGUAL se
+                #    o servidor cometeu ERRO! O contador FÍSICO da impressora
+                #    NUNCA diminui. Então, o MENOR pages_total dos últimos 7
+                #    dias É O MAIS PRÓXIMO DO VALOR REAL FÍSICO (antes da
+                #    soma bw+color gerar dobro). NÃO INVENTAMOS NÚMERO: usamos
+                #    o MIN reportado pela própria coleta SNMP. Se MIN >= 1.5x
+                #    MAIOR que o Printer.pages_total, NÃO TOCA (segurança).
+                #    Se Printer.pages_total >= 1.5 * MIN_TOTAL, TOCA para
+                #    MIN_TOTAL.
+                # ================================================================
+                try:
+                    from sqlalchemy import func as _fn
+                    from datetime import timedelta as _td
+                    _cutoff = _now() - _td(days=7)
+                    _min_row = (
+                        db.query(
+                            _fn.coalesce(_fn.MIN(Reading.pages_total), 0).label("mn"),
+                            _fn.coalesce(_fn.MIN(Reading.pages_bw), 0).label("mn_bw"),
+                        )
+                        .filter(Reading.printer_id == int(p.id))
+                        .filter(Reading.collected_at >= _cutoff)
+                        .first()
+                    )
+                    _min_total_7d = 0
+                    _min_bw_7d = 0
+                    if _min_row:
+                        try:
+                            _min_total_7d = int(_min_row.mn or 0)
+                            _min_bw_7d = int(_min_row.mn_bw or 0)
+                        except Exception:
+                            _min_total_7d = 0
+                            _min_bw_7d = 0
+                    if _min_total_7d <= 0 and _min_bw_7d > 0:
+                        _min_total_7d = _min_bw_7d
+                    # Agora temos três fontes de verdade:
+                    # (a) _last_reading_total (última linha Reading — pode estar inchada!)
+                    # (b) _min_total_7d (MENOR Reading 7d — tende a ser o REAL antes do bug!)
+                    # (c) _total (atual Printer.pages_total)
+                    # Queremos escolher: o MENOR valor ENTRE _last_reading_total e _min_total_7d
+                    # QUE SEJA > 0. É a nossa melhor aposta de REAL, SEMPRE com base em
+                    # DADOS REPORTADOS PELA IMPRESSORA, NÃO INVENTADO.
+                    _candidates = [x for x in [_last_reading_total, _min_total_7d] if x and x > 0]
+                    _best_real_guess: int = 0
+                    if _candidates:
+                        _best_real_guess = int(min(_candidates))
+                    # Aplica correção: Só redefine se atual _total >= 1.5 * _best_real_guess
+                    # (é inchado pelo bug!). Nunca toca se for razoável.
+                    if _best_real_guess > 0 and _total >= int(1.5 * _best_real_guess):
+                        try:
+                            print(
+                                "[AUDIT-RETRO-PATCH-V3] printer_id=%s model=%s ip=%s "
+                                "| DETECTADO inchado retroativo (>= 1.5x MIN Reading 7d)! "
+                                "printer_total_atual=%s | last_reading_total=%s | "
+                                "min_total_7d=%s | best_real_guess=%s | "
+                                "SUBSTITUINDO printer_total -> best_real_guess. client_id=%s ts=%s"
+                                % (
+                                    getattr(p, "id", "?"),
+                                    (getattr(p, "model", "") or "")[:80],
+                                    getattr(p, "ip_address", "?"),
+                                    _total,
+                                    _last_reading_total,
+                                    _min_total_7d,
+                                    _best_real_guess,
+                                    getattr(p, "client_id", "?"),
+                                    str(_now().isoformat()),
+                                )
+                            )
+                        except Exception:
+                            pass
+                        _total = _best_real_guess
+                        p.pages_total = _total
+                        needs_fix = True
+                except Exception:
+                    # Não falha em caso de erro em min() lookup: mantém last_reading normal.
+                    pass
         except Exception:
             _last_reading_total = 0
 
@@ -3688,6 +3769,25 @@ async def agent_report(
                         #    o salvo é FALSO (inchado na classificação errada). O contador
                         #    SNMP real da máquina TEM PRIORIDADE.
                         if _new_total > 0 and _saved_total >= int(1.5 * _new_total):
+                            try:
+                                print(
+                                    "[AUDIT-PB-ANTI-INCHADO] printer_id=%s model=%s ip=%s "
+                                    "| DETECTADO inchado >= 1.5x SNMP REAL! salvo_total=%s "
+                                    "novo_snmp_total=%s | SUBSTITUINDO salvo por novo SNMP REAL. "
+                                    "saved_color_antes_zerado=%s | client_id=%s | ts=%s"
+                                    % (
+                                        getattr(printer, "id", "?"),
+                                        (getattr(printer, "model", "") or "")[:80],
+                                        getattr(printer, "ip_address", "?"),
+                                        _saved_total,
+                                        _new_total,
+                                        int(getattr(printer, "pages_color", None) or 0),
+                                        getattr(printer, "client_id", "?"),
+                                        str(_now().isoformat()),
+                                    )
+                                )
+                            except Exception:
+                                pass
                             _saved_total = _new_total
                             _saved_bw    = _new_total
                         else:
