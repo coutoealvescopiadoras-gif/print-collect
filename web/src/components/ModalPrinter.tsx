@@ -326,7 +326,21 @@ function ContadoresPrinter({ printer }: { printer: Printer }) {
           gap: 12,
         }}
       >
-        <CardCounter label="Total" value={formatNumberBrasil(total)} accent="#0f172a" sub={"Páginas"} />
+        <div
+          style={{
+            borderRadius: 12,
+            border: "1px solid var(--border)",
+            background: "linear-gradient(135deg, #0f172a10 0%, transparent 100%), var(--surface)",
+            borderTop: "3px solid #0f172a",
+            padding: "1.1rem 1.25rem",
+          }}
+        >
+          <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: 6 }}>Total</div>
+          <div style={{ fontSize: "2.1rem", fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px" }}>
+            {formatNumberBrasil(total)}
+          </div>
+          <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginTop: 6 }}>Páginas</div>
+        </div>
       </div>
     );
   }
