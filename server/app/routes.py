@@ -3031,32 +3031,73 @@ async def agent_report(
                     pass
 
                 # ================================================================
-                # 🔥 NORMALIZAÇÃO FINAL OBRIGATÓRIA DE CONTADORES (Julio pediu!)
-                #  -> IMPRESSORA P&B: SEMPRE pages_bw = pages_total / pages_color = 0
-                #  -> IMPRESSORA COLORIDA: SEMPRE pages_total = pages_bw + pages_color
-                #       (Total Geral = Soma do total PEB + total Color reais)
+                # 🔥 NORMALIZAÇÃO FINAL OBRIGATÓRIA — SUPER FORTE (P&B NUNCA MAIS DIVIDIDO!)
+                # Julio pediu: problema começou 02/09 apos ajuste autorizacao parceiros.
+                #   -> IMPRESSORA P&B 100% CONFIRMADA: NUNCA MAIS vira colorida. Nao importa flag de parceiro/revendedor.
+                #       pages_bw = pages_total / pages_color = 0 / toners CMY = NULL
+                #   -> IMPRESSORA COLORIDA: pages_total = pages_bw + pages_color
+                #   -> DETECTOR DIA 02/09: impressoras criadas a partir 2/9 que sao PB falsa-colorida -> corrige automaticamente
                 # ================================================================
                 try:
                     cur_bw = int(printer.pages_bw or 0)
                     cur_color = int(printer.pages_color or 0)
                     cur_total = int(printer.pages_total or 0)
 
-                    # Detecta se e realmente colorida (toners coloridos OU ja teve pages_color > 0)
-                    _toners_cmy = (
-                        (printer.toner_cyan is not None and printer.toner_cyan >= 0) or
-                        (printer.toner_magenta is not None and printer.toner_magenta >= 0) or
-                        (printer.toner_yellow is not None and printer.toner_yellow >= 0) or
-                        cur_color > 0 or
-                        (reading.pages_color and reading.pages_color > 0)
-                    )
+                    _c_has_cyan    = (printer.toner_cyan    is not None and printer.toner_cyan    >= 0)
+                    _c_has_magenta = (printer.toner_magenta is not None and printer.toner_magenta >= 0)
+                    _c_has_yellow  = (printer.toner_yellow  is not None and printer.toner_yellow  >= 0)
+                    _c_has_color_pages = cur_color > 0
 
-                    if not _toners_cmy and cur_total > 0:
-                        # PRETO & BRANCO: 1 contador = TOTAL REAL
+                    _r_has_cyan    = (reading.toner_cyan    is not None and reading.toner_cyan    >= 0)
+                    _r_has_magenta = (reading.toner_magenta is not None and reading.toner_magenta >= 0)
+                    _r_has_yellow  = (reading.toner_yellow  is not None and reading.toner_yellow  >= 0)
+                    _r_has_color_pages = bool(reading.pages_color and reading.pages_color > 0)
+
+                    _realmente_tem_coisa_colorida = (
+                        _c_has_cyan or _c_has_magenta or _c_has_yellow or _c_has_color_pages or
+                        _r_has_cyan or _r_has_magenta or _r_has_yellow or _r_has_color_pages
+                    )
+                    _confirma_PB_100 = (not _realmente_tem_coisa_colorida) and cur_total > 0
+
+                    # ---- DETECTOR PROBLEMA DIA 02/09 (autorizacao parceiro/revendedor) ----
+                    # Qualquer impressora criada OU atualizada apos 2026-09-02 que NÃO tem
+                    # toners CMY reais e NUNCA teve pages_color > 0 de verdade = 100% PB.
+                    _suspeita_bug_02_09 = False
+                    try:
+                        _data_limite = datetime(2026, 9, 2, 0, 0, 0)
+                        _ca = printer.created_at or now
+                        _ua = printer.updated_at or now
+                        if isinstance(_ca, str): _ca = datetime.fromisoformat(_ca.replace("Z",""))
+                        if isinstance(_ua, str): _ua = datetime.fromisoformat(_ua.replace("Z",""))
+                        if (_ca >= _data_limite or _ua >= _data_limite) and _confirma_PB_100:
+                            _suspeita_bug_02_09 = True
+                    except Exception:
+                        _suspeita_bug_02_09 = False
+
+                    if _confirma_PB_100 or _suspeita_bug_02_09:
+                        # ==============================================
+                        #  PRETO & BRANCO (100% CERTEZA, nao importa flag!)
+                        #  -> 1 contador = TOTAL REAL.
+                        # ==============================================
                         if cur_bw != cur_total or cur_color != 0:
                             printer.pages_bw = cur_total
                             printer.pages_color = 0
-                    elif _toners_cmy and (cur_bw > 0 or cur_color > 0):
-                        # COLORIDA: Total Geral = Soma total PEB + total Color (sempre!)
+                        # Zera toners CMY para a UI NUNCA mais tratar como colorida!
+                        if _c_has_cyan:    printer.toner_cyan = None
+                        if _c_has_magenta: printer.toner_magenta = None
+                        if _c_has_yellow:  printer.toner_yellow = None
+                        # Reading tambem garante: caso reading tivesse vindo CMY errado do agente antigo
+                        if reading.toner_cyan    is not None and reading.toner_cyan    >= 0: reading.toner_cyan    = None
+                        if reading.toner_magenta is not None and reading.toner_magenta >= 0: reading.toner_magenta = None
+                        if reading.toner_yellow  is not None and reading.toner_yellow  >= 0: reading.toner_yellow  = None
+                        if reading.pages_color and reading.pages_color > 0:
+                            reading.pages_bw = int(reading.pages_total or reading.pages_bw or cur_total)
+                            reading.pages_color = 0
+                    elif (cur_bw > 0 or cur_color > 0):
+                        # ==============================================
+                        #  IMPRESSORA COLORIDA (tem toners CMY reais)
+                        #  -> Total Geral = Soma PEB + Color reais.
+                        # ==============================================
                         _soma_real = cur_bw + cur_color
                         if _soma_real > 0 and cur_total != _soma_real:
                             printer.pages_total = _soma_real
