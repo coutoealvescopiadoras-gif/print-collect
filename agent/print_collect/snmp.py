@@ -606,11 +606,17 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 2) -> Opt
         data.toner_cyan = None
         data.toner_magenta = None
         data.toner_yellow = None
+        # PRETO & BRANCO: SEMPRE entrega 1 contador = TOTAL REAL.
+        # pages_color ZERO e pages_bw = pages_total (contador real da impressora).
+        # NUNCA calcula nem divide nada. Usa o OID total bruto (ou soma se maior).
         pages_color = 0
         data.pages_color = 0
-        if pages_bw <= 0 and pages_total > 0:
+        if pages_total > 0:
             pages_bw = pages_total
             data.pages_bw = pages_total
+        elif pages_bw > 0:
+            pages_total = pages_bw
+            data.pages_total = pages_total
     else:
         # ===== PASSO EXTRA: HEURISTICA PAGINAS IMPRESSORA COLORIDA CONFIRMADA =====
         # Se tem toners coloridos (> 0%) MAS pages_color AINDA veio 0 (raro mas pode!)

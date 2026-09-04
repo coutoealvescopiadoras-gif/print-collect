@@ -339,9 +339,9 @@ function ContadoresPrinter({ printer }: { printer: Printer }) {
         gap: 12,
       }}
     >
-      <CardCounter label="PEB (Preto + Branco)" value={formatNumberBrasil(pb)} accent="#4b5563" sub={"Páginas"} />
-      <CardCounter label="Coloridas" value={formatNumberBrasil(cor)} accent="#2563eb" sub={""} />
-      <CardCounter label="Total" value={formatNumberBrasil(total)} accent="#0f172a" sub={"PEB + Coloridas"} />
+      <CardCounter label="Total PEB" value={formatNumberBrasil(pb)} accent="#4b5563" sub={"Páginas"} />
+      <CardCounter label="Total Coloridas" value={formatNumberBrasil(cor)} accent="#2563eb" sub={""} />
+      <CardCounter label="Total Geral" value={formatNumberBrasil(total)} accent="#0f172a" sub={"PEB + Coloridas"} />
     </div>
   );
 }

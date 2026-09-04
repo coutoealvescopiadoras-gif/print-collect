@@ -3030,6 +3030,39 @@ async def agent_report(
                 except Exception:
                     pass
 
+                # ================================================================
+                # 🔥 NORMALIZAÇÃO FINAL OBRIGATÓRIA DE CONTADORES (Julio pediu!)
+                #  -> IMPRESSORA P&B: SEMPRE pages_bw = pages_total / pages_color = 0
+                #  -> IMPRESSORA COLORIDA: SEMPRE pages_total = pages_bw + pages_color
+                #       (Total Geral = Soma do total PEB + total Color reais)
+                # ================================================================
+                try:
+                    cur_bw = int(printer.pages_bw or 0)
+                    cur_color = int(printer.pages_color or 0)
+                    cur_total = int(printer.pages_total or 0)
+
+                    # Detecta se e realmente colorida (toners coloridos OU ja teve pages_color > 0)
+                    _toners_cmy = (
+                        (printer.toner_cyan is not None and printer.toner_cyan >= 0) or
+                        (printer.toner_magenta is not None and printer.toner_magenta >= 0) or
+                        (printer.toner_yellow is not None and printer.toner_yellow >= 0) or
+                        cur_color > 0 or
+                        (reading.pages_color and reading.pages_color > 0)
+                    )
+
+                    if not _toners_cmy and cur_total > 0:
+                        # PRETO & BRANCO: 1 contador = TOTAL REAL
+                        if cur_bw != cur_total or cur_color != 0:
+                            printer.pages_bw = cur_total
+                            printer.pages_color = 0
+                    elif _toners_cmy and (cur_bw > 0 or cur_color > 0):
+                        # COLORIDA: Total Geral = Soma total PEB + total Color (sempre!)
+                        _soma_real = cur_bw + cur_color
+                        if _soma_real > 0 and cur_total != _soma_real:
+                            printer.pages_total = _soma_real
+                except Exception:
+                    pass
+
                 # --- TIMESTAMPS: SEMPRE atualiza estes ---
                 printer.last_seen = now
                 printer.updated_at = now

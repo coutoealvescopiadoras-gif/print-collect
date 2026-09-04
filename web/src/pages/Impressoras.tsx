@@ -312,7 +312,7 @@ export default function Impressoras() {
                 <th>
                   Contadores
                   <div style={{ fontWeight: 400, fontSize: "0.72rem", color: "var(--text-muted)", marginTop: 2 }}>
-                    Total · PEB · Cor
+                    Total Geral · PEB · Coloridas
                   </div>
                 </th>
                 <th>Toner</th>
