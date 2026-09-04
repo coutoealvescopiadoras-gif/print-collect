@@ -2708,7 +2708,8 @@ def _retroactive_patch_pb_printers_2026_09_04(db: Session, force: bool = False) 
     Solução: VAI LÁ NO BANCO DIRETAMENTE e conserta TODAS impressoras
     cadastradas que (após o helper `_is_color_printer_real` atualizado)
     são reconhecidas como P&B, mas possuem toner_cyan/magenta/yellow
-    != None OU pages_color > 0 OU bw != total.
+    != None OU pages_color > 0 OU bw != total OU total inchado >= 2x
+    o ÚLTIMO READING REAL reportado pela impressora.
 
     Roda NO MÁXIMO 1 vez a cada X minutos para não sobrecarregar o DB
     (exceto se force=True, chamado direto do endpoint de listagem quando
@@ -2717,6 +2718,7 @@ def _retroactive_patch_pb_printers_2026_09_04(db: Session, force: bool = False) 
     Retorna: total de impressoras corrigidas.
     """
     import time as _t
+    from sqlalchemy import desc as _desc
     global _RETRO_PB_PATCH_LAST_RUN
     _now_ts = _t.time()
     if not force and (_now_ts - _RETRO_PB_PATCH_LAST_RUN) < _RETRO_PB_PATCH_CACHE_TTL_SECONDS:
@@ -2746,6 +2748,51 @@ def _retroactive_patch_pb_printers_2026_09_04(db: Session, force: bool = False) 
         except Exception:
             _total = _bw = _col = 0
 
+        # ================================================================
+        # 🔥 DETECTOR DE INCHADO (Julio 04/09 — 2 Brother 5652 + Ricoh MP 501)
+        # Pega o ÚLTIMO READING SALVO da impressora (collected_at DESC) —
+        # esse é o contador REAL que a impressora reportou fisicamente.
+        # Se pages_total salvo no Printer for 2x ou MAIOR que esse reading,
+        # o total salvo é FALSO (soma bw+color no bug 02/09) → REDEFINE.
+        # ================================================================
+        _last_reading_total = 0
+        try:
+            if getattr(p, "id", None) and int(p.id) > 0:
+                _last_r = (
+                    db.query(Reading)
+                    .filter(Reading.printer_id == int(p.id))
+                    .order_by(_desc(Reading.collected_at), _desc(Reading.id))
+                    .first()
+                )
+                if _last_r:
+                    try:
+                        _last_reading_total = int(getattr(_last_r, "pages_total", None) or 0)
+                    except Exception:
+                        _last_reading_total = 0
+                    # Também corrige o reading se estava colorido falso (garante
+                    # que o histórico não tem leituras coloridas inventadas em PB)
+                    try:
+                        _lr_col = int(getattr(_last_r, "pages_color", None) or 0)
+                        _lr_bw  = int(getattr(_last_r, "pages_bw",  None) or 0)
+                        _lr_tot = int(getattr(_last_r, "pages_total", None) or 0)
+                        _lr_fix = False
+                        if _lr_col != 0:
+                            setattr(_last_r, "pages_color", 0); _lr_fix = True
+                        if _lr_tot > 0 and _lr_bw != _lr_tot:
+                            setattr(_last_r, "pages_bw", _lr_tot); _lr_fix = True
+                        if (getattr(_last_r, "toner_cyan", None) is not None or
+                            getattr(_last_r, "toner_magenta", None) is not None or
+                            getattr(_last_r, "toner_yellow", None) is not None):
+                            setattr(_last_r, "toner_cyan", None)
+                            setattr(_last_r, "toner_magenta", None)
+                            setattr(_last_r, "toner_yellow", None)
+                            _lr_fix = True
+                        if _lr_fix: needs_fix = True
+                    except Exception:
+                        pass
+        except Exception:
+            _last_reading_total = 0
+
         # 1) Apaga toners CMY se existiam (falsos do bug 02/09)
         if p.toner_cyan is not None:    p.toner_cyan = None;    needs_fix = True
         if p.toner_magenta is not None: p.toner_magenta = None; needs_fix = True
@@ -2754,7 +2801,13 @@ def _retroactive_patch_pb_printers_2026_09_04(db: Session, force: bool = False) 
         if _col != 0:
             p.pages_color = 0
             needs_fix = True
-        # 3) FORÇA pages_bw = pages_total (1 contador real de P&B!)
+        # 3) CORREÇÃO INCHADO: Printer.total >= 2x o último reading real?
+        #    → usa o contador FÍSICO REAL da máquina (última leitura SNMP!)
+        if _last_reading_total > 0 and _total >= (2 * _last_reading_total):
+            _total = _last_reading_total
+            p.pages_total = _total
+            needs_fix = True
+        # 4) FORÇA pages_bw = pages_total (1 contador real de P&B!)
         #    Mesmo que pages_total esteja inchado (4M por erro antigo), a UI
         #    agora mostra 1 card só de Total Geral, e bw = total para não
         #    dar impressão de "contadores quebrados".
@@ -2764,7 +2817,7 @@ def _retroactive_patch_pb_printers_2026_09_04(db: Session, force: bool = False) 
             if _new_bw != _bw:
                 p.pages_bw = _new_bw
                 needs_fix = True
-        # 4) Se pages_total estiver 0 mas bw > 0, total recebe bw (monotônico)
+        # 5) Se pages_total estiver 0 mas bw > 0, total recebe bw (monotônico)
         if _bw > 0 and _total < _bw:
             p.pages_total = _bw
             needs_fix = True
@@ -3412,6 +3465,14 @@ async def agent_report(
                 #
                 #   Se a monotonicidade corrigiu algo, força total = bw + color
                 #   (pois os dois agora são reais monotônicos = soma é a real produção).
+                #
+                #   ⚠️ CORREÇÃO ESPECIAL 04/09 JULIO (inchado 4M bug 02/09):
+                #   Se a impressora é P&B CONFIRMADA pelo helper oficial E o valor
+                #   salvo no banco é 2x MAIOR ou mais que o valor REAL reportado
+                #   pela impressora AGORA → a gente CONSIDERA o valor real novo!
+                #   Razão: o salvo inchado foi um FALSO calculado por "soma bw+color"
+                #   no bug 02/09 (Julio trocou permissões de revendedor). A leitura
+                #   SNMP real da impressora TEM PRIORIDADE sobre cálculo antigo errado.
                 # ================================================================
                 try:
                     _saved_total = int(getattr(printer, "pages_total", None) or 0)
@@ -3420,6 +3481,34 @@ async def agent_report(
                     _new_total   = int(r_pages_total or 0)
                     _new_bw      = int(r_pages_bw    or 0)
                     _new_color   = int(r_pages_color or 0)
+
+                    # ---- CORREÇÃO ANTI-INCHADO PB (Julio 04/09) ----
+                    try:
+                        _pb_confirmed = not _is_color_printer_real(printer)
+                    except Exception:
+                        _pb_confirmed = False
+
+                    if _pb_confirmed:
+                        # 1) IMPRESSORA 100% PB: color NUNCA existiu → força salvo=0 ANTES do MAX.
+                        #    Isso impede que _mono_color = max(novo 0, salvo velho errado X) = X.
+                        _saved_color = 0
+                        _new_color = 0
+
+                        # 2) Se o total salvo é 2x ou MAIS que o contador REAL da impressora,
+                        #    o salvo é FALSO (inchado na classificação errada). O contador
+                        #    SNMP real da máquina TEM PRIORIDADE.
+                        if _new_total > 0 and _saved_total >= (2 * _new_total):
+                            _saved_total = _new_total
+                            _saved_bw    = _new_total
+                        else:
+                            # 3) bw sempre = total (1 contador PB).
+                            if _saved_total > 0:
+                                _saved_bw = _saved_total
+
+                        # 4) Novo recebido também garante bw=total e color=0.
+                        if _new_total > 0:
+                            _new_bw = _new_total
+                            _new_color = 0
 
                     _mono_total = max(_new_total, _saved_total)
                     _mono_bw    = max(_new_bw,    _saved_bw)
