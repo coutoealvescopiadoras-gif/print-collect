@@ -1073,7 +1073,31 @@ def list_locations(client_id: int, db: Session = Depends(get_db), current_user: 
     query = db.query(Location).filter(Location.client_id == client_id)
     if scoped_client_id is not None:
         query = query.filter(Location.client_id == scoped_client_id)
-    return query.all()
+    raw_locations = query.all()
+    # 🔥 HOTFIX PAPELARIA EXATA (500 setores): sanitiza 1 location por vez para
+    # nunca quebrar Pydantic LocationOut (LocationBase.name = str OBRIGATORIO!)
+    safe_result: list = []
+    for loc in raw_locations or []:
+        try:
+            _sanitize_location_for_out(loc)
+            safe_result.append(loc)
+        except Exception:
+            try:
+                # Último recurso: cria um novo objeto dicionário seguro, sem depender do ORM objeto
+                from pydantic import BaseModel as _BM
+                _id  = _safe_int_out(getattr(loc, "id", 0))
+                _cid = _safe_int_out(getattr(loc, "client_id", client_id or 0))
+                _nm  = _safe_str_out(getattr(loc, "name", None), default="Setor") or "Setor"
+                _sec = _safe_str_out(getattr(loc, "sector", None)) or None
+                _res = _safe_str_out(getattr(loc, "responsible", None)) or None
+                _adr = _safe_str_out(getattr(loc, "address", None)) or None
+                class _LocTmp(_BM):
+                    id: int; client_id: int; name: str
+                    sector: object = None; responsible: object = None; address: object = None
+                safe_result.append(_LocTmp(id=_id,client_id=_cid,name=_nm,sector=_sec,responsible=_res,address=_adr))
+            except Exception:
+                continue
+    return safe_result
 
 
 @router.post("/locations", response_model=LocationOut, status_code=201)
@@ -1114,11 +1138,17 @@ def list_printers(
 
     scoped_client_id = _scoped_client_id(current_user, client_id)
     query = db.query(Printer).filter(Printer.ignored == False)
-    # Join com Client para poder filtrar por partner_id / search / own_only e tambem para exibir nome cliente/parceiro no front
-    query = query.join(Client, Client.id == Printer.client_id, isouter=False)
+    # =================== 🔥 HOTFIX PAPELARIA EXATA 500 ===================
+    #  ERA isouter=False (INNER JOIN): se impressora tivesse client_id NULL
+    #  ou cliente FOSSE DELETADO/INEXISTENTE, JOIN matava TUDO ou dava erro
+    #  em p.client = None (NoneType nao tem attr .partner_id)
+    #  HOJE: LEFT JOIN (isouter=True) + depois SAFE filter.
+    # =====================================================================
+    query = query.join(Client, Client.id == Printer.client_id, isouter=True)
 
     if _is_partner(current_user):
         partner_id_forced = _required_partner_id(current_user)
+        # Partner só pode ver impressoras CUJO CLIENTE EXISTE (nao nulo) e pertence ao partner dele.
         query = query.filter(Client.partner_id == partner_id_forced)
         if client_id is not None:
             _assert_partner_owns_client(db, current_user, client_id)
@@ -1144,34 +1174,71 @@ def list_printers(
         from server.app.database import Partner
     except Exception:
         Partner = None
-    for p in printers:
+    # =================== 🔥 HOTFIX PAPELARIA EXATA 500 (pt. 2) ===================
+    #  try/except POR IMPRESSORA INDIVIDUAL.
+    #  Se "Papelaria Exata" tem 1 impressora quebrada (client_id NULL, ou
+    #  cliente deletado, ou referencia quebrada), as OUTRAS 49 impressoras
+    #  do cliente CONTINUAM aparecendo. NÃO MORRE o request inteiro!
+    # =============================================================================
+    safe_printers_result: list = []
+    for p in printers or []:
         try:
-            cli = p.client
-            if cli:
-                p.client_name = cli.name or ""
-                p.partner_id = cli.partner_id
-                if cli.partner_id and cli.partner:
-                    p.partner_name = cli.partner.name or None
-                elif cli.partner_id and Partner is not None:
-                    if cli.partner_id in partners_cache:
-                        p.partner_name = partners_cache[cli.partner_id]
-                    else:
-                        _p = db.query(Partner).filter(Partner.id == cli.partner_id).first()
-                        p.partner_name = _p.name if _p else None
-                        partners_cache[cli.partner_id] = p.partner_name or ""
+            cli = getattr(p, "client", None)
+            try:
+                if cli:
+                    p.client_name = str(getattr(cli, "name", None) or "")
+                    p.partner_id = getattr(cli, "partner_id", None)
+                    _partner_obj = getattr(cli, "partner", None)
+                    if p.partner_id and _partner_obj is not None:
+                        p.partner_name = str(getattr(_partner_obj, "name", None) or None)
+                    elif p.partner_id and Partner is not None:
+                        if p.partner_id in partners_cache:
+                            p.partner_name = partners_cache[p.partner_id]
+                        else:
+                            try:
+                                _p = db.query(Partner).filter(Partner.id == p.partner_id).first()
+                                p.partner_name = str(getattr(_p, "name", None) or None) if _p else None
+                            except Exception:
+                                p.partner_name = None
+                            partners_cache[p.partner_id] = p.partner_name or ""
+                else:
+                    # Impressora SEM cliente (NULL): não crasha, mostra só nome vazio.
+                    if not getattr(p, "client_name", ""):
+                        p.client_name = ""
+                    p.partner_id = None
+                    p.partner_name = None
+            except Exception:
+                if not getattr(p, "client_name", ""):
+                    p.client_name = ""
             # Tambem adiciona nome do setor/location se tiver
             try:
-                if p.location_id and getattr(p, "location", None) is not None:
-                    loc = p.location
-                    if loc:
-                        p.location_name = (getattr(loc, "name", None) or None)
-                        p.location_sector = (getattr(loc, "sector", None) or None)
+                _loc_id = getattr(p, "location_id", None)
+                _loc = getattr(p, "location", None)
+                if _loc_id and _loc is not None:
+                    p.location_name = (getattr(_loc, "name", None) or None)
+                    p.location_sector = (getattr(_loc, "sector", None) or None)
             except Exception:
                 pass
+            # 🔥 SANITIZAÇÃO OBRIGATÓRIA: nunca deixa Pydantic estourar validação!
+            try:
+                _sanitize_printer_for_out(p)
+            except Exception:
+                pass
+            safe_printers_result.append(p)
         except Exception:
-            if not getattr(p, "client_name", ""):
-                p.client_name = ""
-    return printers
+            # Essa impressora está com dado quebrado (pode ser 1 única!).
+            # Continua para as outras -> NÃO GERA 500.
+            try:
+                if not getattr(p, "client_name", ""):
+                    p.client_name = ""
+                try:
+                    _sanitize_printer_for_out(p)
+                except Exception:
+                    pass
+                safe_printers_result.append(p)
+            except Exception:
+                continue
+    return safe_printers_result
 
 
 # ==============================================================
@@ -1187,10 +1254,10 @@ def get_printer_detail(
     Verifica permissões de escopo (client/partner) igual list_printers."""
     _ensure_printer_ignored_column(db)
 
-    # Query com JOIN para poder checar permissões
+    # Query com JOIN para poder checar permissões — HOTFIX LEFT JOIN (Papelaria Exata!)
     query = (
         db.query(Printer)
-        .join(Client, Client.id == Printer.client_id, isouter=False)
+        .join(Client, Client.id == Printer.client_id, isouter=True)
         .filter(Printer.id == printer_id)
     )
     if _is_partner(current_user):
@@ -1202,33 +1269,39 @@ def get_printer_detail(
         raise HTTPException(status_code=404, detail=f"Printer #{printer_id} nao encontrado (ou sem permissao para este usuario).")
 
     scoped_client_id = _scoped_client_id(current_user, None)
-    if scoped_client_id is not None and int(printer.client_id or 0) != int(scoped_client_id):
+    if scoped_client_id is not None and int(getattr(printer, "client_id", 0) or 0) != int(scoped_client_id):
         raise HTTPException(status_code=404, detail=f"Printer #{printer_id} nao encontrado (ou sem permissao).")
 
-    # Preenche campos dinamicos (mesma logica list_printers)
+    # Preenche campos dinamicos (mesma logica list_printers) + SAFE getattr
     try:
         from server.app.database import Partner
     except Exception:
         Partner = None
     try:
-        cli = printer.client
+        cli = getattr(printer, "client", None)
         if cli:
-            printer.client_name = cli.name or ""
-            printer.partner_id = cli.partner_id
-            if cli.partner_id and cli.partner:
-                printer.partner_name = cli.partner.name or None
-            elif cli.partner_id and Partner is not None:
-                _p = db.query(Partner).filter(Partner.id == cli.partner_id).first()
-                printer.partner_name = _p.name if _p else None
+            printer.client_name = str(getattr(cli, "name", None) or "")
+            printer.partner_id = getattr(cli, "partner_id", None)
+            _po = getattr(cli, "partner", None)
+            if printer.partner_id and _po is not None:
+                printer.partner_name = str(getattr(_po, "name", None) or None)
+            elif printer.partner_id and Partner is not None:
+                _p = db.query(Partner).filter(Partner.id == printer.partner_id).first()
+                printer.partner_name = str(getattr(_p, "name", None) or None) if _p else None
     except Exception:
-        printer.client_name = printer.client_name or ""
-    # Location sector
+        printer.client_name = getattr(printer, "client_name", None) or ""
+    # Location sector (safe!)
     try:
-        if printer.location_id and getattr(printer, "location", None) is not None:
-            loc = printer.location
-            if loc:
-                printer.location_name = (getattr(loc, "name", None) or None)
-                printer.location_sector = (getattr(loc, "sector", None) or None)
+        _loc_id = getattr(printer, "location_id", None)
+        _loc = getattr(printer, "location", None)
+        if _loc_id and _loc is not None:
+            printer.location_name = (getattr(_loc, "name", None) or None)
+            printer.location_sector = (getattr(_loc, "sector", None) or None)
+    except Exception:
+        pass
+    # 🔥 SANITIZAÇÃO OBRIGATÓRIA (impede Pydantic de estourar validação em impressora com dado NULL!)
+    try:
+        _sanitize_printer_for_out(printer)
     except Exception:
         pass
     return printer
@@ -1258,7 +1331,26 @@ def get_printer_readings(
         .limit(int(limit))
         .all()
     )
-    return list(rows or [])
+    # 🔥 HOTFIX PAPELARIA EXATA: ReadingOut também tem CAMPOS OBRIGATÓRIOS (pages_total/bw/color/status ints, collected_at datetime)
+    #    Pode ter 1 reading com campo NULL em Papelaria Exata! Sanitiza UM POR UM.
+    safe_readings: list = []
+    for r in rows or []:
+        try:
+            r.id           = _safe_int_out(getattr(r, "id", 0))
+            r.printer_id   = _safe_int_out(getattr(r, "printer_id", printer_id or 0))
+            r.pages_total  = _safe_int_out(getattr(r, "pages_total", 0))
+            r.pages_bw     = _safe_int_out(getattr(r, "pages_bw",    0))
+            r.pages_color  = _safe_int_out(getattr(r, "pages_color", 0))
+            r.toner_black  = _safe_float_out(getattr(r, "toner_black", None))
+            r.toner_cyan   = _safe_float_out(getattr(r, "toner_cyan", None))
+            r.toner_magenta= _safe_float_out(getattr(r, "toner_magenta", None))
+            r.toner_yellow = _safe_float_out(getattr(r, "toner_yellow", None))
+            r.status       = _safe_str_out(getattr(r, "status", None), default="unknown") or "unknown"
+            r.collected_at = _safe_date_out(getattr(r, "collected_at", None))
+            safe_readings.append(r)
+        except Exception:
+            continue
+    return safe_readings
 
 
 @router.post("/printers", response_model=PrinterOut, status_code=201)
@@ -1278,6 +1370,11 @@ def create_printer(payload: PrinterCreate, db: Session = Depends(get_db), curren
     try:
         db.commit()
         db.refresh(printer)
+        # 🔥 Sanitiza antes de returnar (garante Pydantic!)
+        try:
+            _sanitize_printer_for_out(printer)
+        except Exception:
+            pass
         return printer
     except Exception as e:
         db.rollback()
@@ -1317,6 +1414,11 @@ def update_printer(printer_id: int, payload: PrinterUpdate, db: Session = Depend
     try:
         db.commit()
         db.refresh(printer)
+        # 🔥 Sanitiza antes de retornar (garante Pydantic!)
+        try:
+            _sanitize_printer_for_out(printer)
+        except Exception:
+            pass
         return printer
     except Exception as e:
         db.rollback()
@@ -2567,6 +2669,126 @@ def _cleanup_false_color_alerts(db: Session, partner_id: int | None = None, clie
 #       idx_clients_partner_active    → filtro superadmin/partner_admin clientes
 # -----------------------------------------------------------------------------
 _MIGRATION_IGNORED_DONE = False
+
+
+# =========================================================================
+# 🔥 SANITIZADORES OBRIGATÓRIOS — NUNCA QUEBRAM VALIDAÇÃO PYDANTIC
+#    (Causa do 500 só na Papelaria Exata: UM registro com campo NULL obrigatório!)
+# =========================================================================
+from datetime import datetime as _dt
+
+def _safe_int_out(v, default: int = 0) -> int:
+    try:
+        if v is None:
+            return default
+        i = int(v)
+        return i if i >= 0 else default
+    except Exception:
+        return default
+
+def _safe_str_out(v, default: str = "") -> str:
+    try:
+        if v is None:
+            return default
+        return str(v)
+    except Exception:
+        return default
+
+def _safe_date_out(v) -> _dt:
+    try:
+        if isinstance(v, _dt) and v is not None:
+            return v
+        import datetime as _dt2
+        if isinstance(v, str) and v.strip():
+            return _dt2.datetime.fromisoformat(v[:26])
+    except Exception:
+        pass
+    return _now()
+
+def _safe_date_opt_out(v):
+    if v is None:
+        return None
+    try:
+        if isinstance(v, _dt):
+            return v
+        import datetime as _dt2
+        if isinstance(v, str) and v.strip():
+            return _dt2.datetime.fromisoformat(v[:26])
+    except Exception:
+        pass
+    return None
+
+def _safe_bool_out(v, default: bool = False) -> bool:
+    try:
+        if v is None:
+            return default
+        return bool(v)
+    except Exception:
+        return default
+
+def _safe_float_out(v):
+    try:
+        if v is None:
+            return None
+        f = float(v)
+        return None if f < -1 else f
+    except Exception:
+        return None
+
+def _sanitize_printer_for_out(p) -> None:
+    """Aplica EM CADA impressora ANTES de retornar JSON via response_model PrinterOut.
+    Garante 100%: NENHUM campo obrigatório PrinterOut estoura validação Pydantic.
+    Isso resolve o bug "Só a Papelaria Exata dá 500" (UM registro com NULL em campo obrigatório)
+    sem afetar os outros clientes (dados OK passam intactos)."""
+    if p is None:
+        return
+    try:
+        # --- CAMPOS OBRIGATÓRIOS PrinterOut (sem default!) ---
+        p.id             = _safe_int_out(getattr(p, "id", 0), default=0)
+        p.client_id      = _safe_int_out(getattr(p, "client_id", 0), default=0)
+        p.status         = _safe_str_out(getattr(p, "status", None), default="unknown") or "unknown"
+        p.pages_total    = _safe_int_out(getattr(p, "pages_total", 0), default=0)
+        p.pages_bw       = _safe_int_out(getattr(p, "pages_bw",    0), default=0)
+        p.pages_color    = _safe_int_out(getattr(p, "pages_color", 0), default=0)
+        p.created_at     = _safe_date_out(getattr(p, "created_at", None))
+        p.updated_at     = _safe_date_out(getattr(p, "updated_at", None))
+        p.last_seen      = _safe_date_opt_out(getattr(p, "last_seen", None))
+        p.active         = _safe_bool_out(getattr(p, "active", None),   default=True)
+        p.ignored        = _safe_bool_out(getattr(p, "ignored", None),  default=False)
+        # --- OPTIONAIS PrinterOut / PrinterBase ---
+        p.ip_address     = _safe_str_out(getattr(p, "ip_address", None), default="") or "0.0.0.0"
+        p.mac_address    = _safe_str_out(getattr(p, "mac_address", None), default="")  or None
+        p.serial_number  = _safe_str_out(getattr(p, "serial_number", None))[:100] or None
+        p.model          = _safe_str_out(getattr(p, "model", None))[:200]          or None
+        p.manufacturer   = _safe_str_out(getattr(p, "manufacturer", None))[:100]   or None
+        p.location_id    = _safe_int_out(getattr(p, "location_id", None)) or None
+        p.toner_black    = _safe_float_out(getattr(p, "toner_black", None))
+        p.toner_cyan     = _safe_float_out(getattr(p, "toner_cyan", None))
+        p.toner_magenta  = _safe_float_out(getattr(p, "toner_magenta", None))
+        p.toner_yellow   = _safe_float_out(getattr(p, "toner_yellow", None))
+        # --- Novos campos client_name / partner_name etc ---
+        p.client_name    = _safe_str_out(getattr(p, "client_name", None), default="")
+        p.partner_id     = _safe_int_out(getattr(p, "partner_id", None)) or None
+        p.partner_name   = _safe_str_out(getattr(p, "partner_name", None)) or None
+        p.location_name  = _safe_str_out(getattr(p, "location_name", None)) or None
+        p.location_sector= _safe_str_out(getattr(p, "location_sector", None)) or None
+    except Exception:
+        pass
+
+def _sanitize_location_for_out(loc) -> None:
+    """Aplica EM CADA location ANTES de retornar response_model LocationOut.
+    LocationBase.name: str OBRIGATORIO! Se NULL no banco = Pydantic crash 500."""
+    if loc is None:
+        return
+    try:
+        loc.id        = _safe_int_out(getattr(loc, "id", 0), default=0)
+        loc.client_id = _safe_int_out(getattr(loc, "client_id", 0), default=0)
+        loc.name      = _safe_str_out(getattr(loc, "name", None), default="Setor") or "Setor"
+        loc.sector    = _safe_str_out(getattr(loc, "sector", None)) or None
+        loc.responsible=_safe_str_out(getattr(loc, "responsible", None)) or None
+        loc.address   = _safe_str_out(getattr(loc, "address", None)) or None
+    except Exception:
+        pass
 
 
 def _ensure_printer_ignored_column(db: Session) -> None:
