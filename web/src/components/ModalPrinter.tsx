@@ -179,12 +179,17 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
 
               {/* ==================== TONERS (PB = só preto; COLOR = 4) ==================== */}
               {(() => {
+                const modeloCor = modelConfirmadoColorido(printer.model, printer.manufacturer);
                 const isColor =
                   !!printer.toner_cyan ||
                   !!printer.toner_magenta ||
                   !!printer.toner_yellow ||
                   Number(printer.pages_color || 0) > 0 ||
-                  modelConfirmadoColorido(printer.model, printer.manufacturer);
+                  modeloCor;
+                // Hint para cartuchos CMY NULL mas a impressora é colorida conhecida
+                const hintCmy = modeloCor
+                  ? "nível ainda não lido pela última coleta (aguardando agente atualizado)"
+                  : undefined;
                 return (
                   <div style={{ marginBottom: "1.5rem" }}>
                     <h4 style={{ margin: "0 0 0.6rem 0" }}>
@@ -205,9 +210,24 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
                       <TonerPB label="Preto" value={printer.toner_black} color="#111827" />
                       {isColor && (
                         <>
-                          <TonerPB label="Ciano" value={printer.toner_cyan} color="#0891b2" />
-                          <TonerPB label="Magenta" value={printer.toner_magenta} color="#db2777" />
-                          <TonerPB label="Amarelo" value={printer.toner_yellow} color="#ca8a04" />
+                          <TonerPB
+                            label="Ciano"
+                            value={printer.toner_cyan}
+                            color="#0891b2"
+                            hint={printer.toner_cyan == null ? hintCmy : undefined}
+                          />
+                          <TonerPB
+                            label="Magenta"
+                            value={printer.toner_magenta}
+                            color="#db2777"
+                            hint={printer.toner_magenta == null ? hintCmy : undefined}
+                          />
+                          <TonerPB
+                            label="Amarelo"
+                            value={printer.toner_yellow}
+                            color="#ca8a04"
+                            hint={printer.toner_yellow == null ? hintCmy : undefined}
+                          />
                         </>
                       )}
                     </div>
@@ -312,9 +332,10 @@ function InfoCard({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 function ContadoresPrinter({ printer }: { printer: Printer }) {
+  const modeloCor = modelConfirmadoColorido(printer.model, printer.manufacturer);
   const isColor =
     !!printer.toner_cyan || !!printer.toner_magenta || !!printer.toner_yellow || Number(printer.pages_color || 0) > 0 ||
-    modelConfirmadoColorido(printer.model, printer.manufacturer);
+    modeloCor;
   const rawTotal = Number(printer.pages_total || 0);
   const pb = Number(printer.pages_bw || 0);
   const cor = Number(printer.pages_color || 0);
@@ -357,7 +378,16 @@ function ContadoresPrinter({ printer }: { printer: Printer }) {
       }}
     >
       <CardCounter label="Total PEB" value={formatNumberBrasil(pb)} accent="#4b5563" sub={"Páginas"} />
-      <CardCounter label="Total Coloridas" value={formatNumberBrasil(cor)} accent="#2563eb" sub={""} />
+      <CardCounter
+        label="Total Coloridas"
+        value={formatNumberBrasil(cor)}
+        accent="#2563eb"
+        sub={
+          modeloCor && cor === 0
+            ? "Aguardando próxima coleta com agente atualizado"
+            : ""
+        }
+      />
       <CardCounter label="Total Geral" value={formatNumberBrasil(total)} accent="#0f172a" sub={"PEB + Coloridas"} />
     </div>
   );
@@ -391,7 +421,17 @@ function CardCounter({
   );
 }
 
-function TonerPB({ label, value, color }: { label: string; value: number | null | undefined; color: string }) {
+function TonerPB({
+  label,
+  value,
+  color,
+  hint,
+}: {
+  label: string;
+  value: number | null | undefined;
+  color: string;
+  hint?: string;
+}) {
   const v = typeof value === "number" ? Math.max(0, Math.min(100, value)) : null;
   return (
     <div
@@ -438,6 +478,22 @@ function TonerPB({ label, value, color }: { label: string; value: number | null 
               transition: "width .3s ease",
             }}
           />
+        </div>
+      )}
+      {hint && (
+        <div
+          style={{
+            marginTop: 6,
+            padding: "0.25rem 0.45rem",
+            background: "rgba(37, 99, 235, 0.08)",
+            border: "1px dashed rgba(37,99,235,0.35)",
+            borderRadius: 6,
+            color: "#2563eb",
+            fontSize: "0.72rem",
+            lineHeight: 1.2,
+          }}
+        >
+          ℹ️ {hint}
         </div>
       )}
     </div>
