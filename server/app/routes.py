@@ -2095,11 +2095,45 @@ def _is_color_printer_real(printer) -> bool:
         except Exception:
             return ""
 
-    # ===== PASSO 0: Detecta MODELO COLORIDO (maior prioridade! Julio pediu!) =====
     model_txt   = _s(getattr(printer, "model", None))
     manu_txt    = _s(getattr(printer, "manufacturer", None))
     full_txt    = f"{manu_txt} {model_txt}".strip()
+    text        = full_txt
 
+    # ============================================================================
+    # 🔴 PASSO -1: DETECTA MODELO P&B CONFIRMADO (ANTI-LOOP DE CONTAMINAÇÃO!) 🔴
+    #   Esta é a CORREÇÃO CRÍTICA de 04/09 para bug dia 02/09:
+    #   Ricoh MP 501, Brother 5652 e outras PB foram contaminadas com toners
+    #   CMY falsos no banco (dados do antigo helper). Se has_color_toners rodar
+    #   PRIMEIRO, ele dá "é colorida" baseado em dados LIXADOS, criando loop
+    #   infinito de NÃO apagar CMY nunca.
+    #   SOLUÇÃO: MODELOS P&B CONFIRMADOS retornam FALSE AQUI MESMO, ANTES de
+    #   qualquer checagem de toners/pages_color, NÃO importa o que tem no banco.
+    # ============================================================================
+    ricoh_pb_common = (
+        ("ricoh" in text or "savin" in text or "lanier" in text or "gestetner" in text or "nashuatec" in text) and
+        (
+            ("mp " in text and "mp c" not in text and "mpc" not in text) or
+            ("sp " in text and "sp c" not in text and "spc" not in text) or
+            ("im " in text and "im c" not in text and "imc" not in text)
+        )
+    )
+    brother_pb_common = (
+        "brother" in text and
+        not any(k in text for k in (
+            "hl-l3", "dcp-l3", "mfc-l3", "hl-l8", "hl-l9", "mfc-l8", "mfc-l9",
+            "color", "cor",
+        ))
+    )
+    epson_pb_common = (
+        "epson" in text and
+        not any(k in text for k in ("wf-c", "workforce pro", "workforce c", "color", "cor"))
+    )
+    model_confirmado_pb = ricoh_pb_common or brother_pb_common or epson_pb_common
+    if model_confirmado_pb:
+        return False
+
+    # ===== PASSO 0: Detecta MODELO COLORIDO (maior prioridade! Julio pediu!) =====
     # Lista de padrões que DEIXAM CLARO que é COLORIDA (mesmo que pages_color=0 agora!)
     #   KONICA bizhub C308 / C258 / C368 / C458 etc
     #   RICOH MP C307 / SP C360 / IM C300 etc
@@ -2536,6 +2570,76 @@ def _sync_alerts(db: Session, printer: Printer, alert_messages: list[str]) -> No
 _CLEANUP_FALSE_COLOR_CACHE_TTL_SECONDS = 1800  # 30 MINUTOS = Nao precisa limpar alerta falso a cada clique!
 _CLEANUP_FALSE_COLOR_LAST_RUN: dict[tuple, float] = {}  # key: (scope_tuple) -> timestamp unix (s)
 
+# Cache para o patch retroativo de PB (roda no max 1 vez a cada 10 min = 600s)
+_RETRO_PB_PATCH_CACHE_TTL_SECONDS = 600
+_RETRO_PB_PATCH_LAST_RUN: float = 0.0
+
+
+def _retroactive_patch_pb_printers_2026_09_04(db: Session) -> int:
+    """PATCH RETROATIVO DE 04/09 — corrige IMPRESSORAS P&B que foram
+    contaminadas no bug do dia 02/09 com toners CMY falsos e pages_color > 0
+    no banco, que criavam um LOOP INFINITO de NÃO apagar CMY nunca.
+
+    Solução: VAI LÁ NO BANCO DIRETAMENTE e conserta TODAS impressoras
+    cadastradas que (após o helper `_is_color_printer_real` atualizado)
+    são reconhecidas como P&B, mas possuem toner_cyan/magenta/yellow
+    != None OU pages_color > 0.
+
+    Roda NO MÁXIMO 1 vez a cada 10 minutos para não sobrecarregar o DB.
+
+    Retorna: total de impressoras corrigidas.
+    """
+    import time as _t
+    global _RETRO_PB_PATCH_LAST_RUN
+    _now_ts = _t.time()
+    if (_now_ts - _RETRO_PB_PATCH_LAST_RUN) < _RETRO_PB_PATCH_CACHE_TTL_SECONDS:
+        return 0
+    _RETRO_PB_PATCH_LAST_RUN = _now_ts
+
+    fixed_count = 0
+    try:
+        all_printers = db.query(Printer).all()
+    except Exception:
+        return 0
+
+    for p in all_printers:
+        try:
+            is_color = bool(_is_color_printer_real(p))
+        except Exception:
+            is_color = True
+        if is_color:
+            continue
+
+        # Impressora é P&B! Vamos ver se tem lixo do dia 02/09 no banco.
+        needs_fix = False
+        try:
+            _total = int(p.pages_total or 0)
+            _bw    = int(p.pages_bw or 0)
+            _col   = int(p.pages_color or 0)
+        except Exception:
+            _total = _bw = _col = 0
+
+        if p.toner_cyan is not None:    p.toner_cyan = None;    needs_fix = True
+        if p.toner_magenta is not None: p.toner_magenta = None; needs_fix = True
+        if p.toner_yellow is not None:  p.toner_yellow = None;  needs_fix = True
+        if _col != 0:                   p.pages_color = 0;      needs_fix = True
+        if _bw != _total or _total > 0:
+            _new_bw = _total if _total >= _bw else _bw
+            if _new_bw != _bw:
+                p.pages_bw = _new_bw
+                needs_fix = True
+
+        if needs_fix:
+            fixed_count += 1
+
+    try:
+        db.commit()
+    except Exception:
+        try: db.rollback()
+        except Exception: pass
+        return 0
+    return fixed_count
+
 
 def _make_cleanup_cache_key(partner_id: int | None, client_id: int | None) -> tuple:
     return (
@@ -2948,6 +3052,19 @@ async def agent_report(
         # ==========================================================
         try:
             _cleanup_false_color_alerts(db)
+        except Exception:
+            pass
+
+        # ==========================================================
+        # 🔧 PATCH RETROATIVO GLOBAL 04/09 — IMPRESSORAS PB COM CMY FALSO
+        # Bug dia 02/09: Ricoh MP 501, Brother 5652 etc receberam toners CMY
+        # falso no banco e pages_color > 0 por engano. Isso criava loop
+        # infinito (has_color_toners retorna True mesmo sendo PB!).
+        #
+        # Roda SEMPRE aqui (depois do cleanup), pois é leve e cacheado em 10min.
+        # ==========================================================
+        try:
+            _retroactive_patch_pb_printers_2026_09_04(db)
         except Exception:
             pass
 
