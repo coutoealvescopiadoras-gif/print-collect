@@ -2078,11 +2078,55 @@ def _get_agent(x_agent_token: str, db: Session) -> Agent:
 #          → AÍ SIM checamos has_color_toners OR has_color_pages.
 # -----------------------------------------------------------------------------
 def _is_color_printer_real(printer) -> bool:
-    """Retorna True se a impressora é REALMENTE colorida (evita falsos PB).
+    """Retorna True se a impressora é REALMENTE colorida.
 
-    ⚠️ BONUS: se detectar que toners coloridos estão com valores FALSOS
-    (ex: impressora PB que reportou ciano=100), ELES JA SAO SETADOS PARA None
-    AQUI DENTRO, para não ficar aparecendo nos paineis de suprimentos!"""
+    ✅ NOVA REGRA DE OURO JULIO 03/09:
+    1) PRIMEIRO: modelo confirma COLORIDO (ex: bizhub C308, Ricoh MP C307 etc) → colorido!
+    2) SEGUNDO:  tem toners CMY REAIS no banco (0<valor<=100) → colorido!
+    3) TERCEIRO: pages_color > 0 (na prática já confirmou) → colorido!
+
+    ⚠️ NUNCA MAIS APAGA TONERS CMY se modelo é colorido confirmado!
+    (Antes: se pages_color=0 apagava tudo → bug KONICA C308 Papelaria Exata virar P&B!)
+    """
+
+    def _s(v, m: int=200) -> str:
+        try:
+            return (str(v or "")[:m]).lower()
+        except Exception:
+            return ""
+
+    # ===== PASSO 0: Detecta MODELO COLORIDO (maior prioridade! Julio pediu!) =====
+    model_txt   = _s(getattr(printer, "model", None))
+    manu_txt    = _s(getattr(printer, "manufacturer", None))
+    full_txt    = f"{manu_txt} {model_txt}".strip()
+
+    # Lista de padrões que DEIXAM CLARO que é COLORIDA (mesmo que pages_color=0 agora!)
+    #   KONICA bizhub C308 / C258 / C368 / C458 etc
+    #   RICOH MP C307 / SP C360 / IM C300 etc
+    #   BROTHER HL-L3230 / MFC-L3750 / HL-L8 etc
+    #   EPSON WF-C5xxx / WF-C8xxx / WorkForce Pro color etc
+    #   HP Color LaserJet / LaserJet MFP M479fdw etc
+    color_model_keywords = (
+        # KONICA MINOLTA coloridas (começam com "bizhub c", "c" + numero no final!)
+        "bizhub c", " c258", " c308", " c368", " c458", " c558", " c658",
+        " c250", " c300", " c350", " c450", " c550", " c650",
+        # RICOH coloridas (tem "c" DEPOIS do MP/IM/SP!)
+        "mp c", "im c", "sp c", "ricoh mp c", "ricoh im c", "ricoh sp c",
+        # KYOCERA coloridas
+        "taskalfa", "ecosys m5", "ecosys m6", "ecosys m8", "ecosys p5",
+        # BROTHER coloridas (L3 / L8 / L9 series color)
+        "hl-l3", "dcp-l3", "mfc-l3", "hl-l8", "hl-l9", "mfc-l8", "mfc-l9",
+        # SAMSUNG / HP COLOR LASER
+        "clp-", "clx-", "xpress c", "color laserjet",
+        # XEROX / LEXMARK color
+        "versalink c", "altalink c", "workcentre 6", "workcentre 7",
+        "phaser 6", "mc3", "mc4", "mc5", "mc6",
+        # EPSON color
+        "wf-c", "workforce pro wf-c", "workforce c",
+        # genéricos forte
+        "color", "colorida", "impressora cor",
+    )
+    model_confirmado_colorido = any(k in full_txt for k in color_model_keywords)
 
     # ===== PASSO 1: Ler valores numéricos (com proteção total!) =====
     pages_color_int = 0
@@ -2123,60 +2167,43 @@ def _is_color_printer_real(printer) -> bool:
         has_color_toners = False
 
     # ====================================================================
-    # 🔴 REGRA DE OURO (ELIMINA 100% DOS FALSOS COLORIDOS!)
-    # SE NUNCA imprimiu página colorida (pages_color == 0 ou None) → É PB!
-    # (mesmo que toners digam 100 — são valores falsos de impressora PB!)
+    # 🟢 1) MODELO É COLORIDO CONFIRMADO? → SIM → É COLORIDA! PONTO FINAL.
+    #    (ex: KONICA C308 Papelaria Exata → SIM → COLORIDA, NAO APAGA TONERS!)
     # ====================================================================
-    if pages_color_int <= 0:
-        # Apaga também os toners coloridos do banco (não precisa ficar poluindo!)
-        try:
-            changed_toners = False
-            if printer.toner_cyan is not None:
-                printer.toner_cyan = None
-                changed_toners = True
-            if printer.toner_magenta is not None:
-                printer.toner_magenta = None
-                changed_toners = True
-            if printer.toner_yellow is not None:
-                printer.toner_yellow = None
-                changed_toners = True
-        except Exception:
-            pass
-        return False  # 🔴 É PRETO E BRANCO SEM DÚVIDA NENHUMA!
+    if model_confirmado_colorido:
+        return True
 
     # ====================================================================
-    # 🟢 SÓ CHEGA AQUI SE pages_color >= 1!
-    # Então tem chances reais de ser colorida. Agora confirmamos:
+    # 🟢 2) TEM TONERS CMY REAIS (0<v<=100) → É COLORIDA!
+    #    (não apaga eles → cliente ainda vai usar!)
     # ====================================================================
-    has_color_pages = False
+    if has_color_toners:
+        return True
+
+    # ====================================================================
+    # 🟢 3) JÁ TEVE pages_color > 0 EM ALGUM MOMENTO → COLORIDA
+    # ====================================================================
+    if pages_color_int >= 1:
+        return True
+
+    # ====================================================================
+    # 🔴 NÃO TEM NADA → É PRETO & BRANCO.
+    #   (AQUI SIM pode apagar toners CMY que eram FALSOS!)
+    # ====================================================================
     try:
-        # pages_color > 0, mas confere também se pages_bw não cobre tudo
-        # (detecta pages_color errado de impressora PB mesmo > 0, raro!)
-        if (pages_bw_int >= pages_total_int and pages_total_int > 0) or (
-            pages_total_int > 0 and (pages_total_int - pages_bw_int) <= max(1, pages_color_int * 0.3)
-        ):
-            # pages_color aparentemente bugado: apaga ele por segurança
-            try:
-                printer.pages_color = None
-            except Exception:
-                pass
-            # E zera toners coloridos tb → marca como PB
-            try:
-                if printer.toner_cyan is not None:
-                    printer.toner_cyan = None
-                if printer.toner_magenta is not None:
-                    printer.toner_magenta = None
-                if printer.toner_yellow is not None:
-                    printer.toner_yellow = None
-            except Exception:
-                pass
-            has_color_pages = False
-        else:
-            has_color_pages = True
+        changed_toners = False
+        if printer.toner_cyan is not None:
+            printer.toner_cyan = None
+            changed_toners = True
+        if printer.toner_magenta is not None:
+            printer.toner_magenta = None
+            changed_toners = True
+        if printer.toner_yellow is not None:
+            printer.toner_yellow = None
+            changed_toners = True
     except Exception:
-        has_color_pages = False
-
-    return has_color_pages or has_color_toners
+        pass
+    return False
 
 
 # -----------------------------------------------------------------------------
@@ -3221,17 +3248,22 @@ async def agent_report(
                     reading_total_real = bool(reading.pages_total and int(reading.pages_total) > 0)
 
                     # ====================================================================
-                    # PRIORIDADE 1: Helper Oficial _is_color_printer_real
-                    #   -> pages_color = 0 ou None → PB
+                    # 🏆 PRIORIDADE 1: Helper Oficial _is_color_printer_real (NOVA REGRA JULIO!)
+                    #  1) Modelo colorido CONFIRMADO (bizhub C308, Ricoh MP C etc) → colorida!
+                    #  2) Tem toner CMY reais (0<v<=100) → colorida!
+                    #  3) pages_color > 0 → colorida!
+                    #  NENHUM dos 3 → PB.
                     # ====================================================================
                     is_really_color = False
-                    if (cur_total > 0 or cur_bw > 0 or cur_color > 0) and cur_color >= 1:
+                    if (cur_total > 0 or cur_bw > 0 or cur_color > 0):
+                        # Usa helper OFICIAL (não confia mais em pages_color isolado!)
                         is_really_color = _is_color_printer_real(printer)
-                    elif (cur_total > 0 or cur_bw > 0) and cur_color <= 0:
-                        is_really_color = False
-                    else:
-                        has_cmy = _has_color_toners_real(printer)
-                        is_really_color = has_cmy or _model_sugere_colorida(printer.model, printer.manufacturer)
+                        # Fallback: reading tem cor? Garante True (redundância segura!)
+                        if reading_color_real and not is_really_color:
+                            is_really_color = True
+                        # Fallback 2: _model_sugere_colorida (antigo, mas para cross-check seguro)
+                        if (not is_really_color) and _model_sugere_colorida(printer.model, printer.manufacturer):
+                            is_really_color = True
 
                     # ====================================================================
                     # 🏆 REGRA PRINCIPAL COBRANÇA SEGURA — NÃO INVENTA NADA!
@@ -3281,21 +3313,11 @@ async def agent_report(
                     cur_color = int(printer.pages_color or 0)
                     cur_total = int(printer.pages_total or 0)
 
-                    _c_has_cyan    = (printer.toner_cyan    is not None and printer.toner_cyan    >= 0)
-                    _c_has_magenta = (printer.toner_magenta is not None and printer.toner_magenta >= 0)
-                    _c_has_yellow  = (printer.toner_yellow  is not None and printer.toner_yellow  >= 0)
-                    _c_has_color_pages = cur_color > 0
-
-                    _r_has_cyan    = (reading.toner_cyan    is not None and reading.toner_cyan    >= 0)
-                    _r_has_magenta = (reading.toner_magenta is not None and reading.toner_magenta >= 0)
-                    _r_has_yellow  = (reading.toner_yellow  is not None and reading.toner_yellow  >= 0)
-                    _r_has_color_pages = bool(reading.pages_color and reading.pages_color > 0)
-
-                    _realmente_tem_coisa_colorida = (
-                        _c_has_cyan or _c_has_magenta or _c_has_yellow or _c_has_color_pages or
-                        _r_has_cyan or _r_has_magenta or _r_has_yellow or _r_has_color_pages
-                    )
-                    _confirma_PB_100 = (not _realmente_tem_coisa_colorida) and cur_total > 0
+                    # 🏆 REGRA SIMPLES (JULIO): Usa o helper OFICIAL.
+                    # Helper NOVO (linha 2080+) é o ÚNICO código que decide PB vs Colorida!
+                    #   - Se _is_color_printer_real(printer) = FALSE  →  P&B 100%
+                    #   - Se _is_color_printer_real(printer) = TRUE   →  COLORIDA
+                    _confirma_PB_100 = (not _is_color_printer_real(printer)) and cur_total > 0
 
                     # ---- DETECTOR PROBLEMA DIA 02/09 (autorizacao parceiro/revendedor) ----
                     # Qualquer impressora criada OU atualizada apos 2026-09-02 que NÃO tem

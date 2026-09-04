@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Partner, Printer } from "../types";
-import { formatDateTimeBrasil, formatNumberBrasil } from "../utils";
+import { formatDateTimeBrasil, formatNumberBrasil, modelConfirmadoColorido } from "../utils";
 import { useAuth } from "../context/AuthContext";
 import ModalPrinter from "../components/ModalPrinter";
 
@@ -323,7 +323,8 @@ export default function Impressoras() {
             <tbody>
               {printers.map((p) => {
                 const isColorPrinter =
-                  !!p.toner_cyan || !!p.toner_magenta || !!p.toner_yellow || Number(p.pages_color || 0) > 0;
+                  !!p.toner_cyan || !!p.toner_magenta || !!p.toner_yellow || Number(p.pages_color || 0) > 0 ||
+                  modelConfirmadoColorido(p.model, p.manufacturer);
                 return (
                 <tr key={p.id}>
                   <td>

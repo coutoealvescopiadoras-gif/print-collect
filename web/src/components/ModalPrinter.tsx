@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Printer, Reading } from "../types";
-import { formatDateTimeBrasil, formatNumberBrasil } from "../utils";
+import { formatDateTimeBrasil, formatNumberBrasil, modelConfirmadoColorido } from "../utils";
 
 interface Props {
   printerId: number | null;
@@ -183,7 +183,8 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
                   !!printer.toner_cyan ||
                   !!printer.toner_magenta ||
                   !!printer.toner_yellow ||
-                  Number(printer.pages_color || 0) > 0;
+                  Number(printer.pages_color || 0) > 0 ||
+                  modelConfirmadoColorido(printer.model, printer.manufacturer);
                 return (
                   <div style={{ marginBottom: "1.5rem" }}>
                     <h4 style={{ margin: "0 0 0.6rem 0" }}>
@@ -220,7 +221,8 @@ export default function ModalPrinter({ printerId, onClose }: Props) {
                   !!printer.toner_cyan ||
                   !!printer.toner_magenta ||
                   !!printer.toner_yellow ||
-                  Number(printer.pages_color || 0) > 0;
+                  Number(printer.pages_color || 0) > 0 ||
+                  modelConfirmadoColorido(printer.model, printer.manufacturer);
                 const dailyReadings = getPrimeiraLeituraPorDiaLimit30(readings);
                 return (
                   <div>
@@ -311,7 +313,8 @@ function InfoCard({ label, value }: { label: string; value: React.ReactNode }) {
 
 function ContadoresPrinter({ printer }: { printer: Printer }) {
   const isColor =
-    !!printer.toner_cyan || !!printer.toner_magenta || !!printer.toner_yellow || Number(printer.pages_color || 0) > 0;
+    !!printer.toner_cyan || !!printer.toner_magenta || !!printer.toner_yellow || Number(printer.pages_color || 0) > 0 ||
+    modelConfirmadoColorido(printer.model, printer.manufacturer);
   const rawTotal = Number(printer.pages_total || 0);
   const pb = Number(printer.pages_bw || 0);
   const cor = Number(printer.pages_color || 0);
