@@ -76,13 +76,13 @@ export function resolveBaseUrl() {
   // ============================================================
 
   if (host === "printcollect.com.br" || host === "www.printcollect.com.br") {
-    return "";
+    return "https://print-collect-api.onrender.com";
   }
 
   if (isVercelPreview(host) || host.endsWith(".vercel.app")) {
     const fallback = (import.meta.env.VITE_API_URL_FALLBACK || "").trim();
     if (fallback) return fallback.replace(/\/$/, "");
-    return "";
+    return "https://print-collect-api.onrender.com";
   }
 
   if (host.endsWith(".onrender.com")) {
