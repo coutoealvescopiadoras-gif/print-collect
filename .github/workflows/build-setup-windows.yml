@@ -46,13 +46,6 @@ jobs:
       - name: 3. Instalar Inno Setup (ISCC.exe - compilador do instalador Windows)
         shell: pwsh
         run: |
-          $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
-          if ($winget) {
-            Write-Host "Instalando Inno Setup via winget..."
-            & winget install --id JRSoftware.InnoSetup -e --silent --accept-package-agreements --accept-source-agreements
-            Start-Sleep -Seconds 3
-          }
-          # Tenta localizar ISCC.exe apos instalacao:
           $paths = @(
             "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
             "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
@@ -61,45 +54,112 @@ jobs:
           )
           $found = $null
           foreach ($p in $paths) { if (Test-Path $p) { $found = $p; break } }
-          if (-not $found) { throw "Inno Setup NAO ENCONTRADO apos instalacao. Instale manualmente." }
-          Write-Host "Inno Setup OK: $found"
-          # Adiciona no PATH para o script build-setup-x86.ps1 encontrar
+
+          if (-not $found) {
+            Write-Host "Inno Setup NAO instalado. Tentando via CHOCOLATEY (1a tentativa, melhor para Actions headless)..."
+            $choco = Get-Command choco.exe -ErrorAction SilentlyContinue
+            if ($choco) {
+              try {
+                & choco install innosetup -y --no-progress --limitoutput
+                Start-Sleep -Seconds 5
+              } catch {
+                Write-Host "Choco falhou. Fazendo DOWNLOAD DIRETO do Inno Setup.exe (2a tentativa - GARANTIDA)...";
+              }
+            } else {
+              Write-Host "Choco nao encontrado. Fazendo DOWNLOAD DIRETO do Inno Setup.exe (2a tentativa - GARANTIDA)...";
+            }
+            foreach ($p in $paths) { if (Test-Path $p) { $found = $p; break } }
+
+            if (-not $found) {
+              $installerExe = Join-Path $env:TEMP "innosetup-6.3.3.exe";
+              $url = "https://jrsoftware.org/download.php/is.exe";
+              Write-Host "Baixando Inno Setup: $url";
+              [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;
+              $ProgressPreference = 'SilentlyContinue';
+              Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $installerExe -TimeoutSec 300;
+              Write-Host "Download OK. Tamanho: $([math]::Round((Get-Item $installerExe).Length / 1MB, 2)) MB";
+              Write-Host "Instalando Inno Setup SILENCIOSAMENTE...";
+              $proc = Start-Process -FilePath $installerExe -ArgumentList "/VERYSILENT","/NORESTART","/SUPPRESSMSGBOXES","/ALLUSERS","/DIR=`"${env:ProgramFiles(x86)}\Inno Setup 6`"" -PassThru -Wait;
+              Write-Host "Instalador exit code: $($proc.ExitCode)";
+              Start-Sleep -Seconds 5;
+              foreach ($p in $paths) { if (Test-Path $p) { $found = $p; break } }
+            }
+          }
+
+          if (-not $found) { throw "Inno Setup NAO ENCONTRADO apos instalacao. Impossivel continuar." }
+          Write-Host "✅ Inno Setup OK: $found"
           $dir = Split-Path -Parent $found
           echo "$dir" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - name: 4. Rodar SCRIPT OFICIAL de build (.agent/windows/build-setup-x86.ps1)
         shell: pwsh
         run: |
-          cd agent\windows
+          Set-Location agent\windows
           $ErrorActionPreference = "Stop"
+          Write-Host "Executando build-setup-x86.ps1..."
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-setup-x86.ps1
+          Write-Host "SCRIPT EXIT CODE: $LASTEXITCODE"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::Script build-setup-x86.ps1 FALHOU com exit code $LASTEXITCODE";
+            exit 1;
+          }
+          Get-Location
+          Write-Host "Conteudo pasta dist AGENT (apos build):"
+          Get-ChildItem "..\dist" -ErrorAction SilentlyContinue | Format-Table -AutoSize Name,Length
+          Write-Host "Conteudo pasta dist\windows:"
+          Get-ChildItem "..\dist\windows" -ErrorAction SilentlyContinue | Format-Table -AutoSize Name,Length
+
+      - name: 4.5. GARANTIR que 3 EXEs do agente existem (anti-falha-silenciosa)
+        shell: pwsh
+        run: |
+          $exes = @(
+            "agent\dist\PrintCollectAgent.exe",
+            "agent\dist\WizardPareamento.exe",
+            "agent\dist\SearchPrinters.exe"
+          )
+          foreach ($e in $exes) {
+            if (-not (Test-Path $e)) {
+              Write-Host "::error::FALTANDO EXE OBRIGATORIO: $e (build falhou silenciosamente?)"
+              exit 1
+            }
+            $len = (Get-Item $e).Length
+            if ($len -lt 2MB) {
+              Write-Host "::error::EXE SUSPEITO TAMANHO PEQUENO: $e = $len bytes (corrompido?)"
+              exit 1
+            }
+            Write-Host "✅ EXE OK: $e = $([math]::Round($len/1MB,2)) MB"
+          }
 
       - name: 5. Verificar arquitetura do EXE gerado (garante I386/x86 - NAO Code 216!)
         shell: pwsh
         run: |
           function Test-PEArch($path) {
-            if (-not (Test-Path $path)) { Write-Host "FALTANDO $path"; exit 1 }
+            if (-not (Test-Path $path)) { Write-Host "::error::FALTANDO $path"; exit 1 }
             $bytes = [System.IO.File]::ReadAllBytes($path)
             $e_lfanew = [BitConverter]::ToUInt32($bytes, 0x3C)
             $sig = [Text.Encoding]::ASCII.GetString($bytes, [int]$e_lfanew, 4)
-            if ($sig -ne "PE`0`0") { Write-Host "$path nao e EXE PE valido!"; exit 1 }
+            if ($sig -ne "PE`0`0") { Write-Host "::error::$path nao e EXE PE valido!"; exit 1 }
             $machine = [BitConverter]::ToUInt16($bytes, [int]$e_lfanew + 4)
             $name = switch ($machine) {
               0x014c { "✅ I386 (x86 32-BITS = UNIVERSAL! OK!)" }
-              0x8664 { "❌ AMD64 (x64) - NAO e o esperado!" }
-              0xaa64 { "❌ ARM64 - ESTOURA ERRO CODE 216!"; exit 1 }
-              default { "DESCONHECIDO machine=0x$($machine.ToString('X4'))" }
+              0x8664 { "❌ AMD64 (x64) - NAO e o esperado! BINARIO NAO COMPATIVEL!" }
+              0xaa64 { "❌ ARM64 - ESTOURA ERRO CODE 216 NO CLIENTE!" }
+              default { "❌ DESCONHECIDO machine=0x$($machine.ToString('X4')) - NAO COMPATIVEL!" }
             }
             Write-Host "$((Get-Item $path).Name): $name"
+            if ($machine -ne 0x014c) {
+              Write-Host "::error::$path NAO E ARQUITETURA I386 (x86)! (machine=0x$($machine.ToString('X4'))). Build cancelado para evitar Code 216 no cliente!"
+              exit 1
+            }
           }
           Test-PEArch "agent\dist\PrintCollectAgent.exe"
           Test-PEArch "agent\dist\WizardPareamento.exe"
           Test-PEArch "agent\dist\SearchPrinters.exe"
           $setup = Get-ChildItem "agent\dist\windows\PrintCollectSetup.exe" -ErrorAction SilentlyContinue
-          if (-not $setup) { Write-Host "SETUP.EXE NAO GERADO! FALHA TOTAL!"; exit 1}
+          if (-not $setup) { Write-Host "::error::SETUP.EXE NAO GERADO! FALHA TOTAL!"; exit 1}
           Test-PEArch $setup.FullName
           $size = [math]::Round($setup.Length / 1MB, 2)
-          Write-Host "Tamanho Setup.exe final: $size MB"
+          Write-Host "✅ Tamanho Setup.exe final: $size MB"
 
       - name: 6. COPIAR SETUP.EXE para web/public/ (auto deploy download no site printcollect.com.br!)
         shell: pwsh
