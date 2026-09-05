@@ -1,0 +1,22 @@
+# config.yaml DEFAULT para instalacao automatica
+# URL oficial do servidor (Render Producao) - NAO ALTERE
+server_url: "https://print-collect.onrender.com"
+
+# Token de agente - sera substituido pelo Wizard de Pareamento
+agent_token: "agent-dev-key"
+
+# Versao do agente
+agent_version: "6.9.0"
+
+# Intervalo de coleta em minutos (30 min = padrao do cliente Julio)
+interval_minutes: 30
+
+# Caminho do log (deixa comentado = usa C:\ProgramData\PrintCollect\agent.log)
+# log_file: "C:\\ProgramData\\PrintCollect\\agent.log"
+
+# Configuracoes SNMP (descoberta de impressoras)
+snmp:
+  community: "public"
+  timeout: 2
+  subnets: []
+  ips: []
