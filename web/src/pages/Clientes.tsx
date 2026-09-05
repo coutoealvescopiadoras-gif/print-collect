@@ -62,6 +62,72 @@ export default function Clientes() {
   // Nível 2: Modal Ficha Completa Impressora
   const [printerModalId, setPrinterModalId] = useState<number | null>(null);
 
+  // Nível 1b: Modal Adicionar Impressora Manual (Julio pediu por causa de VLANs / VPNs!)
+  const [showAddPrinterModal, setShowAddPrinterModal] = useState(false);
+  const [addingPrinterLoading, setAddingPrinterLoading] = useState(false);
+  const [formAddPrinter, setFormAddPrinter] = useState({
+    ip_address: "",
+    mac_address: "",
+    serial_number: "",
+    model: "",
+    manufacturer: "",
+  });
+  const [formAddPrinterError, setFormAddPrinterError] = useState<string | null>(null);
+  function _resetAddPrinterForm() {
+    setFormAddPrinter({
+      ip_address: "",
+      mac_address: "",
+      serial_number: "",
+      model: "",
+      manufacturer: "",
+    });
+    setFormAddPrinterError(null);
+  }
+  async function _handleSubmitAddPrinter() {
+    try {
+      if (!clienteModalId) {
+        setFormAddPrinterError("Cliente não selecionado!");
+        return;
+      }
+      const ip = formAddPrinter.ip_address.trim();
+      if (!ip) {
+        setFormAddPrinterError("Preencha o Endereço IP da impressora! (campo obrigatório)");
+        return;
+      }
+      if (ip.length < 4) {
+        setFormAddPrinterError("Endereço IP muito curto. Formato esperado: 192.168.0.100");
+        return;
+      }
+      setAddingPrinterLoading(true);
+      setFormAddPrinterError(null);
+      const created = await api.createPrinter({
+        client_id: clienteModalId,
+        ip_address: ip,
+        mac_address: formAddPrinter.mac_address.trim() || null,
+        serial_number: formAddPrinter.serial_number.trim() || null,
+        model: formAddPrinter.model.trim() || null,
+        manufacturer: formAddPrinter.manufacturer.trim() || null,
+        location_id: null,
+      });
+      // Atualiza a lista de impressoras do modal CLIENTE imediatamente!
+      if (created?.id) {
+        setImpressorasClienteModal((curr) => [...curr, created]);
+        try {
+          // Optional: atualiza a lista completa do backend para garantir
+          const printers = await api.getPrinters({ client_id: clienteModalId });
+          setImpressorasClienteModal(printers || []);
+        } catch {}
+      }
+      setAddingPrinterLoading(false);
+      _resetAddPrinterForm();
+      setShowAddPrinterModal(false);
+      window.alert("Impressora adicionada com sucesso! 🖨️\n\nAgora o agente instalado na máquina do cliente vai encontrar essa impressora (pelo IP) e começar a coletar os contadores automaticamente!");
+    } catch (e: any) {
+      setAddingPrinterLoading(false);
+      setFormAddPrinterError("Erro ao adicionar impressora: " + String(e?.message || e).slice(0, 200));
+    }
+  }
+
   // Debounce pesquisa
   useEffect(() => {
     const id = setTimeout(() => {
@@ -963,6 +1029,24 @@ Qualquer dúvida é só chamar a gente!`}
 
               {/* ===== CORPO: TABELA IMPRESSORAS (Sem titulo, Julio pediu para apagar!) ===== */}
               <div style={{ padding: "0.75rem 1.4rem", overflowY: "auto", flex: 1 }}>
+                {/* ===== (NOVO JULIO 05/09) Barra Ações + Botão Adicionar Impressora Manual ===== */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", marginBottom: "0.85rem", flexWrap: "wrap" }}>
+                  <div style={{ color: "var(--text-muted)", fontSize: "0.88rem" }}>
+                    💡 <strong>Dica:</strong> se a impressora estiver em outra VLAN, VPN ou sub-rede diferente (não aparece no scanner automático), use o botão abaixo para cadastrar manualmente!
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => {
+                      _resetAddPrinterForm();
+                      setShowAddPrinterModal(true);
+                    }}
+                    style={{ fontSize: 14, padding: "0.55rem 1.1rem", fontWeight: 700 }}
+                  >
+                    ➕ Adicionar Impressora
+                  </button>
+                </div>
+
                 {loadingClienteModal ? (
                   <div className="loading" style={{ padding: "2rem 0" }}>Carregando impressoras…</div>
                 ) : impressorasClienteModal.length === 0 ? (
@@ -970,6 +1054,7 @@ Qualquer dúvida é só chamar a gente!`}
                     Nenhuma impressora encontrada para este cliente ainda.
                     <div style={{ marginTop: "0.75rem", fontSize: "0.85rem" }}>
                       💡 Use o botão <strong>"🔗 Gerar Pareamento"</strong> na caixa verde acima (código do cliente) para criar um código curto e instalar o agente na máquina do cliente!
+                      {" "}<strong>OU</strong> clique no botão <strong>"➕ Adicionar Impressora"</strong> acima para cadastrar manualmente (VLANs/VPNs).
                     </div>
                   </div>
                 ) : (
@@ -1164,6 +1249,273 @@ Qualquer dúvida é só chamar a gente!`}
           </div>
         );
       })()}
+
+      {/* ============================================================
+           MODAL NÍVEL 1b: ADICIONAR IMPRESSORA MANUALMENTE (Julio pediu!)
+           Serve para impressoras em VLANs / VPNs / sub-redes diferentes!
+         ============================================================ */}
+      {showAddPrinterModal && (
+        <div
+          className="modal-overlay"
+          onClick={() => {
+            if (!addingPrinterLoading) {
+              setShowAddPrinterModal(false);
+              _resetAddPrinterForm();
+            }
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(10, 12, 16, 0.62)",
+            backdropFilter: "blur(4px)",
+            zIndex: 2147483000,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "1.25rem",
+          }}
+        >
+          <div
+            className="modal-content"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 520,
+              maxHeight: "90vh",
+              overflow: "hidden auto",
+              borderRadius: 16,
+              background: "var(--surface)",
+              border: "1.5px solid var(--border)",
+              boxShadow: "0 12px 48px rgba(0,0,0,0.35)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "0.75rem",
+                padding: "1.1rem 1.35rem",
+                borderBottom: "1.5px solid var(--border)",
+                background: "linear-gradient(135deg, rgba(63, 128, 255, 0.10), rgba(63, 128, 255, 0.04))",
+              }}
+            >
+              <div>
+                <div style={{ fontSize: "1.05rem", fontWeight: 800, letterSpacing: 0.2 }}>
+                  🖨️ Adicionar Impressora Manualmente
+                </div>
+                <div style={{ color: "var(--text-muted)", fontSize: "0.82rem", marginTop: 4 }}>
+                  Use para impressoras em outra VLAN, VPN ou sub-rede.
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  if (!addingPrinterLoading) {
+                    setShowAddPrinterModal(false);
+                    _resetAddPrinterForm();
+                  }
+                }}
+                disabled={addingPrinterLoading}
+                title="Fechar"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ padding: "1.25rem 1.35rem", display: "flex", flexDirection: "column", gap: "0.95rem" }}>
+              {/* IP (OBRIGATORIO) */}
+              <div>
+                <label style={{ fontSize: "0.9rem", fontWeight: 700, display: "flex", alignItems: "center", gap: 4, marginBottom: 6 }}>
+                  🌐 Endereço IP <span style={{ color: "var(--danger)" }}>* (obrigatório)</span>
+                </label>
+                <input
+                  type="text"
+                  value={formAddPrinter.ip_address}
+                  onChange={(e) =>
+                    setFormAddPrinter((c) => ({ ...c, ip_address: e.target.value }))
+                  }
+                  placeholder="Ex: 192.168.15.220  (ou 10.0.0.50 para VPN)"
+                  disabled={addingPrinterLoading}
+                  style={{
+                    width: "100%",
+                    padding: "0.7rem 0.85rem",
+                    borderRadius: 10,
+                    border: "1.5px solid var(--border)",
+                    background: "var(--surface)",
+                    color: "var(--text)",
+                    fontSize: 14,
+                    outline: "none",
+                  }}
+                  onFocus={(e) => (e.currentTarget.style.borderColor = "var(--primary)")}
+                  onBlur={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+                />
+                <div style={{ marginTop: 4, fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                  Dica: na máquina do cliente use <code>ping NOMEDAIMPRESSORA</code> ou o IP fixo que a TI forneceu.
+                </div>
+              </div>
+
+              {/* Linha 2: MAC + Serial */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+                <div>
+                  <label style={{ fontSize: "0.9rem", fontWeight: 700, display: "block", marginBottom: 6 }}>
+                    🔗 MAC <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.8rem" }}>(opcional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formAddPrinter.mac_address}
+                    onChange={(e) =>
+                      setFormAddPrinter((c) => ({ ...c, mac_address: e.target.value }))
+                    }
+                    placeholder="Ex: 00:1A:2B:3C:4D:5E"
+                    disabled={addingPrinterLoading}
+                    style={{
+                      width: "100%",
+                      padding: "0.62rem 0.8rem",
+                      borderRadius: 10,
+                      border: "1.5px solid var(--border)",
+                      background: "var(--surface)",
+                      color: "var(--text)",
+                      fontSize: 13,
+                      outline: "none",
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: "0.9rem", fontWeight: 700, display: "block", marginBottom: 6 }}>
+                    🔢 Serial <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.8rem" }}>(opcional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formAddPrinter.serial_number}
+                    onChange={(e) =>
+                      setFormAddPrinter((c) => ({ ...c, serial_number: e.target.value }))
+                    }
+                    placeholder="Ex: BR892XYZ123"
+                    disabled={addingPrinterLoading}
+                    style={{
+                      width: "100%",
+                      padding: "0.62rem 0.8rem",
+                      borderRadius: 10,
+                      border: "1.5px solid var(--border)",
+                      background: "var(--surface)",
+                      color: "var(--text)",
+                      fontSize: 13,
+                      outline: "none",
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Linha 3: Modelo + Fabricante */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+                <div>
+                  <label style={{ fontSize: "0.9rem", fontWeight: 700, display: "block", marginBottom: 6 }}>
+                    📄 Modelo <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.8rem" }}>(opcional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formAddPrinter.model}
+                    onChange={(e) =>
+                      setFormAddPrinter((c) => ({ ...c, model: e.target.value }))
+                    }
+                    placeholder="Ex: RICOH SP 4510SF"
+                    disabled={addingPrinterLoading}
+                    style={{
+                      width: "100%",
+                      padding: "0.62rem 0.8rem",
+                      borderRadius: 10,
+                      border: "1.5px solid var(--border)",
+                      background: "var(--surface)",
+                      color: "var(--text)",
+                      fontSize: 13,
+                      outline: "none",
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: "0.9rem", fontWeight: 700, display: "block", marginBottom: 6 }}>
+                    🏭 Fabricante <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.8rem" }}>(opcional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={formAddPrinter.manufacturer}
+                    onChange={(e) =>
+                      setFormAddPrinter((c) => ({ ...c, manufacturer: e.target.value }))
+                    }
+                    placeholder="Ex: Ricoh, Brother, HP, Epson..."
+                    disabled={addingPrinterLoading}
+                    style={{
+                      width: "100%",
+                      padding: "0.62rem 0.8rem",
+                      borderRadius: 10,
+                      border: "1.5px solid var(--border)",
+                      background: "var(--surface)",
+                      color: "var(--text)",
+                      fontSize: 13,
+                      outline: "none",
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* ERRO */}
+              {formAddPrinterError && (
+                <div
+                  style={{
+                    background: "rgba(239, 68, 68, 0.08)",
+                    color: "var(--danger)",
+                    border: "1.5px solid rgba(239, 68, 68, 0.35)",
+                    padding: "0.7rem 0.95rem",
+                    borderRadius: 10,
+                    fontSize: "0.88rem",
+                  }}
+                >
+                  ⚠️ {formAddPrinterError}
+                </div>
+              )}
+
+              {/* RODAPÉ BOTÕES */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "flex-end",
+                  gap: "0.65rem",
+                  marginTop: "0.35rem",
+                  paddingTop: "0.65rem",
+                  borderTop: "1.5px solid var(--border)",
+                }}
+              >
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    if (!addingPrinterLoading) {
+                      setShowAddPrinterModal(false);
+                      _resetAddPrinterForm();
+                    }
+                  }}
+                  disabled={addingPrinterLoading}
+                  style={{ fontSize: 13, padding: "0.55rem 1rem" }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={_handleSubmitAddPrinter}
+                  disabled={addingPrinterLoading}
+                  style={{ fontSize: 13, padding: "0.55rem 1.15rem", fontWeight: 700 }}
+                >
+                  {addingPrinterLoading ? "Adicionando…" : "✅ Adicionar Impressora"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ============================================================
            MODAL NÍVEL 2: FICHA COMPLETA DA IMPRESSORA (Reutilizável)

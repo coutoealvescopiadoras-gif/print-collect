@@ -352,6 +352,19 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(data),
     }),
+  createPrinter: (data: {
+    client_id: number;
+    ip_address: string;
+    mac_address?: string | null;
+    serial_number?: string | null;
+    model?: string | null;
+    manufacturer?: string | null;
+    location_id?: number | null;
+  }) =>
+    request<import("./types").Printer>("/api/printers", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   ignorePrinter: (printerId: number) =>
     request<import("./types").Printer>(`/api/printers/${printerId}/ignore`, {
       method: "POST",
