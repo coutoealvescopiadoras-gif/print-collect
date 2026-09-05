@@ -6,7 +6,7 @@ from app.config import settings
 from app.database import Agent, Client, Location, Printer, User, init_db, SessionLocal, engine
 from app.routes import router, hash_password
 from app.routes import __name__ as _routes_mod_name  # garantia import deu certo
-import app.schemas  # garantia que ReadingOut existe agora (para nao crashar runtime)
+import app.schemas as _schemas_mod  # garantia que ReadingOut existe agora (para nao crashar runtime)
 import os, sys, time
 
 
@@ -179,7 +179,7 @@ def create_app() -> FastAPI:
             "env_has_direct_url": bool(settings.direct_url),
             "imports": {
                 "app.routes": _routes_mod_name or "ok",
-                "app.schemas": f"OK (ReadingOut? {hasattr(app.schemas, 'ReadingOut')})" if 'app.schemas' in sys.modules else "NOT_IMPORTED",
+                "app.schemas": f"OK (ReadingOut? {hasattr(_schemas_mod, 'ReadingOut')})" if 'app.schemas' in sys.modules else "NOT_IMPORTED",
             },
             "routes_sample": sorted(rotas)[:25],
         }
