@@ -488,6 +488,101 @@ def reset_julio_admin(
     return {"ok": True, "rows_upserted": rows_upserted, "password_source": "query" if pwd_q else "env", "users": [e for _, e, _ in users_to_ensure]}
 
 
+@router.get("/debug/create-julio-printer-temp")
+def debug_create_julio_printer_temp(
+    request: Request,
+):
+    """TEMPORARIO (APAGAR DEPOIS!) — Cria impressora RICOH SP 4510SF no cliente Julio id=2 diretamente via engine.begin() RAW SQL, sem ORM.
+    Protegido por RESET_JULIO_PASSWORD env ou ?password=.
+    """
+    EXPECTED_KEY = "CEA-JULIO-2026-RESET-SUPERADMIN"
+    qp = request.query_params
+    pwd_q = (qp.get("password") or "").strip()
+    key_q = (qp.get("key") or "").strip()
+    pwd_env = (os.environ.get("RESET_JULIO_PASSWORD") or "").strip()
+    use_pwd = pwd_q or pwd_env
+    allow_key = (key_q == EXPECTED_KEY) or (not pwd_q and pwd_env)
+    if not allow_key:
+        raise HTTPException(status_code=403, detail="key invalida")
+    if not use_pwd or len(use_pwd) < 6:
+        raise HTTPException(status_code=400, detail="password necessario (min 6 chars) via ?password=... ou ENV RESET_JULIO_PASSWORD")
+    from sqlalchemy import text as _rtxt
+    import datetime as _dt
+    _cli_id = 2
+    _ri = "192.168.15.220"
+    _rmo = "RICOH SP 4510SF"
+    _rma = "Ricoh"
+    _rst = "online"
+    _rpt = 168857
+    _rpb = 168857
+    _rpc = 0
+    _now_dt = _dt.datetime.now(_dt.timezone.utc)
+    _printer_id = None
+    try:
+        with engine.begin() as _conn:
+            _row = _conn.execute(
+                _rtxt("SELECT id, pages_total, pages_bw, pages_color FROM printers WHERE client_id=:cid AND ip_address ILIKE :ip LIMIT 1"),
+                {"cid": _cli_id, "ip": _ri}
+            ).mappings().first()
+            if _row is None:
+                _ins = _conn.execute(
+                    _rtxt("""
+                        INSERT INTO printers (client_id, ip_address, mac_address, serial_number, model, manufacturer,
+                        status, pages_total, pages_bw, pages_color, toner_black, toner_cyan, toner_magenta,
+                        toner_yellow, last_seen, created_at, updated_at, active, ignored)
+                        VALUES (:cid, :ip, NULL, NULL, :model, :manu, :st, :pt, :pb, :pc, NULL, NULL, NULL,
+                        NULL, :ls, :ca, :ua, TRUE, FALSE)
+                        RETURNING id
+                    """),
+                    {
+                        "cid": _cli_id, "ip": _ri, "model": _rmo, "manu": _rma,
+                        "st": _rst, "pt": _rpt, "pb": _rpb, "pc": _rpc,
+                        "ls": _now_dt, "ca": _now_dt, "ua": _now_dt
+                    }
+                )
+                _printer_id = int(_ins.scalar_one())
+            else:
+                _printer_id = int(_row["id"])
+                _conn.execute(
+                    _rtxt("""
+                        UPDATE printers SET pages_total = GREATEST(COALESCE(pages_total,0), :pt),
+                        pages_bw = GREATEST(COALESCE(pages_bw,0), :pb),
+                        pages_color = GREATEST(COALESCE(pages_color,0), :pc),
+                        model = COALESCE(:model, model),
+                        manufacturer = COALESCE(:manu, manufacturer),
+                        status = :st, last_seen = :ls, updated_at = :ua
+                        WHERE id = :pid
+                    """),
+                    {
+                        "pid": _printer_id, "pt": _rpt, "pb": _rpb, "pc": _rpc,
+                        "model": _rmo, "manu": _rma, "st": _rst, "ls": _now_dt, "ua": _now_dt
+                    }
+                )
+            _conn.execute(
+                _rtxt("""
+                    INSERT INTO readings (printer_id, pages_total, pages_bw, pages_color, toner_black,
+                    toner_cyan, toner_magenta, toner_yellow, status, collected_at, agent_ip_address)
+                    VALUES (:pid, :pt, :pb, :pc, NULL, NULL, NULL, NULL, :st, :ca, NULL)
+                """),
+                {"pid": _printer_id, "pt": _rpt, "pb": _rpb, "pc": _rpc, "st": _rst, "ca": _now_dt}
+            )
+        _cnt = None
+        with engine.connect() as _c2:
+            _cnt = _c2.execute(
+                _rtxt("SELECT COUNT(id) FROM printers WHERE client_id=:cid AND ignored=FALSE"),
+                {"cid": _cli_id}
+            ).scalar_one_or_none()
+        return {
+            "ok": True,
+            "printer_id": _printer_id,
+            "impressoras_cadastradas_cliente_2": int(_cnt or 0),
+            "mensagem": "Impressora RICOH SP 4510SF inserida COM SUCESSO via engine.begin() RAW SQL! Checar dashboard cliente Julio.",
+            "temp": "APAGAR este endpoint DEPOIS de resolver!"
+        }
+    except Exception as e:
+        return {"ok": False, "erro": str(e)[:500]}
+
+
 @router.get("/users/me", response_model=UserOut)
 async def read_users_me(current_user: User = Depends(get_current_active_user)):
     return current_user
