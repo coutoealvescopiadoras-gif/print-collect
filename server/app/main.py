@@ -132,6 +132,10 @@ def create_app() -> FastAPI:
     def on_startup():
         _safe_init_db()
 
+    @app.get("/")
+    def root():
+        return {"status": "ok", "service": "print-collect-api", "message": "Welcome. Use /health for status check."}
+
     @app.get("/health")
     def health():
         db_status = "unknown"
