@@ -145,6 +145,10 @@ if (-not (Test-Path $PythonVenv)) { throw "Python do venv-x86 nao encontrado: $P
 $PipVenv = Join-Path $VenvDir "Scripts\pip.exe"
 $PyInstaller = Join-Path $VenvDir "Scripts\pyinstaller.exe"
 
+Write-Step "0.5" "Atualizando pip + setuptools + wheel no venv-x86 (evita falhas de pip install -e .)"
+& $PythonVenv -m pip install --disable-pip-version-check --upgrade pip setuptools wheel
+if ($LASTEXITCODE -ne 0) { Write-Warn "  (aviso) Falha no upgrade pip, mas tentaremos continuar mesmo assim..." }
+
 # =============================================================================
 # PASSO 2: Instalar dependencias do agente
 # OBS: agent\requirements.txt tem "-e ." na linha 1 = instala projeto local.
@@ -154,7 +158,7 @@ $PyInstaller = Join-Path $VenvDir "Scripts\pyinstaller.exe"
 Write-Step 2 "Instalando dependencias do agente no .venv-x86"
 Push-Location $AgentDir
 try {
-    & $PipVenv install --disable-pip-version-check -r (Join-Path $AgentDir "requirements.txt")
+    & $PipVenv install --disable-pip-version-check --retries 5 --timeout 300 --progress-bar off -r (Join-Path $AgentDir "requirements.txt")
     if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar requirements.txt (x86)" }
 } finally {
     Pop-Location
@@ -168,7 +172,7 @@ if (-not (Test-Path $PyInstaller)) {
     Write-Host "  Instalando PyInstaller..."
     Push-Location $AgentDir
     try {
-        & $PipVenv install --disable-pip-version-check "pyinstaller>=6.0"
+        & $PipVenv install --disable-pip-version-check --retries 5 --timeout 300 --progress-bar off "pyinstaller>=6.0"
         if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar PyInstaller (x86)" }
     } finally {
         Pop-Location
@@ -187,7 +191,7 @@ if (-not (Test-Path $SpecFile)) { throw "Spec file nao encontrado: $SpecFile" }
 
 Push-Location $AgentDir
 try {
-    & $PyInstaller --noconfirm --clean (Resolve-Path $SpecFile)
+    & $PyInstaller --noconfirm --clean --log-level INFO (Resolve-Path $SpecFile)
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller (x86) retornou erro $LASTEXITCODE" }
 } finally {
     Pop-Location
