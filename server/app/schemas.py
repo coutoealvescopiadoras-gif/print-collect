@@ -178,6 +178,8 @@ class PrinterUpdate(BaseModel):
     manufacturer: Optional[str] = None
     location_id: Optional[int] = None
     status: Optional[str] = None
+    ignored: Optional[bool] = None
+    active: Optional[bool] = None
 
     @field_validator("ip_address", mode="before")
     @classmethod

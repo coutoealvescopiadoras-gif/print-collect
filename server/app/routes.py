@@ -445,6 +445,9 @@ def reset_julio_admin(
 ):
     """Endpoint TEMPORARIO PUBLICO: via ?password=...&key=... ou ENV RESET_JULIO_PASSWORD.
     Cria/atualiza Julio + financeiro superadmin sempre (email lower).
+
+    🔥 05/09 BONUS: Tambem REATIVA VIA RAW SQL FORCADO todas impressoras cliente_id=2 (Julio)
+    que estejam ignored=TRUE (soft-deleted). Resolve bug "exclui impressora, reinstalei, nao aparece".
     """
     EXPECTED_KEY = "CEA-JULIO-2026-RESET-SUPERADMIN"
     qp = request.query_params
@@ -485,7 +488,37 @@ def reset_julio_admin(
             rows_upserted += 1
         db.flush()
     db.commit()
-    return {"ok": True, "rows_upserted": rows_upserted, "password_source": "query" if pwd_q else "env", "users": [e for _, e, _ in users_to_ensure]}
+
+    # ================================================================
+    # 🔥 BONUS 05/09 JULIO: REATIVA TODAS IMPRESSORAS DO CLIENTE 2 (JULIO)
+    #    que foram apagadas (ignored=TRUE) mas o agente ja reportou.
+    #    Usa engine.begin() = RAW SQL, bypass completo ORM/sessao/deploy antigo.
+    # ================================================================
+    _reativadas_julio_printer = 0
+    _cnt_julio_ativas = 0
+    try:
+        from sqlalchemy import text as _rtxt_julio
+        with engine.begin() as _cx:
+            _r1 = _cx.execute(
+                _rtxt_julio("UPDATE printers SET active=TRUE, ignored=FALSE, updated_at=CURRENT_TIMESTAMP WHERE client_id = 2 AND (ignored = TRUE OR active = FALSE)")
+            )
+            _reativadas_julio_printer = int(getattr(_r1, "rowcount", 0) or 0)
+        with engine.connect() as _cx2:
+            _cnt_julio_ativas = int(_cx2.execute(
+                _rtxt_julio("SELECT COUNT(1) FROM printers WHERE client_id = 2 AND ignored=FALSE")
+            ).scalar_one_or_none() or 0)
+    except Exception as _e_julio:
+        _reativadas_julio_printer = f"err: {str(_e_julio)[:200]}"
+
+    return {
+        "ok": True,
+        "rows_upserted": rows_upserted,
+        "password_source": "query" if pwd_q else "env",
+        "users": [e for _, e, _ in users_to_ensure],
+        "bonus_reativadas_impressoras_julio_cliente2": _reativadas_julio_printer,
+        "total_impressoras_visiveis_julio_cliente2": _cnt_julio_ativas,
+        "mensagem": "Usuarios resetados + (bonus) impressoras Julio (cliente 2) reativadas FORCADO active=TRUE ignored=FALSE via RAW SQL. Atualize dashboard F5!"
+    }
 
 
 @router.get("/debug/create-julio-printer-temp")
