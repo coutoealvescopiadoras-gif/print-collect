@@ -61,6 +61,19 @@ Write-Host ""
 Write-Warn "Variavel TARGET_ARCH definida como: $env:TARGET_ARCH"
 
 function Find-PythonX86 {
+    $envVarPath = [string]$env:PC_PYTHON_X86_PATH
+    if (-not [string]::IsNullOrWhiteSpace($envVarPath)) {
+        Write-Host "  [PRIORIDADE MAXIMA] Encontrou PC_PYTHON_X86_PATH do CI: $envVarPath" -ForegroundColor Cyan
+        if (Test-Path $envVarPath) {
+            try {
+                $bits = & $envVarPath -c "import struct; import sys; sys.stdout.write(str(struct.calcsize('P')*8))" 2>$null
+                if ($LASTEXITCODE -eq 0 -and $bits -eq "32") { return $envVarPath }
+                Write-Host "  (aviso: PC_PYTHON_X86_PATH = $bits bits, nao e 32. Ignorando...)" -ForegroundColor DarkYellow
+            } catch {}
+        } else {
+            Write-Host "  (aviso: PC_PYTHON_X86_PATH nao existe no disco. Ignorando...)" -ForegroundColor DarkYellow
+        }
+    }
     $candidates = @(
         "C:\Program Files (x86)\Python312-32\python.exe",
         "C:\Program Files (x86)\Python311-32\python.exe",
@@ -78,12 +91,14 @@ function Find-PythonX86 {
             if ($LASTEXITCODE -eq 0 -and $test -eq "False") { return $cmd.Source }
         } catch {}
     }
-    $pcmd = Get-Command "python.exe" -ErrorAction SilentlyContinue
-    if ($pcmd) {
+    $allPython = Get-Command "python.exe" -All -ErrorAction SilentlyContinue
+    foreach ($p in $allPython) {
         try {
-            $bits = & $pcmd.Source -c "import struct; import sys; sys.stdout.write(str(struct.calcsize('P')*8))" 2>$null
-            if ($LASTEXITCODE -eq 0 -and $bits -eq "32") { return $pcmd.Source }
-            Write-Host "  (ignora python.exe do PATH = $bits bits, queremos 32)" -ForegroundColor DarkYellow
+            $bits = & $p.Source -c "import struct; import sys; sys.stdout.write(str(struct.calcsize('P')*8))" 2>$null
+            if ($LASTEXITCODE -eq 0 -and $bits -eq "32") {
+                Write-Host "  (OK: encontrou python.exe x86 32 bits no PATH em: $($p.Source))" -ForegroundColor Cyan
+                return $p.Source
+            }
         } catch {}
     }
     return $null

@@ -30,18 +30,31 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 2. Instalar Python 3.12 (x86 - 32 BITS - OBRIGATORIO para instalador Universal!)
+        id: setup_python_x86
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           architecture: "x86"
 
+      - name: 2.0. Setar variavel PC_PYTHON_X86_PATH (forca uso do python x86 do setup-python@v5, evita pegar python x64 do sistema!)
+        shell: pwsh
+        run: |
+          $pythonX86 = "${{ steps.setup_python_x86.outputs.python-path }}"
+          Write-Host "✅ Python x86 EXATO do setup-python@v5: $pythonX86"
+          if (-not (Test-Path $pythonX86)) { throw "python-path do setup-python NAO EXISTE: $pythonX86" }
+          $bits = & $pythonX86 -c "import struct; import sys; sys.stdout.write(str(struct.calcsize('P')*8))"
+          if ($bits -ne "32") { throw "python-path do setup-python NAO E 32 bits! ($bits bits). Abortando." }
+          Write-Host "✅ Python verificado: $bits bits x86"
+          echo "PC_PYTHON_X86_PATH=$pythonX86" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Variavel de ambiente PC_PYTHON_X86_PATH gravada em GITHUB_ENV."
+
       - name: 2.1. Validar arquitetura Python (garante que nao pegou x64 nem ARM64!)
         shell: pwsh
         run: |
-          $arch = (python -c "import struct,sys; sys.stdout.write(str(struct.calcsize('P')*8))")
+          $arch = (& "${{ steps.setup_python_x86.outputs.python-path }}" -c "import struct,sys; sys.stdout.write(str(struct.calcsize('P')*8))")
           Write-Host "Python ARQ: $arch bits"
           if ($arch -ne "32") { throw "ERRO: Python NAO e 32 bits (x86). Build cancelado! (pegou $arch bits sem querer)"}
-          python --version
+          & "${{ steps.setup_python_x86.outputs.python-path }}" --version
 
       - name: 3. Instalar Inno Setup (ISCC.exe - compilador do instalador Windows)
         shell: pwsh
