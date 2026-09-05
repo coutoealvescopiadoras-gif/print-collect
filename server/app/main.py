@@ -136,6 +136,16 @@ def create_app() -> FastAPI:
     @app.get("/health", include_in_schema=False)
     @app.head("/health", include_in_schema=False)
     def health():
+        return {
+            "status": "ok",
+            "service": "print-collect-api",
+            "version": "0.1.0",
+            "message": "Use /health-db to check database connectivity",
+        }
+
+    @app.get("/health-db", include_in_schema=False)
+    @app.head("/health-db", include_in_schema=False)
+    def health_db():
         db_status = "unknown"
         db_error = None
         try:
