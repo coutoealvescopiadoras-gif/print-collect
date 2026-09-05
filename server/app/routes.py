@@ -521,6 +521,133 @@ def reset_julio_admin(
     }
 
 
+@router.get("/db/migrate-forca")
+def db_force_migrate(
+    request: Request,
+):
+    """Endpoint PUBLICO (1 clique) para FORCAR rodar todas as ensures de coluna/indice no banco.
+    Julio 05/09: resolve o erro 'coluna printers.deleted_at / printers.ignored nao existe'
+    no PostgreSQL do Render (create_all nao adiciona colunas em tabelas ja existentes).
+    Protegido por RESET_JULIO_PASSWORD ou ?password=...&key=CEA-JULIO-2026-MIGRA.
+    Retorna relatorio de colunas adicionadas/verificadas.
+    """
+    EXPECTED_KEY = "CEA-JULIO-2026-MIGRA"
+    qp = request.query_params
+    pwd_q = (qp.get("password") or "").strip()
+    key_q = (qp.get("key") or "").strip()
+    pwd_env = (os.environ.get("RESET_JULIO_PASSWORD") or "").strip()
+    allow_key = (key_q == EXPECTED_KEY) or (not pwd_q and pwd_env)
+    if not allow_key:
+        raise HTTPException(
+            status_code=403,
+            detail="key invalida. Use ?key=CEA-JULIO-2026-MIGRA ou env RESET_JULIO_PASSWORD",
+        )
+    pwd_ok = (len(pwd_q) >= 6) or (len(pwd_env) >= 6)
+    if not pwd_ok:
+        raise HTTPException(
+            status_code=400,
+            detail="password necessario (min 6 chars) via ?password=... ou ENV RESET_JULIO_PASSWORD",
+        )
+
+    from app.database import (
+        init_db,
+        _ensure_printer_manual_delete_columns,
+        _ensure_printer_ignored_column,
+        _ensure_historico_coletas_missing_fks,
+        _ensure_user_multitenancy_columns,
+        _ensure_partner_multitenancy_columns,
+        _ensure_agent_pairing_columns,
+        _ensure_client_code_column,
+        _ensure_printer_serial_unique,
+        _get_migration_engine,
+    )
+    from sqlalchemy import inspect, text as _txt
+
+    relatorio: dict = {}
+    mig_engine = _get_migration_engine()
+    relatorio["banco_engine"] = (
+        "migration_engine (postgres)" if settings.is_postgres else "sqlite_engine"
+    )
+
+    def _colunas(tabela: str):
+        insp = inspect(mig_engine)
+        if tabela not in insp.get_table_names():
+            return []
+        return sorted([c["name"] for c in insp.get_columns(tabela)])
+
+    antes = {
+        "printers": _colunas("printers"),
+        "users": _colunas("users"),
+        "clients": _colunas("clients"),
+        "agents": _colunas("agents"),
+        "historico_coletas": _colunas("historico_coletas"),
+    }
+    relatorio["colunas_antes"] = {k: v for k, v in antes.items() if v}
+
+    try:
+        init_db()
+        relatorio["init_db"] = "OK"
+    except Exception as e:
+        relatorio["init_db"] = "ERRO: {!r}".format(e)
+
+    tarefas = (
+        ("_ensure_user_multitenancy_columns", _ensure_user_multitenancy_columns),
+        ("_ensure_partner_multitenancy_columns", _ensure_partner_multitenancy_columns),
+        ("_ensure_agent_pairing_columns", _ensure_agent_pairing_columns),
+        ("_ensure_client_code_column", _ensure_client_code_column),
+        ("_ensure_printer_serial_unique", _ensure_printer_serial_unique),
+        ("_ensure_printer_manual_delete_columns", _ensure_printer_manual_delete_columns),
+        ("_ensure_printer_ignored_column", _ensure_printer_ignored_column),
+        ("_ensure_historico_coletas_missing_fks", _ensure_historico_coletas_missing_fks),
+    )
+    for nome, fn in tarefas:
+        try:
+            fn(mig_engine)
+            relatorio[nome] = "OK"
+        except Exception as e:
+            relatorio[nome] = "ERRO: {!r}".format(e)
+
+    depois = {
+        "printers": _colunas("printers"),
+        "users": _colunas("users"),
+        "clients": _colunas("clients"),
+        "agents": _colunas("agents"),
+        "historico_coletas": _colunas("historico_coletas"),
+    }
+    relatorio["colunas_depois"] = {k: v for k, v in depois.items() if v}
+
+    ADICIONADAS: dict = {}
+    for tabela in antes:
+        add = set(depois.get(tabela, [])) - set(antes.get(tabela, []))
+        if add:
+            ADICIONADAS[tabela] = sorted(add)
+    relatorio["novas_colunas_adicionadas"] = ADICIONADAS
+
+    try:
+        with mig_engine.begin() as conn:
+            upd1 = conn.execute(_txt("UPDATE printers SET ignored = FALSE WHERE ignored IS NULL"))
+            upd2 = conn.execute(_txt("UPDATE printers SET active = TRUE WHERE active IS NULL"))
+            relatorio["updates_garantia"] = {
+                "ignored_false_rows": getattr(upd1, "rowcount", None),
+                "active_true_rows": getattr(upd2, "rowcount", None),
+            }
+    except Exception as e:
+        relatorio["updates_garantia"] = "ERRO: {!r}".format(e)
+
+    relatorio["status"] = "ok"
+    total_novas = sum(len(v) for v in ADICIONADAS.values())
+    if total_novas > 0:
+        parte1 = "Novas colunas adicionadas: {}. ".format(total_novas)
+    else:
+        parte1 = "Nenhuma coluna nova (todas ja existiam). "
+    relatorio["mensagem"] = (
+        "Migracoes concluidas. "
+        + parte1
+        + "Recarregue a dashboard (F5) e teste /api/dashboard/stats e /api/printers."
+    )
+    return relatorio
+
+
 @router.get("/debug/create-julio-printer-temp")
 def debug_create_julio_printer_temp(
     request: Request,
