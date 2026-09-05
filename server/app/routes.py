@@ -4465,6 +4465,45 @@ async def agent_report(
                         pass
             if not _commit_ok:
                 raise Exception(_commit_err_msg or "commit falhou silenciosamente")
+
+            # ==============================================================
+            # 🔥🔥🔥 NOVA VALIDACAO OBRIGATORIA POS-COMMIT (ANTI-FANTASMA!)
+            #    Problema: _commit_ok=True / sem excecao, mas nao gravou
+            #    NADA no banco (Render NullPool + psycopg3 silent rollback).
+            #    Solucao: ABRE SESSAO NOVA, VERIFICA DE VERDADe no banco se
+            #    as impressoras READINGS existem para esse cliente.
+            #    Se COUNT = 0 => FALLBACK NUCLEAR OBRIGATORIO, mesmo que
+            #    _commit_ok=True! (Julio bug 05/09: RICOH SP4510SF nao aparecia)
+            # ==============================================================
+            try:
+                from sqlalchemy.orm import sessionmaker as _smv
+                from sqlalchemy import func as _fnv
+                _SLv = _smv(autocommit=False, autoflush=False, bind=engine, expire_on_commit=False)
+                _dbv = _SLv()
+                try:
+                    _cnt_printers_after = 0
+                    if agent and getattr(agent, "client_id", None):
+                        _cnt_printers_after = _dbv.query(_fnv.count(Printer.id)).filter(
+                            Printer.client_id == int(agent.client_id),
+                            Printer.ignored == False
+                        ).scalar() or 0
+                    _verdict_empty = (
+                        (processed_ok > 0 and total_readings > 0) and
+                        (_cnt_printers_after is None or _cnt_printers_after < 1)
+                    )
+                    if _verdict_empty:
+                        warnings.append(
+                            f"[POS-COMMIT CHECK FALHOU] processed_ok={processed_ok} "
+                            + f"mas banco COUNT printers={_cnt_printers_after}. "
+                            + "FORCANDO FALLBACK NUCLEAR (commit fantasma!)"
+                        )
+                        raise Exception("[FORCAR FALLBACK NUCLEAR POS COMMIT VERIFICACAO]")
+                finally:
+                    try: _dbv.close()
+                    except Exception: pass
+            except Exception as _forca_fallback:
+                # Repassa pro fallback nuclear abaixo via except
+                raise
         except Exception as _fallback_needed:
             # ==============================================================
             # 🔥 FALLBACK NUCLEAR: Session.commit() nao grava (Vercel bug)
@@ -4489,6 +4528,7 @@ async def agent_report(
                     _ag2 = _db2.query(Agent).filter(Agent.api_token == str(x_agent_token)).first()
                     if _ag2 and getattr(_ag2, "client_id", None):
                         _ag2.last_heartbeat = _now()
+                        _ag2.version = getattr(payload, "agent_version", None) or _ag2.version
                         _cli_id = int(_ag2.client_id)
                         for reading in payload.readings:
                             _ri = _s_ip(getattr(reading, "ip_address", None))
