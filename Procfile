@@ -1,1 +1,1 @@
-web: gunicorn -w 4 -k uvicorn.workers.UvicornWorker --chdir server app.main:app
+web: PYTHONPATH=server uvicorn app.main:app --host 0.0.0.0 --port 10000
