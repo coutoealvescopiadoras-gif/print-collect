@@ -5044,7 +5044,7 @@ CAN_DOWNLOAD_SETUP_ROLES = {ROLE_SUPERADMIN, ROLE_PARTNER_ADMIN, ROLE_PARTNER_ST
 
 @router.get("/installer/info")
 def installer_info(
-    current_user: User = Depends(_get_current_user_or_403_manage),
+    current_user: User = Depends(get_current_active_user),
 ):
     """Retorna meta informacoes do instalador: tamanho, data, versao e URL do download."""
     if current_user.role not in CAN_DOWNLOAD_SETUP_ROLES:
@@ -5105,7 +5105,7 @@ def installer_info(
 
 @router.get("/installer/download")
 def installer_download(
-    current_user: User = Depends(_get_current_user_or_403_manage),
+    current_user: User = Depends(get_current_active_user),
 ):
     """Download direto do PrintCollectSetup.exe."""
     if current_user.role not in CAN_DOWNLOAD_SETUP_ROLES:
