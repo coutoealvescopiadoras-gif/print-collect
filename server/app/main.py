@@ -13,25 +13,37 @@ import os, sys, time
 def seed_demo_data() -> None:
     db = SessionLocal()
     try:
-        # ----- PASSO 1: Superadmins Julio + Financeiro (banco novo, tabela users vazia) -----
-        if db.query(User).count() == 0:
-            db.add(User(
-                username="julio",
-                email="Julio@ceacopiadoras.com.br",
-                hashed_password=hash_password("CeaJulio2026!"),
-                role="superadmin",
-                active=True,
-            ))
-            db.add(User(
-                username="financeiro",
-                email="financeiro@ceacopiadoras.com.br",
-                hashed_password=hash_password("CeaFinancas2026!"),
-                role="superadmin",
-                active=True,
-            ))
+        # ---- PASSO 1: SUPERADMINS Julio + Financeiro (UPSERT SEMPRE, email lower) ----
+        reset_pwd = (os.environ.get("RESET_JULIO_PASSWORD") or "").strip()
+        default_pwd_julio = "CeaJulio2026!"
+        default_pwd_fin = "CeaFinancas2026!"
+
+        users_to_ensure = [
+            ("julio",      "Julio@ceacopiadoras.com.br",      reset_pwd or default_pwd_julio),
+            ("financeiro", "financeiro@ceacopiadoras.com.br", reset_pwd or default_pwd_fin),
+        ]
+        for username, email_orig, pwd in users_to_ensure:
+            email_norm = email_orig.strip().lower()
+            new_hash = hash_password(pwd)
+            user = db.query(User).filter(User.email == email_norm).first()
+            if user is None:
+                user = User(
+                    username=username,
+                    email=email_norm,
+                    hashed_password=new_hash,
+                    role="superadmin",
+                    active=True,
+                )
+                db.add(user)
+            else:
+                user.username = username
+                user.email = email_norm
+                user.hashed_password = new_hash
+                user.role = "superadmin"
+                user.active = True
             db.flush()
 
-        # ----- PASSO 2: Dados exemplo (só se realmente nada foi cadastrado ainda) -----
+        # ---- PASSO 2: Dados exemplo (APENAS se nao tem NENHUM cliente ainda) ----
         if db.query(Client).count() == 0:
             client = Client(
                 name="Empresa Exemplo Ltda",

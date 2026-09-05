@@ -438,33 +438,39 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@router.api_route("/reset-julio-admin", methods=["GET", "POST"])
+@router.get("/reset-julio-admin")
 def reset_julio_admin(
-    password: str = Query(..., min_length=6, max_length=120),
-    key: str = Query(...),
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    """Endpoint TEMPORARIO PUBLICO (chave hardcoded abaixo). Cria/atualiza
-    Julio + financeiro como superadmin. Julio abre no navegador 1x para
-    garantir o seed, depois esse endpoint sera removido.
+    """Endpoint TEMPORARIO PUBLICO: via ?password=...&key=... ou ENV RESET_JULIO_PASSWORD.
+    Cria/atualiza Julio + financeiro superadmin sempre (email lower).
     """
     EXPECTED_KEY = "CEA-JULIO-2026-RESET-SUPERADMIN"
-    if key != EXPECTED_KEY:
+    qp = request.query_params
+    pwd_q = (qp.get("password") or "").strip()
+    key_q = (qp.get("key") or "").strip()
+    pwd_env = (os.environ.get("RESET_JULIO_PASSWORD") or "").strip()
+    use_pwd = pwd_q or pwd_env
+    allow_key = (key_q == EXPECTED_KEY) or (not pwd_q and pwd_env)
+    if not allow_key:
         raise HTTPException(status_code=403, detail="key invalida")
+    if not use_pwd or len(use_pwd) < 6:
+        raise HTTPException(status_code=400, detail="password necessario (min 6 chars) via ?password=... ou ENV RESET_JULIO_PASSWORD")
 
     rows_upserted = 0
     users_to_ensure = [
-        ("julio", "Julio@ceacopiadoras.com.br", password),
-        ("financeiro", "financeiro@ceacopiadoras.com.br", password),
+        ("julio",      "Julio@ceacopiadoras.com.br",      use_pwd),
+        ("financeiro", "financeiro@ceacopiadoras.com.br", use_pwd),
     ]
-    for username, email, pwd in users_to_ensure:
-        email_norm = email.strip().lower()
+    for username, email_orig, pwd in users_to_ensure:
+        email_norm = email_orig.strip().lower()
         user = db.query(User).filter(User.email == email_norm).first()
         new_hash = hash_password(pwd)
         if user is None:
             db.add(User(
                 username=username,
-                email=email,
+                email=email_norm,
                 hashed_password=new_hash,
                 role=ROLE_SUPERADMIN,
                 active=True,
@@ -472,13 +478,14 @@ def reset_julio_admin(
             rows_upserted += 1
         else:
             user.username = username
-            user.email = email
+            user.email = email_norm
             user.hashed_password = new_hash
             user.role = ROLE_SUPERADMIN
             user.active = True
             rows_upserted += 1
+        db.flush()
     db.commit()
-    return {"ok": True, "rows_upserted": rows_upserted, "users": [e for _, e, _ in users_to_ensure]}
+    return {"ok": True, "rows_upserted": rows_upserted, "password_source": "query" if pwd_q else "env", "users": [e for _, e, _ in users_to_ensure]}
 
 
 @router.get("/users/me", response_model=UserOut)
