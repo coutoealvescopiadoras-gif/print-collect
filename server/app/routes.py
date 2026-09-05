@@ -492,7 +492,8 @@ def reset_julio_admin(
 def debug_create_julio_printer_temp(
     request: Request,
 ):
-    """TEMPORARIO (APAGAR DEPOIS!) — Cria impressora RICOH SP 4510SF no cliente Julio id=2 diretamente via engine.begin() RAW SQL, sem ORM.
+    """TEMPORARIO (APAGAR DEPOIS!) — Cria OU REATIVA impressora RICOH SP 4510SF no cliente Julio id=2 diretamente via engine.begin() RAW SQL, sem ORM.
+    🔥 05/09 Julio: UPDATE agora FORÇA active=TRUE, ignored=FALSE (resolve bug impressora excluida que nao volta!).
     Protegido por RESET_JULIO_PASSWORD env ou ?password=.
     """
     EXPECTED_KEY = "CEA-JULIO-2026-RESET-SUPERADMIN"
@@ -521,7 +522,7 @@ def debug_create_julio_printer_temp(
     try:
         with engine.begin() as _conn:
             _row = _conn.execute(
-                _rtxt("SELECT id, pages_total, pages_bw, pages_color FROM printers WHERE client_id=:cid AND ip_address ILIKE :ip LIMIT 1"),
+                _rtxt("SELECT id, pages_total, pages_bw, pages_color, active, ignored FROM printers WHERE client_id=:cid AND ip_address ILIKE :ip LIMIT 1"),
                 {"cid": _cli_id, "ip": _ri}
             ).mappings().first()
             if _row is None:
@@ -543,9 +544,14 @@ def debug_create_julio_printer_temp(
                 _printer_id = int(_ins.scalar_one())
             else:
                 _printer_id = int(_row["id"])
+                # 🔥 05/09 FIX JULIO: UPDATE EXPLICITAMENTE active=TRUE ignored=FALSE
+                # (nao depende de endpoint /api/agent/report nem de deploy novo propagar!)
                 _conn.execute(
                     _rtxt("""
-                        UPDATE printers SET pages_total = GREATEST(COALESCE(pages_total,0), :pt),
+                        UPDATE printers SET
+                        active = TRUE,
+                        ignored = FALSE,
+                        pages_total = GREATEST(COALESCE(pages_total,0), :pt),
                         pages_bw = GREATEST(COALESCE(pages_bw,0), :pb),
                         pages_color = GREATEST(COALESCE(pages_color,0), :pc),
                         model = COALESCE(:model, model),
@@ -567,17 +573,23 @@ def debug_create_julio_printer_temp(
                 {"pid": _printer_id, "pt": _rpt, "pb": _rpb, "pc": _rpc, "st": _rst, "ca": _now_dt}
             )
         _cnt = None
+        _row_debug = None
         with engine.connect() as _c2:
             _cnt = _c2.execute(
                 _rtxt("SELECT COUNT(id) FROM printers WHERE client_id=:cid AND ignored=FALSE"),
                 {"cid": _cli_id}
             ).scalar_one_or_none()
+            _row_debug = _c2.execute(
+                _rtxt("SELECT id, active, ignored, pages_total FROM printers WHERE client_id=:cid AND ip_address ILIKE :ip LIMIT 1"),
+                {"cid": _cli_id, "ip": _ri}
+            ).mappings().first()
         return {
             "ok": True,
             "printer_id": _printer_id,
-            "impressoras_cadastradas_cliente_2": int(_cnt or 0),
-            "mensagem": "Impressora RICOH SP 4510SF inserida COM SUCESSO via engine.begin() RAW SQL! Checar dashboard cliente Julio.",
-            "temp": "APAGAR este endpoint DEPOIS de resolver!"
+            "impressoras_visiveis_cliente_2": int(_cnt or 0),
+            "estado_atual_impressora": dict(_row_debug) if _row_debug else None,
+            "mensagem": "REATIVACAO FORCADA (active=TRUE ignored=FALSE) + contadores 168857 OK via RAW SQL engine.begin()! Atualize dashboard cliente Julio (F5).",
+            "temp": "APAGAR este endpoint DEPOIS de resolver TUDO!"
         }
     except Exception as e:
         return {"ok": False, "erro": str(e)[:500]}
