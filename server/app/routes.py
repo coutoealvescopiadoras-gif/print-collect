@@ -4009,6 +4009,8 @@ async def agent_report(
                     printer = Printer(
                         client_id=agent.client_id,
                         ip_address=r_ip,
+                        active=True,
+                        ignored=False,
                     )
                     db.add(printer)
                     # ==============================================================
@@ -4045,6 +4047,11 @@ async def agent_report(
                 #   de tempos em tempos. Se o valor novo for MENOR que o salvo no banco,
                 #   MANTER o valor MAIOR. Nunca sobreescrever contador para baixo.
                 printer.ip_address = r_ip
+                # 🔥 CRITICO: Garante que NENHUMA impressora reportada pelo agente fique
+                #    marcada como ignorada ou inativa (resolvido bug que Julio nao via
+                #    impressora no dashboard pq estava active=True/ignored=True!)
+                printer.active = True
+                printer.ignored = False
                 if r_mac:
                     printer.mac_address = r_mac
                 if r_serial:
