@@ -125,15 +125,24 @@ export default function Layout() {
                 src={branding.logo_src}
                 alt={branding.display_name}
                 style={{
-                  width: "160px",
+                  width: "220px",
                   height: "auto",
                   borderRadius: "0",
                   objectFit: "contain",
+                  marginBottom: "0.5rem",
                 }}
                 onError={(e) => {
                   (e.currentTarget as HTMLImageElement).style.display = "none";
                 }}
               />
+              <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text)" }}>
+                {branding.display_name}
+              </div>
+              {branding.tagline && (
+                <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+                  {branding.tagline}
+                </div>
+              )}
             </div>
           ) : (
             <div style={{ textAlign: "center" }}>
@@ -141,14 +150,14 @@ export default function Layout() {
                 src={branding.logo_src}
                 alt={branding.display_name}
                 style={{
-                  width: "160px",
+                  width: "180px",
                   height: "auto",
                   objectFit: "contain",
                   maxWidth: "100%",
-                  marginBottom: "0.5rem",
+                  marginBottom: "0.75rem",
                   background: "#fff",
-                  padding: 8,
-                  borderRadius: 8,
+                  padding: 10,
+                  borderRadius: 10,
                 }}
                 onError={(e) => {
                   (e.currentTarget as HTMLImageElement).style.display = "none";
