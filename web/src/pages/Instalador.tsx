@@ -24,28 +24,6 @@ function copyText(text: string) {
   }
 }
 
-const TEMPLATE_MESSAGE_NOCODE = [
-  "Olá, tudo bem?",
-  "",
-  "Estamos configurando o monitoramento automático das suas impressoras! 🖨️",
-  "",
-  "Siga esses 3 passos no computador principal da empresa (ou na filial):",
-  "",
-  `1️⃣ BAIXE o instalador no link oficial abaixo e dê DUPLA CLIQUE para instalar:`,
-  `   🔗 ${INSTALLER_DOWNLOAD_URL}`,
-  "2️⃣ Ao terminar a instalação, abrirá automaticamente um \"Wizard de Instalação\".",
-  "3️⃣ Quando perguntar, informe SEU CÓDIGO DO CLIENTE (não expira, sempre o mesmo):",
-  "     • Código do Cliente: 🎫 <COLOQUE AQUI O CÓDIGO DO CLIENTE>",
-  "     • Comunidade SNMP: public (só aperte Enter)",
-  "",
-  "💡 Dica: Instalou na matriz, e agora quer instalar também em outras 2 filiais da mesma empresa?",
-  "       Basta rodar o instalador em cada filial e usar o MESMO CÓDIGO DO CLIENTE acima!",
-  "       Todas as impressoras de todas as filiais ficarão cadastradas automaticamente na sua empresa.",
-  "",
-  "Pronto! 😊 Em menos de 2 minutos o sistema encontra sozinho todas as impressoras da sua rede e começa a monitorar nível de toner, contadores e alertas.",
-  "Qualquer dúvida é só chamar a gente!",
-].join("\n");
-
 export default function Instalador() {
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedMessage, setCopiedMessage] = useState(false);
@@ -53,17 +31,16 @@ export default function Instalador() {
   const [loading, setLoading] = useState(true);
 
   const DOWNLOAD_URL = info?.available
-    ? info.download_url
+    ? api.getInstallerDownloadUrl() || info.download_url
     : INSTALLER_DOWNLOAD_URL_FALLBACK;
 
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const res = await api.get<InstallerInfo>("/installer/info");
-        if (alive && res && res.data) setInfo(res.data);
+        const data = await api.getInstallerInfo();
+        if (alive && data) setInfo(data);
       } catch (err) {
-        // 403: cliente viewer, mantemos null
         if (alive) setInfo(null);
       } finally {
         if (alive) setLoading(false);

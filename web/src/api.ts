@@ -500,4 +500,15 @@ export const api = {
     const contentDisposition = response.headers.get("Content-Disposition") || "";
     return { blob, contentDisposition };
   },
+  getInstallerInfo: () =>
+    request<{
+      available: boolean;
+      file_size_bytes: number;
+      file_size_mb: number;
+      version: string;
+      built_at: string | null;
+      download_url: string;
+      note: string;
+    }>("/api/installer/info"),
+  getInstallerDownloadUrl: () => `${BASE.replace(/\/$/, "")}/api/installer/download`,
 };

@@ -284,7 +284,6 @@ export default function Clientes() {
   };
 
   const INSTALLER_DOWNLOAD_URL = "/api/installer/download";
-  const INSTALLER_FALLBACK = "https://www.printcollect.com.br/PrintCollectSetup.exe";
 
   const buildPairingMessage = (client?: Client) => {
     const theClient = client || activePairingClient;
