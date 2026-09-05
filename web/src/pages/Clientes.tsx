@@ -124,7 +124,69 @@ export default function Clientes() {
       window.alert("Impressora adicionada com sucesso! 🖨️\n\nAgora o agente instalado na máquina do cliente vai encontrar essa impressora (pelo IP) e começar a coletar os contadores automaticamente!");
     } catch (e: any) {
       setAddingPrinterLoading(false);
-      setFormAddPrinterError("Erro ao adicionar impressora: " + String(e?.message || e).slice(0, 200));
+
+      // ==================================================================
+      // 🔥 NOVA REGRA JULIO 05/09: Tratamento AMIGÁVEL de erros HTTP vindos
+      //    da API, principalmente HTTP 409 Conflict = SERIAL DUPLICADO!
+      //
+      //    A função api.request() coloca o JSON da resposta INTEIRO dentro de
+      //    `e.message` no formato `{"detail":"mensagem..."}`. Temos que extrair
+      //    o campo `detail` para mostrar ao usuário.
+      // ==================================================================
+      let errorMsg = String(e?.message || e).slice(0, 500);
+      let isSerialDuplicado = false;
+      let is409Conflict = false;
+
+      try {
+        // Tenta parsear o JSON da mensagem de erro (caso padrão FastAPI)
+        if (typeof errorMsg === "string" && errorMsg.trim().startsWith("{")) {
+          const parsed = JSON.parse(errorMsg);
+          if (parsed?.detail && typeof parsed.detail === "string") {
+            errorMsg = parsed.detail;
+          }
+          if (parsed?.status === 409 || parsed?.statusCode === 409) {
+            is409Conflict = true;
+          }
+        }
+      } catch {
+        // JSON inválido: mantém errorMsg original (não é erro estruturado)
+      }
+
+      // Detecta se é erro de serial duplicado (409 Conflict) pelas palavras-chave
+      const _msgLow = String(errorMsg).toLowerCase();
+      if (
+        _msgLow.includes("número de série") ||
+        _msgLow.includes("numero de serie") ||
+        _msgLow.includes("serial") ||
+        _msgLow.includes("já existe") ||
+        _msgLow.includes("duplicata") ||
+        _msgLow.includes("duplicate") ||
+        is409Conflict
+      ) {
+        isSerialDuplicado = true;
+      }
+
+      // Mostra erro no formulário
+      setFormAddPrinterError(errorMsg || "Erro ao adicionar impressora");
+
+      // Mostra ALERT ADEQUADO:
+      //   - Se for SERIAL DUPLICADO → alerta VERMELHO chamativo com explicação
+      //   - Senão → alerta normal
+      if (isSerialDuplicado) {
+        window.alert(
+          "🚫 ERRO: IMPRESSORA JÁ EXISTE (DUPLICATA DE NÚMERO DE SÉRIE)\n\n" +
+          "O sistema detectou que esta impressora JÁ ESTÁ CADASTRADA em outro cliente " +
+          "ou já existe na base de dados (proteção contra duplicatas para faturamento correto).\n\n" +
+          "DETALHES:\n" + errorMsg + "\n\n" +
+          "COMO PROSSEGUIR:\n" +
+          " 1. Verifique se o número de série foi digitado corretamente;\n" +
+          " 2. Vá até a lista de impressoras do cliente ORIGINAL e reative a impressora por lá;\n" +
+          " 3. Se for uma troca de cliente (ex: impressora saiu do cliente A e foi para B),\n" +
+          "    contate o suporte para transferência."
+        );
+      } else {
+        window.alert("❌ Erro ao adicionar impressora:\n\n" + errorMsg);
+      }
     }
   }
 

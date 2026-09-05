@@ -81,7 +81,7 @@ class Printer(Base):
     location_id = Column(Integer, ForeignKey("locations.id"), nullable=True)
     ip_address = Column(String(45), nullable=False)
     mac_address = Column(String(20), nullable=True)
-    serial_number = Column(String(100), nullable=True, index=True)
+    serial_number = Column(String(100), nullable=True, unique=True, index=True)
     model = Column(String(200), nullable=True)
     manufacturer = Column(String(100), nullable=True)
     status = Column(String(50), default="unknown")
@@ -101,11 +101,15 @@ class Printer(Base):
     )
     active = Column(Boolean, default=True, nullable=False)
     ignored = Column(Boolean, default=False, nullable=False, index=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+    deleted_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    delete_reason = Column(String(200), nullable=True)
 
     client = relationship("Client", back_populates="printers")
     location = relationship("Location", back_populates="printers")
     alerts = relationship("Alert", back_populates="printer", cascade="all, delete-orphan")
     readings = relationship("Reading", back_populates="printer", cascade="all, delete-orphan")
+    deleted_by_user = relationship("User", foreign_keys=[deleted_by_user_id])
 
 
 class Alert(Base):
@@ -358,6 +362,54 @@ def init_db() -> None:
         _ensure_partner_multitenancy_columns(target)
         _ensure_agent_pairing_columns(target)
         _ensure_client_code_column(target)
+        _ensure_printer_serial_unique(target)
+        _ensure_printer_manual_delete_columns(target)
+
+
+def _ensure_printer_serial_unique(target_engine) -> None:
+    inspector = inspect(target_engine)
+    table_names = set(inspector.get_table_names())
+    if "printers" not in table_names:
+        return
+    statements: list[str] = []
+    # PostgreSQL: UNIQUE INDEX com WHERE serial_number IS NOT NULL (permite multiplos NULL = ok!)
+    try:
+        with target_engine.begin() as connection:
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_printers_serial_number_nonnull "
+                "ON printers(serial_number) WHERE serial_number IS NOT NULL"
+            ))
+            try:
+                connection.execute(text(
+                    "ALTER TABLE printers ADD CONSTRAINT uq_printers_serial_number UNIQUE(serial_number)"
+                ))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _ensure_printer_manual_delete_columns(target_engine) -> None:
+    inspector = inspect(target_engine)
+    table_names = set(inspector.get_table_names())
+    if "printers" not in table_names:
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("printers")}
+    statements: list[str] = []
+    if "deleted_at" not in existing_columns:
+        statements.append("ALTER TABLE printers ADD COLUMN deleted_at TIMESTAMP WITH TIME ZONE NULL")
+    if "deleted_by_user_id" not in existing_columns:
+        statements.append("ALTER TABLE printers ADD COLUMN deleted_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL")
+    if "delete_reason" not in existing_columns:
+        statements.append("ALTER TABLE printers ADD COLUMN delete_reason VARCHAR(200) NULL")
+    if not statements:
+        return
+    with target_engine.begin() as connection:
+        for statement in statements:
+            try:
+                connection.execute(text(statement))
+            except Exception:
+                pass
 
 
 def get_db():
