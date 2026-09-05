@@ -438,7 +438,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@router.post("/reset-julio-admin")
+@router.api_route("/reset-julio-admin", methods=["GET", "POST"])
 def reset_julio_admin(
     password: str = Query(..., min_length=6, max_length=120),
     key: str = Query(...),
