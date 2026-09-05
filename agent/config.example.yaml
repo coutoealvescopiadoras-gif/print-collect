@@ -12,7 +12,7 @@ agent_version: "0.2.0"
 
 # Intervalo entre coletas automáticas (minutos)
 # 60 minutos = 1 HORA (atualiza contadores de 1 em 1 hora!)
-interval_minutes: 60
+interval_minutes: 30
 
 # Log em arquivo (opcional — útil para diagnóstico)
 # log_file: "/var/log/print-collect/agent.log"

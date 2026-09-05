@@ -114,7 +114,7 @@ def _pair_and_save(server_url: str, code: str, config_path: Path,
         server_url=returned_url,
         agent_token=agent_token,
         agent_version=version,
-        interval_minutes=60,
+        interval_minutes=30,
         log_file=str(__import__("print_collect.config", fromlist=["default_log_file_path"]).default_log_file_path()),
         snmp=SnmpConfig(
             community=community or "public",

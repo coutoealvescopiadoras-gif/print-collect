@@ -2369,7 +2369,7 @@ def download_agent_windows_package(
             'server_url: "%s"' % server_url,
             'agent_token: "%s"' % agent.api_token,
             'agent_version: "%s"' % agent_version,
-            "interval_minutes: 15",
+            "interval_minutes: 30",
             "snmp:",
             '  community: "public"',
             "  timeout: 2",
