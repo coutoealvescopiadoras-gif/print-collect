@@ -885,8 +885,8 @@ def list_partner_stats(db: Session = Depends(get_db), current_user: User = Depen
     return stats
 
 
-SUPERADMIN_DISPLAY_NAME = "C&A Soluções"
-SUPERADMIN_TAGLINE = "Monitoramento de Impressoras"
+SUPERADMIN_DISPLAY_NAME = "Print Collect"
+SUPERADMIN_TAGLINE = "Plataforma de Monitoramento"
 PLATFORM_DEFAULT_PARTNER_LABEL = "Revendedor autorizado"
 PLATFORM_DEFAULT_CLIENT_LABEL = "Painel do Cliente"
 

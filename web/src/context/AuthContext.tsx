@@ -34,9 +34,9 @@ function normalizeUser(user: User): User {
 }
 
 const DEFAULT_BRANDING: Branding = {
-  display_name: "C&A Soluções",
+  display_name: "Print Collect",
   logo_src: FALLBACK_LOGO_URL,
-  tagline: "Monitoramento de Impressoras",
+  tagline: "Plataforma de Monitoramento",
   partner_id: null,
   partner_name: null,
   client_id: null,

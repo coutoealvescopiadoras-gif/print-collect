@@ -1,18 +1,14 @@
 // ========================================
 // LOGOS OFICIAIS DO PRINT COLLECT (separadas por uso!)
 // ========================================
-// 1. LOGO_URL: Logo da C&A Solucoes (USADA PELO SUPERADMIN DEPOIS QUE LOGA — no sidebar)
-// 2. PRINT_COLLECT_LOGO: Logo GENERICA do software (USADA SOMENTE NA TELA DE LOGIN PUBLICA,
-//    para que clientes/revendedores vejam a marca do software ANTES de autenticar)
+// 1. LOGO_URL: Logo GENERICA do software Print Collect (USADA PELO SUPERADMIN DEPOIS QUE LOGA — no sidebar.
+//    Antes era a C&A Solucoes; agora Julio separou as marcas:
+//    Print Collect = plataforma/dono (superadmin)
+//    CEA Copiadoras = revendedora (partner no banco)
+// 2. PRINT_COLLECT_LOGO: a mesma SVG, exportada separadamente.
 // ========================================
 
-// 1) Logo C&A (marca original de Julio/superadmin; sidebar apos autenticacao)
-import LogoCa from "./logo-ca.jpg";
-export const LOGO_URL = LogoCa;
-
-// 2) Logo GENERICA do software Print Collect (tela de login PUBLICA, sempre exibida
-//    antes do login, independentemente de revendedor/cliente)
-// SVG inline criada exclusivamente para o software:
+// Logo GENERICA do software Print Collect (SVG inline criada exclusivamente para o software:
 // Simbolo: Impressora estilizada + ondas de conexao/sinal de coleta
 // Nome: "Print Collect" (gradiente azul tech marinho -> ciano)
 // Tagline: MONITORAMENTO AUTOMATICO
@@ -78,3 +74,8 @@ const SVG_SYMBOL = encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" v
 </svg>`);
 
 export const PRINT_COLLECT_LOGO = `data:image/svg+xml;charset=utf-8,${SVG_SYMBOL}`;
+
+// 1) LOGO_URL = agora a mesma logo da plataforma (Print Collect), usada no fallback
+//    do superadmin (sidebar) e na tela de login (PRINT_COLLECT_LOGO).
+//    (mantida a exportacao LOGO_URL por compatibilidade com AuthContext antigo.)
+export const LOGO_URL = PRINT_COLLECT_LOGO;
