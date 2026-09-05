@@ -86,7 +86,8 @@ class PartnerBase(BaseModel):
 
 
 class PartnerCreate(PartnerBase):
-    pass
+    admin_email: str
+    admin_password: str
 
 
 class PartnerUpdate(BaseModel):

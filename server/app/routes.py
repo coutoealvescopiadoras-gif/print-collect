@@ -538,11 +538,15 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db), current_user
         # 🚫 REGRAS JULIO: "revendedores parceiros nao ter opcao de cadstrar outro revendedores"
         raise HTTPException(status_code=403, detail="Apenas superadmin pode cadastrar um revendedor administrador. Revendedores não podem revender o software.")
     if not _is_superadmin(current_user) and not _is_partner_admin(current_user) and role == ROLE_PARTNER_STAFF:
-        # Apenas superadmin OU revendedor ADMIN podem criar colaboradores
+        # Apenas superadmin OU revendedor ADMIN podem criar colaboradores (Colaborador nao cria outro colaborador)
         raise HTTPException(status_code=403, detail="Apenas superadmin ou o administrador do revendedor podem cadastrar colaboradores da equipe")
-    if not _is_superadmin(current_user) and role == ROLE_CLIENT_MANAGER:
-        # 🚫 REGRAS JULIO 01/09: Revendedor NAO cria Gestor do Cliente, so Colaborador ou Cliente Final
-        raise HTTPException(status_code=403, detail="Apenas superadmin pode cadastrar gestores de cliente. O revendedor cria somente colaboradores da equipe ou clientes finais.")
+    # 👉 Julio 05/09: Parceiro (partner_admin) e Colaborador (partner_staff) PODEM criar Gestor do Cliente (client_manager) e Cliente Final (client_viewer)
+    # Bloqueio só se for Cliente Final (client_viewer) tentando criar usuario — 403 acima já cuida disso pelo _can_manage_resources
+    if _user_role(current_user) == ROLE_CLIENT_VIEWER:
+        raise HTTPException(status_code=403, detail="Cliente final não pode criar usuários.")
+    # Colaborador (partner_staff) só pode criar client_viewer ou client_manager
+    if _user_role(current_user) == ROLE_PARTNER_STAFF and role not in {ROLE_CLIENT_VIEWER, ROLE_CLIENT_MANAGER}:
+        raise HTTPException(status_code=403, detail="Colaborador (equipe do revendedor) só pode cadastrar Cliente Final ou Gestor do Cliente.")
 
     normalized_email = payload.email.strip().lower()
     login_name = (payload.username or normalized_email).strip().lower()
@@ -635,9 +639,13 @@ def update_user(
         # ========== Staff: só superadmin OU partner_admin pode conceder ==========
         if not _is_superadmin(current_user) and not _is_partner_admin(current_user) and updates["role"] == ROLE_PARTNER_STAFF:
             raise HTTPException(status_code=403, detail="Apenas superadmin ou o administrador do revendedor podem promover para colaborador")
-        if not _is_superadmin(current_user) and updates["role"] == ROLE_CLIENT_MANAGER:
-            # 🚫 REGRAS JULIO 01/09: Revendedor NAO promove ninguem para Gestor do Cliente
-            raise HTTPException(status_code=403, detail="Apenas superadmin pode promover para gestor de cliente. O revendedor pode criar somente colaboradores da equipe ou clientes finais.")
+        # Cliente final NÃO PODE PROMOVER NINGUÉM (julio: cliente final NAO FAZ NADA)
+        if _user_role(current_user) == ROLE_CLIENT_VIEWER:
+            raise HTTPException(status_code=403, detail="Cliente final não pode editar permissões.")
+        # Colaborador (partner_staff) só pode definir para client_viewer ou client_manager
+        if _user_role(current_user) == ROLE_PARTNER_STAFF and updates["role"] not in {ROLE_CLIENT_VIEWER, ROLE_CLIENT_MANAGER}:
+            raise HTTPException(status_code=403, detail="Colaborador (equipe do revendedor) só pode promover para Cliente Final ou Gestor do Cliente.")
+        # 👉 Julio 05/09: Parceiro (partner_admin) PODE promover para Gestor do Cliente (client_manager) tambem — removido bloqueio antigo.
 
     if "client_id" in updates:
         if _is_superadmin(current_user):
@@ -680,6 +688,11 @@ def update_user(
             raise HTTPException(status_code=403, detail="Somente superadmin pode redefinir a senha de outro usuário")
         user.hashed_password = hash_password(str(updates.pop("password")))
 
+    # Julio 05/09: Campo active (ativar/desativar usuário) — SÓ superadmin OU revendedor admin pode mexer
+    if "active" in updates:
+        if not _is_superadmin(current_user) and not _is_partner_admin(current_user):
+            raise HTTPException(status_code=403, detail="Apenas superadmin ou o administrador do revendedor podem ativar/desativar um usuário")
+
     if "email" in updates:
         normalized_email = str(updates["email"]).strip().lower()
         existing_user = db.query(User).filter(User.email == normalized_email, User.id != user.id).first()
@@ -716,6 +729,12 @@ def delete_user(
 
     if not _can_manage_resources(current_user):
         raise HTTPException(status_code=403, detail="Sem permissão para excluir usuários")
+    # 🔥 JULIO: Colaborador (partner_staff) NÃO EXCLUI NINGUÉM (muito perigoso). Cadastra sim, mas excluir NÃO.
+    if _user_role(current_user) == ROLE_PARTNER_STAFF:
+        raise HTTPException(status_code=403, detail="Colaborador (equipe do revendedor) não pode excluir usuários. Contate o administrador do revendedor ou superadmin.")
+    # Excluir usuário: só superadmin OU partner_admin
+    if not _is_superadmin(current_user) and not _is_partner_admin(current_user):
+        raise HTTPException(status_code=403, detail="Apenas superadmin ou o administrador do revendedor podem excluir usuários.")
 
     # ⛔ NUNCA permite excluir você mesmo!
     if user_id == current_user.id:
@@ -777,9 +796,52 @@ def list_partners(db: Session = Depends(get_db), current_user: User = Depends(ge
 def create_partner(payload: PartnerCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     if not _is_superadmin(current_user):
         raise HTTPException(status_code=403, detail="Somente superadmin pode criar revendedores")
-    partner = Partner(**payload.model_dump())
+
+    admin_email_raw = (payload.admin_email or "").strip()
+    admin_password_raw = payload.admin_password or ""
+
+    if not admin_email_raw:
+        raise HTTPException(status_code=400, detail="E-mail do administrador é obrigatório.")
+    if not admin_password_raw:
+        raise HTTPException(status_code=400, detail="Senha do administrador é obrigatória.")
+    if len(admin_password_raw) < 6:
+        raise HTTPException(status_code=400, detail="Senha do administrador deve ter pelo menos 6 caracteres.")
+
+    # Monta dados do Partner (ignora os campos admin_* que nao existem na tabela partners)
+    partner_data = payload.model_dump(exclude={"admin_email", "admin_password"})
+    partner = Partner(**partner_data)
     db.add(partner)
-    db.commit()
+    db.flush()  # obtem partner.id SEM fazer commit ainda (podemos dar rollback se usuario der erro)
+
+    try:
+        normalized_email = admin_email_raw.lower()
+        login_name = normalized_email  # Login sera sempre o e-mail (sem username separado)
+
+        if db.query(User).filter(User.email == normalized_email).first():
+            raise HTTPException(status_code=400, detail="E-mail do administrador já cadastrado no sistema.")
+        if db.query(User).filter(User.username == login_name).first():
+            raise HTTPException(status_code=400, detail="Login/username do administrador já cadastrado no sistema.")
+
+        user = User(
+            username=login_name,
+            email=normalized_email,
+            hashed_password=hash_password(admin_password_raw),
+            role=ROLE_PARTNER_ADMIN,
+            partner_id=partner.id,
+            client_id=None,
+            active=True,
+        )
+        db.add(user)
+
+        # Tudo ok, faz commit de partner + user de uma vez so
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Erro ao criar revendedor: {str(e)}")
+
     db.refresh(partner)
     return partner
 

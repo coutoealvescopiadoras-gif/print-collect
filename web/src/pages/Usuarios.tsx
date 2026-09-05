@@ -4,6 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import type { Client, Partner, User } from "../types";
 
 type RoleValue = User["role"];
+type EditMode = "create" | "edit";
 
 interface RoleOption {
   value: RoleValue;
@@ -92,13 +93,19 @@ export default function Usuarios() {
   const isSuperadmin = effectiveRole === "superadmin";
   const isPartnerAdmin = effectiveRole === "partner_admin";
   const isPartnerStaff = effectiveRole === "partner_staff";
-  const canManageUsers = isSuperadmin || isPartnerAdmin; // partner_staff e client_manager NAO CRIAM usuarios (mais seguro)
+  // Julio 05/09: Colaborador (partner_staff) PODE cadastrar usuário, porque ele vai até o cliente e instala o sistema
+  // Só pode criar: client_viewer (cliente final) ou client_manager (gestor do cliente) — dos SEUS clientes
+  const canManageUsers = isSuperadmin || isPartnerAdmin || isPartnerStaff;
+  // Só superadmin / partner_admin podem resetar senha, excluir ou desativar usuário
+  const canDestroyUsers = isSuperadmin || isPartnerAdmin;
 
   const [users, setUsers] = useState<User[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
+  const [editMode, setEditMode] = useState<EditMode>("create");
+  const [editingUserId, setEditingUserId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [resettingPassword, setResettingPassword] = useState(false);
   const [error, setError] = useState("");
@@ -106,11 +113,13 @@ export default function Usuarios() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [resetPassword, setResetPassword] = useState("");
   const [form, setForm] = useState({
+    username: "",
     email: "",
     password: "",
     role: "client_viewer" as RoleValue,
     client_id: (currentUser?.client_id as number) || 0,
     partner_id: (currentUser?.partner_id as number) || 0,
+    active: true,
   });
 
   const load = async () => {
@@ -140,7 +149,39 @@ export default function Usuarios() {
     load();
   }, [authLoading, currentUser, canManageUsers]);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const openCreate = () => {
+    setEditMode("create");
+    setEditingUserId(null);
+    setForm({
+      username: "",
+      email: "",
+      password: "",
+      role: "client_viewer",
+      client_id: (currentUser?.client_id as number) || 0,
+      partner_id: (currentUser?.partner_id as number) || 0,
+      active: true,
+    });
+    setError("");
+    setShowModal(true);
+  };
+
+  const openEdit = (item: User) => {
+    setEditMode("edit");
+    setEditingUserId(item.id);
+    setForm({
+      username: item.username || "",
+      email: item.email,
+      password: "",
+      role: item.role,
+      client_id: item.client_id || 0,
+      partner_id: item.partner_id || 0,
+      active: item.active,
+    });
+    setError("");
+    setShowModal(true);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setError("");
@@ -157,24 +198,43 @@ export default function Usuarios() {
           : isSuperadmin && form.role !== "superadmin"
           ? null
           : null;
-      await api.createUser({
-        email: form.email,
-        password: form.password,
-        role: form.role,
-        client_id: payloadClientId,
-        partner_id: payloadPartnerId,
-      });
+      const usernameClean = form.username.trim();
+
+      if (editMode === "create") {
+        await api.createUser({
+          username: usernameClean || undefined,
+          email: form.email,
+          password: form.password,
+          role: form.role,
+          client_id: payloadClientId,
+          partner_id: payloadPartnerId,
+        });
+      } else {
+        if (editingUserId == null) throw new Error("ID do usuário não encontrado");
+        const updatePayload: any = {
+          email: form.email,
+          role: form.role,
+          client_id: payloadClientId,
+          partner_id: payloadPartnerId,
+          active: form.active,
+        };
+        if (usernameClean) updatePayload.username = usernameClean;
+        await api.updateUser(editingUserId, updatePayload);
+      }
       setShowModal(false);
       setForm({
+        username: "",
         email: "",
         password: "",
         role: "client_viewer",
         client_id: (currentUser?.client_id as number) || 0,
         partner_id: (currentUser?.partner_id as number) || 0,
+        active: true,
       });
+      setEditingUserId(null);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao criar usuário");
+      setError(err instanceof Error ? err.message : "Erro ao salvar usuário");
     } finally {
       setSaving(false);
     }
@@ -249,7 +309,7 @@ export default function Usuarios() {
     <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
         <h1 className="page-title" style={{ marginBottom: 0 }}>Usuários</h1>
-        <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Novo usuário</button>
+        <button className="btn btn-primary" onClick={openCreate}>+ Novo usuário</button>
       </div>
 
       <div className="card">
@@ -262,6 +322,7 @@ export default function Usuarios() {
                 <th>Login</th>
                 <th>E-mail</th>
                 <th>Perfil</th>
+                <th>Revendedor vinculado</th>
                 <th>Cliente vinculado</th>
                 <th>Status</th>
                 <th></th>
@@ -270,9 +331,24 @@ export default function Usuarios() {
             <tbody>
               {users.map((item) => (
                 <tr key={item.id}>
-                  <td>{item.email}</td>
+                  <td>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", justifyContent: "space-between" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                        <button
+                          className="btn btn-secondary"
+                          style={{ fontSize: 12, padding: "0.25rem 0.5rem" }}
+                          onClick={() => openEdit(item)}
+                          title="Editar este usuário"
+                        >
+                          ✏️
+                        </button>
+                        <strong>{item.username || item.email}</strong>
+                      </div>
+                    </div>
+                  </td>
                   <td>{item.email}</td>
                   <td><RoleBadge role={item.role} /></td>
+                  <td>{partners.find((p) => p.id === item.partner_id)?.name || (item.partner_id ? `#${item.partner_id}` : "—")}</td>
                   <td>{clients.find((client) => client.id === item.client_id)?.name || (item.client_id ? `#${item.client_id}` : "—")}</td>
                   <td>
                     <span className={`badge ${item.active ? "online" : "offline"}`}>
@@ -280,18 +356,18 @@ export default function Usuarios() {
                     </span>
                   </td>
                   <td>
-                    <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
+                    <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end", flexWrap: "wrap" }}>
                       {isSuperadmin && item.id !== currentUser?.id && (
                         <button className="btn btn-ghost" onClick={() => openResetModal(item)}>
                           Resetar senha
                         </button>
                       )}
-                      {item.id !== currentUser?.id && (
+                      {canDestroyUsers && item.id !== currentUser?.id && (
                         <button className="btn btn-ghost" onClick={() => toggleActive(item)}>
                           {item.active ? "Desativar" : "Ativar"}
                         </button>
                       )}
-                      {item.id !== currentUser?.id && (
+                      {canDestroyUsers && item.id !== currentUser?.id && (
                         <button
                           className="btn btn-ghost"
                           style={{
@@ -318,8 +394,8 @@ export default function Usuarios() {
       {showModal && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Novo usuário</h3>
-            {!isSuperadmin && (
+            <h3>{editMode === "create" ? "Novo usuário" : "Editar usuário"}</h3>
+            {editMode === "create" && !isSuperadmin && (
               <div
                 style={{
                   padding: "0.8rem 1rem",
@@ -337,15 +413,40 @@ export default function Usuarios() {
                 <br /><strong>🧑‍💼 Cliente Final</strong> (só visualiza as máquinas do cliente vinculado)
               </div>
             )}
-            <form onSubmit={handleCreate}>
+            {editMode !== "create" && (
+              <div
+                style={{
+                  padding: "0.8rem 1rem",
+                  marginBottom: "1rem",
+                  borderRadius: "var(--radius)",
+                  background: "rgba(124, 58, 237, 0.08)",
+                  border: "1px solid rgba(124, 58, 237, 0.25)",
+                  color: "#6d28d9",
+                  fontSize: "0.9rem",
+                }}
+              >
+                ℹ️ Ajuste os dados do usuário abaixo. Para trocar a senha, use o botão <strong>"Resetar senha"</strong> na lista.
+              </div>
+            )}
+            <form onSubmit={handleSubmit}>
               <div className="form-group">
-                <label>E-mail / Login *</label>
+                <label>Nome de usuário (login) — opcional</label>
+                <input
+                  value={form.username}
+                  onChange={(e) => setForm({ ...form, username: e.target.value })}
+                  placeholder="Se vazio, usa o e-mail como login"
+                />
+              </div>
+              <div className="form-group">
+                <label>E-mail *</label>
                 <input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
               </div>
-              <div className="form-group">
-                <label>Senha * (mínimo 6 caracteres)</label>
-                <input required type="password" minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
-              </div>
+              {editMode === "create" && (
+                <div className="form-group">
+                  <label>Senha * (mínimo 6 caracteres)</label>
+                  <input required type="password" minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+                </div>
+              )}
               <div className="form-group">
                 <label>Perfil *</label>
                 <select
@@ -356,11 +457,14 @@ export default function Usuarios() {
                   {Object.values(ROLE_DEFS)
                     .filter((role) => {
                       if (isSuperadmin) return true;
-                      // ===== REGRAS JULIO 01/09 NO FRONTEND: =====
-                      // Partner_admin (revendedor): NUNCA vê opcao "Superadmin" e NUNCA vê "Revendedor (Admin)" e NUNCA vê "Gestor do Cliente"!
-                      // Partner_admin PODE criar SOMENTE: Colaborador (partner_staff) + Cliente Final (client_viewer)
+                      // ===== REGRAS JULIO =====
+                      // Partner_admin (revendedor): PODE criar: Colaborador (partner_staff) + Cliente Final (client_viewer) + Gestor (client_manager)
                       if (isPartnerAdmin) {
-                        return role.value === "partner_staff" || role.value === "client_viewer";
+                        return role.value === "partner_staff" || role.value === "client_viewer" || role.value === "client_manager";
+                      }
+                      // Partner_staff (colaborador): PODE criar SOMENTE: Cliente Final (client_viewer) e Gestor (client_manager) — dos clientes do seu revendedor
+                      if (isPartnerStaff) {
+                        return role.value === "client_viewer" || role.value === "client_manager";
                       }
                       return false;
                     })
@@ -401,6 +505,19 @@ export default function Usuarios() {
                   </select>
                 </div>
               )}
+              {editMode !== "create" && (
+                <div className="form-group">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={form.active}
+                      onChange={(e) => setForm({ ...form, active: e.target.checked })}
+                      style={{ marginRight: 6 }}
+                    />
+                    Usuário ativo
+                  </label>
+                </div>
+              )}
               {form.role === "partner_staff" && (
                 <div style={{ padding: "0.6rem 0.9rem", marginBottom: "1rem", borderRadius: "var(--radius)", background: "rgba(37, 99, 235, 0.06)", border: "1px solid rgba(37, 99, 235, 0.2)", color: "#1e40af", fontSize: "0.88rem" }}>
                   ✅ Este colaborador será automaticamente vinculado ao seu revendedor e terá acesso a todos os clientes do seu revendedor, mas NÃO poderá criar outros revendedores.
@@ -417,9 +534,9 @@ export default function Usuarios() {
                 </div>
               )}
               <div className="modal-actions">
-                <button type="button" className="btn btn-ghost" onClick={() => setShowModal(false)}>Cancelar</button>
+                <button type="button" className="btn btn-ghost" onClick={() => { setShowModal(false); setEditingUserId(null); }}>Cancelar</button>
                 <button type="submit" className="btn btn-primary" disabled={saving}>
-                  {saving ? "Salvando..." : "Criar"}
+                  {saving ? "Salvando..." : editMode === "create" ? "Criar" : "Salvar"}
                 </button>
               </div>
             </form>

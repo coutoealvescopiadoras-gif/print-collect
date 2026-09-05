@@ -837,7 +837,17 @@ Qualquer dúvida é só chamar a gente!`}
                 }}
               >
                 <div>
-                  <h3 style={{ margin: 0, fontSize: "1.3rem", display: "flex", alignItems: "center", gap: 8 }}>
+                  <h3 style={{ margin: 0, fontSize: "1.3rem", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    {canEditClients && (
+                      <button
+                        className="btn btn-secondary"
+                        style={{ fontSize: 13, padding: "0.3rem 0.6rem" }}
+                        onClick={() => { handleFecharModalCliente(); handleOpenEdit(clienteModal); }}
+                        title="Editar dados deste cliente (nome, CNPJ, contato, etc.)"
+                      >
+                        ✏️ Editar
+                      </button>
+                    )}
                     🏢 {clienteModal.name}
                     <span className={`badge ${clienteModal.active ? "online" : "offline"}`} style={{ marginLeft: 6 }}>
                       {clienteModal.active ? "Ativo" : "Inativo"}

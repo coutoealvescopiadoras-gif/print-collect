@@ -39,10 +39,13 @@ export default function Revendedores() {
     logo_url: "",
     logo_data: "",
     active: true,
+    admin_email: "",
+    admin_password: "",
+    admin_confirm_password: "",
   });
 
   const resetForm = () => {
-    setForm({ name: "", logo_url: "", logo_data: "", active: true });
+    setForm({ name: "", logo_url: "", logo_data: "", active: true, admin_email: "", admin_password: "", admin_confirm_password: "" });
     setShowUrlField(false);
     setError("");
     setEditingPartnerId(null);
@@ -76,10 +79,26 @@ export default function Revendedores() {
       logo_url: partner.logo_url || "",
       logo_data: partner.logo_data || "",
       active: partner.active,
+      admin_email: "",
+      admin_password: "",
+      admin_confirm_password: "",
     });
     setShowUrlField(!!partner.logo_url && !partner.logo_data);
     setError("");
     setShowModal(true);
+  };
+
+  const generateStrongPassword = () => {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%&";
+    let out = "";
+    for (let i = 0; i < 12; i++) {
+      out += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setForm((curr) => ({ ...curr, admin_password: out, admin_confirm_password: out }));
+    // Exibe alerta para o usuario copiar
+    setTimeout(() => {
+      window.alert("Senha temporária gerada:\n\n" + out + "\n\nCopie essa senha e envie para o responsável pelo revendedor.\n(Ela também já está preenchida no formulário.)");
+    }, 50);
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -120,12 +139,39 @@ export default function Revendedores() {
     setSaving(true);
     setError("");
     try {
-      const payload = {
+      const adminEmail = form.admin_email.trim();
+      const adminPassword = form.admin_password;
+      const adminConfirm = form.admin_confirm_password;
+
+      if (editMode === "create") {
+        if (!adminEmail) {
+          throw new Error("Informe o e-mail do administrador do revendedor.");
+        }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail)) {
+          throw new Error("Formato de e-mail do administrador inválido.");
+        }
+        if (!adminPassword) {
+          throw new Error("Informe a senha do administrador (mínimo 6 caracteres).");
+        }
+        if (adminPassword.length < 6) {
+          throw new Error("Senha do administrador muito curta (mínimo 6 caracteres).");
+        }
+        if (adminPassword !== adminConfirm) {
+          throw new Error("As senhas do administrador não coincidem (campos Senha e Confirmar Senha).");
+        }
+      }
+
+      const payload: any = {
         name: form.name.trim(),
         logo_url: form.logo_url.trim() || null,
         logo_data: form.logo_data.trim() || null,
         active: form.active,
       };
+
+      if (editMode === "create") {
+        payload.admin_email = adminEmail;
+        payload.admin_password = adminPassword;
+      }
 
       if (editMode === "create") {
         await api.createPartner(payload);
@@ -137,6 +183,16 @@ export default function Revendedores() {
       setShowModal(false);
       resetForm();
       await load();
+      if (editMode === "create") {
+        window.alert(
+          "✅ Revendedor criado com sucesso!\n\n" +
+          "Também foi criado automaticamente o usuário administrador dele:\n" +
+          "  • E-mail: " + adminEmail + "\n" +
+          "  • Senha: " + adminPassword + "\n" +
+          "  • Perfil: Revendedor (Admin)\n\n" +
+          "Salve esses dados e envie para o responsável."
+        );
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao salvar revendedor");
     } finally {
@@ -462,7 +518,94 @@ export default function Revendedores() {
                   Para aparecer DENTRO da janela do Inno Setup, continue podendo colocar um arquivo{" "}
                   <code>logo-revendedor.bmp</code> ao lado do <code>PrintCollectSetup.exe</code>.
                 </small>
+
+                <small style={{ color: "var(--text-muted)", marginTop: 10, display: "block" }}>
+                  💡 Dica: se o revendedor não quiser uma logo própria, a interface dele usará automaticamente a marca <strong>Print Collect</strong> (logo genérica da plataforma).
+                </small>
               </div>
+
+              {editMode === "create" && (
+                <>
+                  <div
+                    style={{
+                      marginTop: "1.25rem",
+                      padding: "1rem 1.25rem",
+                      borderRadius: "var(--radius)",
+                      background: "rgba(37, 99, 235, 0.06)",
+                      border: "1px solid rgba(37, 99, 235, 0.25)",
+                      color: "#1e3a8a",
+                      fontSize: "0.92rem",
+                      marginBottom: "1rem",
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                      ➕ Dados de Acesso do Administrador (obrigatório)
+                    </div>
+                    <div style={{ color: "#1e40af", fontSize: "0.88rem" }}>
+                      Preencha abaixo para criar <strong>automaticamente</strong> um usuário administrador
+                      do revendedor (<em>Revendedor Admin</em>). O login será feito pelo e-mail cadastrado.
+                    </div>
+                    <div style={{ color: "#1e40af", fontSize: "0.88rem", marginTop: 6 }}>
+                      ⛔ Esse usuário <strong>NÃO</strong> poderá cadastrar outros revendedores. Ele só
+                      poderá criar colaboradores e clientes finais da sua carteira.
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label>E-mail do administrador *</label>
+                    <input
+                      required
+                      type="email"
+                      value={form.admin_email}
+                      onChange={(e) => setForm({ ...form, admin_email: e.target.value })}
+                      placeholder="Ex: financeiro@ceacopiadoras.com.br"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>
+                      Senha do administrador *{" "}
+                      <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: 13 }}>
+                        (mínimo 6 caracteres)
+                      </span>
+                    </label>
+                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "stretch" }}>
+                      <input
+                        required
+                        type="text"
+                        value={form.admin_password}
+                        onChange={(e) => setForm({ ...form, admin_password: e.target.value })}
+                        placeholder="Digite ou gere uma senha forte"
+                        style={{ flex: 1 }}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={generateStrongPassword}
+                        title="Gerar senha aleatória de 12 caracteres"
+                      >
+                        🔑 Gerar senha
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Confirmar senha *</label>
+                    <input
+                      required
+                      type="text"
+                      value={form.admin_confirm_password}
+                      onChange={(e) => setForm({ ...form, admin_confirm_password: e.target.value })}
+                      placeholder="Repita a mesma senha acima"
+                    />
+                    {form.admin_password && form.admin_confirm_password && form.admin_password !== form.admin_confirm_password && (
+                      <small style={{ color: "var(--danger)", marginTop: 6, display: "block" }}>
+                        ⚠️ As senhas não coincidem.
+                      </small>
+                    )}
+                  </div>
+                </>
+              )}
 
               {editMode !== "create" && (
                 <div className="form-group">
