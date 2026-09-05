@@ -91,23 +91,32 @@ jobs:
           $dir = Split-Path -Parent $found
           echo "$dir" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
-      - name: 4. Rodar SCRIPT OFICIAL de build (.agent/windows/build-setup-x86.ps1)
+      - name: 4. Rodar SCRIPT OFICIAL de build (agent/windows/build-setup-x86.ps1)
         shell: pwsh
         run: |
           Set-Location agent\windows
-          $ErrorActionPreference = "Stop"
+          $ErrorActionPreference = "Continue"
+          Write-Host "PATH atual antes do build:"
+          $env:PATH -split ";" | ForEach-Object { Write-Host "  - $_" }
+          Write-Host ""
+          Write-Host "Python.exe no PATH: "
+          Get-Command python.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+          Write-Host "ISCC.exe no PATH: "
+          Get-Command ISCC.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+          Write-Host ""
           Write-Host "Executando build-setup-x86.ps1..."
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-setup-x86.ps1
-          Write-Host "SCRIPT EXIT CODE: $LASTEXITCODE"
+          $ErrorActionPreference = "Stop"
+          . .\build-setup-x86.ps1
+          Write-Host "SCRIPT FINALIZADO. EXIT CODE LAST: $LASTEXITCODE"
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::error::Script build-setup-x86.ps1 FALHOU com exit code $LASTEXITCODE";
             exit 1;
           }
-          Get-Location
-          Write-Host "Conteudo pasta dist AGENT (apos build):"
-          Get-ChildItem "..\dist" -ErrorAction SilentlyContinue | Format-Table -AutoSize Name,Length
-          Write-Host "Conteudo pasta dist\windows:"
-          Get-ChildItem "..\dist\windows" -ErrorAction SilentlyContinue | Format-Table -AutoSize Name,Length
+          Set-Location (Resolve-Path ..\..)
+          Write-Host "Conteudo pasta agent\dist (apos build):"
+          Get-ChildItem "agent\dist" -ErrorAction SilentlyContinue | Format-Table -AutoSize Name,Length
+          Write-Host "Conteudo pasta agent\dist\windows:"
+          Get-ChildItem "agent\dist\windows" -ErrorAction SilentlyContinue | Format-Table -AutoSize Name,Length
 
       - name: 4.5. GARANTIR que 3 EXEs do agente existem (anti-falha-silenciosa)
         shell: pwsh

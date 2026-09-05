@@ -78,6 +78,14 @@ function Find-PythonX86 {
             if ($LASTEXITCODE -eq 0 -and $test -eq "False") { return $cmd.Source }
         } catch {}
     }
+    $pcmd = Get-Command "python.exe" -ErrorAction SilentlyContinue
+    if ($pcmd) {
+        try {
+            $bits = & $pcmd.Source -c "import struct; import sys; sys.stdout.write(str(struct.calcsize('P')*8))" 2>$null
+            if ($LASTEXITCODE -eq 0 -and $bits -eq "32") { return $pcmd.Source }
+            Write-Host "  (ignora python.exe do PATH = $bits bits, queremos 32)" -ForegroundColor DarkYellow
+        } catch {}
+    }
     return $null
 }
 
@@ -286,15 +294,18 @@ function Find-Iscc {
 
 $iscc = Find-Iscc
 if (-not $iscc) {
-    Write-Host "  Inno Setup nao encontrado. Tentando instalar via winget..."
-    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if ($winget) {
-        & $winget install --id JRSoftware.InnoSetup -e --silent --accept-package-agreements --accept-source-agreements
-        Start-Sleep -Seconds 2
-        $iscc = Find-Iscc
+    Write-Host "  Inno Setup nao encontrado. (Esperado que CI ja tenha instalado no passo 3 do Actions)" -ForegroundColor Yellow
+    $choco = Get-Command choco.exe -ErrorAction SilentlyContinue
+    if ($choco) {
+        try {
+            Write-Host "  Tentando instalar via Chocolatey..."
+            & choco install innosetup -y --no-progress --limitoutput 2>&1 | Out-Null
+            Start-Sleep -Seconds 5
+            $iscc = Find-Iscc
+        } catch {}
     }
 }
-if (-not $iscc) { throw "Nao foi possivel encontrar/instalar Inno Setup. Instale manualmente: https://jrsoftware.org/isdl.php" }
+if (-not $iscc) { throw "Nao foi possivel encontrar Inno Setup (ISCC.exe). Instale manualmente: https://jrsoftware.org/isdl.php" }
 Write-OK "ISCC em: $iscc"
 
 # =============================================================================
