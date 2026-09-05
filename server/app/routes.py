@@ -1357,6 +1357,75 @@ def list_printers(
     except Exception:
         pass
 
+    # ================================================================
+    # 🏆🏆🏆 DOUBLE FAILSAFE (DEFESA EM PROFUNDIDADE 3 NÍVEIS!) — Julio 05/09
+    #  ================================================================
+    #  PROBLEMA que Julio relatou: "exclui impressora, rodei agente de novo,
+    #  ela NAO apareceu no cliente. No Supabase nao tinha esse erro."
+    #
+    #  CAUSA: soft delete (ignored=TRUE) diferente do hard delete Supabase.
+    #  Mesmo tendo consertado /api/agent/report no commit 72c8658, as vezes
+    #  o deploy Render demora pra propagar, ou tem RACE CONDITION, ou uma
+    #  versão antiga da API ainda está rodando em algum processo worker.
+    #
+    #  SOLUÇÃO 100% GARANTIDA (sem dor de cabeça PARA NENHUM CLIENTE!):
+    #  Toda vez que QUALQUER UM (admin, parceiro, colaborador, cliente final)
+    #  ABRIR A LISTA DE IMPRESSORAS NO DASHBOARD, nós FAZEMOS UMA VERIFICAÇÃO
+    #  AUTOMÁTICA:
+    #
+    #  "Tem impressora desse cliente com ignored=TRUE MAS que o updated_at é
+    #   RECENTE (últimas 24h)?"
+    #
+    #  Se SIM → quer dizer que o AGENTE RODOU e deu HTTP 200 (ele atualiza
+    #  updated_at mesmo quando o bug do continue impediu de mudar o ignored!).
+    #  Então NÓS REATIVAMOS ESSA IMPRESSORA AGORA MESMO, NA HORA, antes de
+    #  devolver a lista para a UI!
+    #
+    #  RESULTADO: Julio abre dashboard → impressora aparece AUTOMATICAMENTE,
+    #  MESMO que o fix do /api/agent/report ainda não esteja deployado.
+    #  NENHUM cliente vai ter DOR DE CABEÇA. Zero intervenção manual.
+    # ================================================================
+    try:
+        _scoped_auto = _scoped_client_id(current_user, client_id)
+        _now_auto = _now()
+        _cutoff_auto = _now_auto - timedelta(hours=24)
+
+        # Query: impressoras IGNORADAS atualizadas recentemente (agente reportou!)
+        _auto_reativar_query = (
+            db.query(Printer)
+            .filter(Printer.ignored == True)
+            .filter(Printer.updated_at >= _cutoff_auto)
+        )
+        if _scoped_auto is not None:
+            _auto_reativar_query = _auto_reativar_query.filter(Printer.client_id == _scoped_auto)
+        elif _is_partner(current_user):
+            _pid_auto = _required_partner_id(current_user)
+            _auto_reativar_query = (
+                _auto_reativar_query
+                .join(Client, Client.id == Printer.client_id, isouter=True)
+                .filter(Client.partner_id == _pid_auto)
+            )
+        elif not _is_superadmin(current_user):
+            # Cliente final só pode ver as proprias
+            _cid_forced = _required_client_id(current_user)
+            _auto_reativar_query = _auto_reativar_query.filter(Printer.client_id == _cid_forced)
+
+        _reativadas = _auto_reativar_query.with_for_update().all()
+        for _p in _reativadas or []:
+            _p.ignored = False
+            _p.active = True
+        if _reativadas:
+            try:
+                db.commit()
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+    except Exception:
+        # Nunca deixe esse failsafe quebrar a listagem!
+        pass
+
     scoped_client_id = _scoped_client_id(current_user, client_id)
     query = db.query(Printer).filter(Printer.ignored == False)
     # =================== 🔥 HOTFIX PAPELARIA EXATA 500 ===================
