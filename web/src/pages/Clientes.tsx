@@ -283,7 +283,8 @@ export default function Clientes() {
     setTimeout(() => setPairingCopied(false), 2000);
   };
 
-  const INSTALLER_DOWNLOAD_URL = "https://www.printcollect.com.br/PrintCollectSetup.exe";
+  const INSTALLER_DOWNLOAD_URL = "/api/installer/download";
+  const INSTALLER_FALLBACK = "https://www.printcollect.com.br/PrintCollectSetup.exe";
 
   const buildPairingMessage = (client?: Client) => {
     const theClient = client || activePairingClient;
@@ -893,6 +894,27 @@ Qualquer dúvida é só chamar a gente!`}
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                        <a
+                          href={INSTALLER_DOWNLOAD_URL}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn btn-primary"
+                          style={{
+                            fontSize: 14,
+                            padding: "0.5rem 0.9rem",
+                            fontWeight: 700,
+                            textDecoration: "none",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "0.4rem",
+                            boxShadow: "0 3px 10px rgba(59,130,246,0.3)",
+                            background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                            border: "1px solid rgba(59,130,246,0.5)",
+                          }}
+                          title="Baixa o instalador do agente Windows para enviar para o cliente"
+                        >
+                          ⬇️ <span>Baixar Instalador</span>
+                        </a>
                         <button
                           type="button"
                           className="btn btn-primary"

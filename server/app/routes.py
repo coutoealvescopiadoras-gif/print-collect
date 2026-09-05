@@ -4656,3 +4656,122 @@ def agent_heartbeat(
             pass
         return {"status": "commit_error"}
     return {"status": "ok"}
+
+
+# =========================================================================
+# DOWNLOAD DO INSTALADOR WINDOWS
+# - Superadmin / Partner Admin / Partner Staff (colaboradores) PODEM baixar
+# - Clientes (client_manager / client_viewer) NAO PODEM baixar
+# - Prioridade: 1) Arquivo local web/public/PrintCollectSetup.exe
+#               2) GitHub Actions artifact (nao implementado ainda)
+# =========================================================================
+CAN_DOWNLOAD_SETUP_ROLES = {ROLE_SUPERADMIN, ROLE_PARTNER_ADMIN, ROLE_PARTNER_STAFF}
+
+
+@router.get("/installer/info")
+def installer_info(
+    current_user: User = Depends(_get_current_user_or_403_manage),
+):
+    """Retorna meta informacoes do instalador: tamanho, data, versao e URL do download."""
+    if current_user.role not in CAN_DOWNLOAD_SETUP_ROLES:
+        raise HTTPException(status_code=403, detail="Voce nao tem permissao para baixar o instalador.")
+
+    _cwd = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    local_candidates = [
+        os.path.join(_cwd, "..", "web", "public", "PrintCollectSetup.exe"),
+        os.path.join(_cwd, "web", "public", "PrintCollectSetup.exe"),
+        os.path.join(_cwd, "..", "PrintCollectSetup.exe"),
+        os.path.join(_cwd, "PrintCollectSetup.exe"),
+    ]
+    setup_path = None
+    for cand in local_candidates:
+        if os.path.isfile(cand):
+            setup_path = cand
+            break
+
+    version_file_candidates = [
+        os.path.join(_cwd, "..", "web", "public", "setup-version.txt"),
+        os.path.join(_cwd, "web", "public", "setup-version.txt"),
+    ]
+    version_txt = ""
+    for cand in version_file_candidates:
+        if os.path.isfile(cand):
+            try:
+                with open(cand, "r", encoding="utf-8", errors="ignore") as f:
+                    version_txt = f.read().strip()
+            except Exception:
+                pass
+            if version_txt:
+                break
+
+    if not setup_path:
+        return {
+            "available": False,
+            "file_size_bytes": 0,
+            "file_size_mb": 0,
+            "version": version_txt or "Pendente (build GitHub Actions)",
+            "built_at": None,
+            "download_url": "/api/installer/download",
+            "note": "Setup.exe ainda nao foi buildado pelo GitHub Actions. Rode o workflow na aba Actions do GitHub para gerar."
+        }
+
+    st = os.stat(setup_path)
+    size_bytes = st.st_size
+    built_at = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat()
+    return {
+        "available": True,
+        "file_size_bytes": size_bytes,
+        "file_size_mb": round(size_bytes / (1024 * 1024), 2),
+        "version": version_txt or "latest",
+        "built_at": built_at,
+        "download_url": "/api/installer/download",
+        "note": "Instalador listo. Clique em Baixar para iniciar."
+    }
+
+
+@router.get("/installer/download")
+def installer_download(
+    current_user: User = Depends(_get_current_user_or_403_manage),
+):
+    """Download direto do PrintCollectSetup.exe."""
+    if current_user.role not in CAN_DOWNLOAD_SETUP_ROLES:
+        raise HTTPException(status_code=403, detail="Voce nao tem permissao para baixar o instalador.")
+
+    _cwd = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    local_candidates = [
+        os.path.join(_cwd, "..", "web", "public", "PrintCollectSetup.exe"),
+        os.path.join(_cwd, "web", "public", "PrintCollectSetup.exe"),
+        os.path.join(_cwd, "..", "PrintCollectSetup.exe"),
+        os.path.join(_cwd, "PrintCollectSetup.exe"),
+    ]
+    setup_path = None
+    for cand in local_candidates:
+        if os.path.isfile(cand):
+            setup_path = cand
+            break
+
+    if not setup_path:
+        raise HTTPException(
+            status_code=404,
+            detail="Setup.exe ainda nao buildado. Rode o workflow 'Build Print Collect Setup (Windows x86 32-bit Universal)' na aba Actions do GitHub."
+        )
+
+    def _iter():
+        with open(setup_path, "rb") as f:
+            while True:
+                chunk = f.read(64 * 1024)  # 64KB por vez, nao explode memoria
+                if not chunk:
+                    break
+                yield chunk
+
+    size_bytes = os.stat(setup_path).st_size
+    headers = {
+        "Content-Disposition": "attachment; filename=PrintCollectSetup.exe",
+        "Accept-Ranges": "bytes",
+    }
+    return StreamingResponse(
+        _iter(),
+        media_type="application/vnd.microsoft.portable-executable",
+        headers=headers,
+        status_code=200,
+    )

@@ -1,6 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { api } from "../api";
 
-const INSTALLER_DOWNLOAD_URL = "https://www.printcollect.com.br/PrintCollectSetup.exe";
+type InstallerInfo = {
+  available: boolean;
+  file_size_bytes: number;
+  file_size_mb: number;
+  version: string;
+  built_at: string | null;
+  download_url: string;
+  note: string;
+};
+
+const INSTALLER_DOWNLOAD_URL_FALLBACK = "https://www.printcollect.com.br/PrintCollectSetup.exe";
 
 function copyText(text: string) {
   if (!text) return;
@@ -38,6 +49,50 @@ const TEMPLATE_MESSAGE_NOCODE = [
 export default function Instalador() {
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedMessage, setCopiedMessage] = useState(false);
+  const [info, setInfo] = useState<InstallerInfo | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const DOWNLOAD_URL = info?.available
+    ? info.download_url
+    : INSTALLER_DOWNLOAD_URL_FALLBACK;
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await api.get<InstallerInfo>("/installer/info");
+        if (alive && res && res.data) setInfo(res.data);
+      } catch (err) {
+        // 403: cliente viewer, mantemos null
+        if (alive) setInfo(null);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const TEMPLATE_MESSAGE = [
+    "Olá, tudo bem?",
+    "",
+    "Estamos configurando o monitoramento automático das suas impressoras! 🖨️",
+    "",
+    "Siga esses 3 passos no computador principal da empresa (ou na filial):",
+    "",
+    `1️⃣ BAIXE o instalador no link oficial abaixo e dê DUPLA CLIQUE para instalar:`,
+    `   🔗 ${DOWNLOAD_URL}`,
+    "2️⃣ Ao terminar a instalação, abrirá automaticamente um \"Wizard de Instalação\".",
+    "3️⃣ Quando perguntar, informe SEU CÓDIGO DO CLIENTE (não expira, sempre o mesmo):",
+    "     • Código do Cliente: 🎫 <COLOQUE AQUI O CÓDIGO DO CLIENTE>",
+    "     • Comunidade SNMP: public (só aperte Enter)",
+    "",
+    "💡 Dica: Instalou na matriz, e agora quer instalar também em outras 2 filiais da mesma empresa?",
+    "       Basta rodar o instalador em cada filial e usar o MESMO CÓDIGO DO CLIENTE acima!",
+    "       Todas as impressoras de todas as filiais ficarão cadastradas automaticamente na sua empresa.",
+    "",
+    "Pronto! 😊 Em menos de 2 minutos o sistema encontra sozinho todas as impressoras da sua rede e começa a monitorar nível de toner, contadores e alertas.",
+    "Qualquer dúvida é só chamar a gente!",
+  ].join("\n");
 
   return (
     <>
@@ -50,15 +105,49 @@ export default function Instalador() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1.25rem", flexWrap: "wrap" }}>
           <div style={{ flex: "1 1 420px", minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: 18, marginBottom: "0.5rem", display: "flex", alignItems: "center", gap: "0.6rem" }}>
-              💻 <span>Agente de Monitoramento — Instalador Windows</span>
+              💻 <span>Agente de Monitoramento — Instalador Windows (Universal 32/64 bits ✅)</span>
             </div>
             <div style={{ fontSize: 14.5, color: "var(--text-muted)", marginBottom: "1rem", lineHeight: 1.55 }}>
               Instale este executável no computador principal de cada cliente (ou em cada filial). O agente encontra automaticamente todas as impressoras da rede local e começa a enviar os dados de toner, contadores e status para o painel online.
               <br />
               <strong>Arquivo:</strong> <code style={{ fontSize: 12.5, padding: "1px 5px", borderRadius: 4, background: "rgba(255,255,255,0.06)" }}>PrintCollectSetup.exe</code>
-              <strong style={{ marginLeft: "0.8rem" }}>Tamanho:</strong> ~12,7 MB ·
-              <strong style={{ marginLeft: "0.8rem" }}>Plataforma:</strong> Windows 10/11 64 bits ou Windows Server 2016+
+              {!loading && info?.available ? (
+                <>
+                  <strong style={{ marginLeft: "0.8rem" }}>Tamanho:</strong> ~{info.file_size_mb} MB ·
+                  <strong style={{ marginLeft: "0.8rem" }}>Versão:</strong> {info.version} ·
+                  {info.built_at && (
+                    <span>
+                      <strong style={{ marginLeft: "0.8rem" }}>Buildado em:</strong> {new Date(info.built_at).toLocaleString("pt-BR")} ·
+                    </span>
+                  )}
+                  <strong style={{ marginLeft: "0.4rem" }}>Plataforma:</strong> Windows 10/11 32/64 bits ou Windows Server 2016+
+                </>
+              ) : (
+                <>
+                  <strong style={{ marginLeft: "0.8rem" }}>Tamanho:</strong> ~12-15 MB ·
+                  <strong style={{ marginLeft: "0.8rem" }}>Plataforma:</strong> Windows 10/11 32/64 bits ou Windows Server 2016+
+                </>
+              )}
             </div>
+
+            {/* Aviso SE Setup NAO estiver disponivel ainda */}
+            {!loading && info && !info.available && (
+              <div style={{
+                marginBottom: "1rem",
+                padding: "0.7rem 1rem",
+                borderRadius: 10,
+                background: "rgba(245, 158, 11, 0.1)",
+                border: "1px solid rgba(245, 158, 11, 0.3)",
+                color: "#fbbf24",
+                fontSize: 14,
+              }}>
+                ⚠️ <strong style={{ color: "#fbbf24" }}>Aviso:</strong> {info.note}
+                <br />
+                <span style={{ fontSize: 13, color: "#fcd34d" }}>
+                  Rode o workflow <code style={{ background: "rgba(0,0,0,0.2)", padding: "1px 5px", borderRadius: 4 }}>Build Print Collect Setup (Windows x86 32-bit Universal)</code> na aba <strong>Actions</strong> do seu repositório GitHub. O build leva ~5 minutos.
+                </span>
+              </div>
+            )}
 
             <div style={{
               display: "flex", alignItems: "center", gap: "0.7rem", flexWrap: "wrap",
@@ -66,7 +155,7 @@ export default function Instalador() {
               background: "var(--surface)", border: "1px solid var(--border)",
             }}>
               <a
-                href={INSTALLER_DOWNLOAD_URL}
+                href={DOWNLOAD_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{
@@ -75,19 +164,19 @@ export default function Instalador() {
                   textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis",
                   whiteSpace: "nowrap", flex: "1 1 300px", minWidth: 0,
                 }}
-                title={INSTALLER_DOWNLOAD_URL}
+                title={DOWNLOAD_URL}
               >
-                {INSTALLER_DOWNLOAD_URL}
+                {DOWNLOAD_URL}
               </a>
               <button
                 type="button"
                 className="btn btn-secondary"
-                onClick={() => { copyText(INSTALLER_DOWNLOAD_URL); setCopiedLink(true); setTimeout(() => setCopiedLink(false), 2000); }}
+                onClick={() => { copyText(DOWNLOAD_URL); setCopiedLink(true); setTimeout(() => setCopiedLink(false), 2000); }}
               >
                 {copiedLink ? "✓ Link copiado!" : "📋 Copiar link"}
               </button>
               <a
-                href={INSTALLER_DOWNLOAD_URL}
+                href={DOWNLOAD_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn btn-primary"
@@ -157,7 +246,7 @@ export default function Instalador() {
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={() => { copyText(TEMPLATE_MESSAGE_NOCODE); setCopiedMessage(true); setTimeout(() => setCopiedMessage(false), 2000); }}
+            onClick={() => { copyText(TEMPLATE_MESSAGE); setCopiedMessage(true); setTimeout(() => setCopiedMessage(false), 2000); }}
           >
             {copiedMessage ? "✓ Mensagem copiada!" : "📋 Copiar modelo"}
           </button>
@@ -176,7 +265,7 @@ export default function Instalador() {
             color: "var(--text)",
             fontFamily: "'Segoe UI', system-ui, -apple-system, sans-serif",
           }}>
-{TEMPLATE_MESSAGE_NOCODE}
+{TEMPLATE_MESSAGE}
           </pre>
         </div>
       </div>
