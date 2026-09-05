@@ -3973,12 +3973,24 @@ async def agent_report(
                         .first()
                     )
 
-                # ----- Se encontrou e esta ignorada: PULA -----
+                # ----- Se encontrou e esta ignorada: REATIVA (nao pula!) -----
+                #   🔥 FIX PERMANENTE 05/09 JULIO: Antes tinha `continue` aqui →
+                #      quando usuario APAGAVA (soft delete ignored=TRUE) uma impressora
+                #      e rodava o agente de novo para reinstalar, ela NAO voltava nunca.
+                #      Agora: se a impressora ja existe mas esta ignorada, REATIVAMOS
+                #      E CONTINUAMOS com o UPDATE normal abaixo (mesmo fluxo de ativa).
                 if printer and printer.ignored:
-                    processed_ok += 1
-                    continue
+                    printer.ignored = False
+                    printer.active = True
 
-                # ----- PASSO 2: Se nao achou, VERIFICA se existe IGNORADA igual (NAO CRIA!) -----
+                # ----- PASSO 2: Se nao achou, VERIFICA se existe IGNORADA igual (reativa!) -----
+                #   🔥 FIX PERMANENTE 05/09 JULIO: Antes aqui fazia `if ignored_found: continue`
+                #      → bloqueava completamente reinstalacao de impressora apagada (igual bug
+                #      que Julio relatou "exclui e rodei de novo para instalar ela e nao instalou").
+                #      Motivo a mais vs Supabase: no Supabase era hard delete (sumia a linha).
+                #      Aqui temos soft delete (melhor para historico!), entao SE existir
+                #      impressora IGUAL marcada como ignorada, NOS APEGAMOS NELA E REATIVAMOS
+                #      (em vez de tentar criar outra e tomar UNIQUE constraint error).
                 if not printer:
                     if r_serial:
                         ignored_found = (
@@ -4004,42 +4016,47 @@ async def agent_report(
                             .first()
                         )
                     if ignored_found:
-                        processed_ok += 1
-                        continue
-                    printer = Printer(
-                        client_id=agent.client_id,
-                        ip_address=r_ip,
-                        active=True,
-                        ignored=False,
-                    )
-                    db.add(printer)
-                    # ==============================================================
-                    # 🔥 CRITICO: FLUSH OBRIGATORIO LOGO APOS CRIAR IMPRESSORA NOVA
-                    #    Sem esse flush, printer.id CONTINUA None, e Reading tenta
-                    #    ser criado com printer_id=None.
-                    #    Bug que causava "commit fantasma HTTP200 mas 0 impressoras":
-                    #    Reading com FK NULL violava constraint mas o except
-                    #    em volta rollbackava SILENCIOSAMENTE.
-                    # ==============================================================
-                    try:
-                        db.flush()
-                    except Exception as flush_create_err:
-                        try:
-                            db.rollback()
-                        except Exception:
-                            pass
-                        processed_errors += 1
-                        warnings.append(
-                            f"[FLUSH CREATE PRINTER FAIL] ip={r_ip or '?'} serial={r_serial or ''}: "
-                            + str(flush_create_err)[:220]
+                        # 👇 Encontrei uma impressora igual marcada como apagada:
+                        #    uso ela como "printer" e sigo pro UPDATE abaixo (que
+                        #    vai setar ignored=False de novo e atualizar todos os campos!).
+                        printer = ignored_found
+                        printer.ignored = False
+                        printer.active = True
+                    else:
+                        printer = Printer(
+                            client_id=agent.client_id,
+                            ip_address=r_ip,
+                            active=True,
+                            ignored=False,
                         )
-                        # Recarrega agent (rollback remove da sessao!)
+                        db.add(printer)
+                        # ==============================================================
+                        # 🔥 CRITICO: FLUSH OBRIGATORIO LOGO APOS CRIAR IMPRESSORA NOVA
+                        #    Sem esse flush, printer.id CONTINUA None, e Reading tenta
+                        #    ser criado com printer_id=None.
+                        #    Bug que causava "commit fantasma HTTP200 mas 0 impressoras":
+                        #    Reading com FK NULL violava constraint mas o except
+                        #    em volta rollbackava SILENCIOSAMENTE.
+                        # ==============================================================
                         try:
-                            agent = _get_agent(x_agent_token, db)
-                            agent.last_heartbeat = _now()
-                        except Exception:
-                            pass
-                        continue
+                            db.flush()
+                        except Exception as flush_create_err:
+                            try:
+                                db.rollback()
+                            except Exception:
+                                pass
+                            processed_errors += 1
+                            warnings.append(
+                                f"[FLUSH CREATE PRINTER FAIL] ip={r_ip or '?'} serial={r_serial or ''}: "
+                                + str(flush_create_err)[:220]
+                            )
+                            # Recarrega agent (rollback remove da sessao!)
+                            try:
+                                agent = _get_agent(x_agent_token, db)
+                                agent.last_heartbeat = _now()
+                            except Exception:
+                                pass
+                            continue
 
                 # ----- PASSO 3: APLICA ATUALIZACOES -----
                 #   REGRA CRITICA DE CONTADORES MONOTONICOS (NUNCA DIMINUEM!):
