@@ -1870,42 +1870,6 @@ def create_printer(payload: PrinterCreate, db: Session = Depends(get_db), curren
     data["model"] = _s_strn(data.get("model"), 200)
     data["manufacturer"] = _s_strn(data.get("manufacturer"), 100)
 
-    # ==================================================================
-    # 🔥 NOVA REGRA JULIO 05/09: PROTEÇÃO ÚNICA POR NÚMERO DE SÉRIO
-    #    NÃO PERMITE CRIAR IMPRESSORA NOVA SE O SERIAL JÁ EXISTIR EM
-    #    QUALQUER CLIENTE DO BANCO (evita duplicatas, faturamento errado!).
-    # ==================================================================
-    if data.get("serial_number") and str(data["serial_number"]).strip():
-        _sn = str(data["serial_number"]).strip()
-        dup_printer = (
-            db.query(Printer)
-            .filter(Printer.serial_number.ilike(_sn))
-            .first()
-        )
-        if dup_printer:
-            # Monta mensagem AMIGÁVEL com detalhes da impressora original
-            dup_client_name = "Cliente não encontrado"
-            try:
-                if dup_printer.client:
-                    dup_client_name = str(getattr(dup_printer.client, "name", None) or "Cliente " + str(dup_printer.client_id))
-                else:
-                    _c = db.query(Client).filter(Client.id == dup_printer.client_id).first()
-                    if _c:
-                        dup_client_name = str(getattr(_c, "name", None) or "Cliente " + str(dup_printer.client_id))
-            except Exception:
-                pass
-            dup_model = str(getattr(dup_printer, "model", None) or "Modelo desconhecido")
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Impressora com número de série '{_sn}' JÁ EXISTE no sistema! "
-                    f"Original: Cliente '{dup_client_name}' (id={dup_printer.client_id}), "
-                    f"Modelo: {dup_model}, IP: {dup_printer.ip_address}. "
-                    f"Impossível criar duplicata. Reative a impressora original na dashboard "
-                    f"ou contate o suporte se o número de série estiver incorreto."
-                ),
-            )
-
     printer = Printer(**data)
     db.add(printer)
     try:
@@ -1922,14 +1886,7 @@ def create_printer(payload: PrinterCreate, db: Session = Depends(get_db), curren
         detail = f"Erro ao salvar impressora (IP={data['ip_address']})."
         msg = str(e).lower()
         if "unique" in msg or "duplicate" in msg:
-            # Detecta se foi UNIQUE de SERIAL ou UNIQUE de (client_id, ip_address)
-            if "serial" in msg or "uq_printers_serial" in msg:
-                detail = (
-                    f"Já existe uma impressora com o NÚMERO DE SÉRIE '{data.get('serial_number','')}' "
-                    f"cadastrado no sistema (proteção contra duplicatas). Reative a original."
-                )
-            else:
-                detail = f"Já existe uma impressora cadastrada com este IP={data['ip_address']} neste cliente (duplicata)."
+            detail = f"Já existe uma impressora cadastrada com este IP={data['ip_address']} neste cliente (duplicata)."
         elif "not null" in msg or "non-nullable" in msg:
             detail = f"Campo obrigatório não preenchido ao salvar impressora IP={data['ip_address']}."
         elif "too long" in msg or "data too long" in msg or "value too long" in msg:
@@ -2302,24 +2259,8 @@ def toggle_ignore_printer(
     _require_manage_scope(current_user, printer.client_id)
 
     now = _now()
-    was_ignored = bool(printer.ignored)
     printer.ignored = not printer.ignored
     printer.updated_at = now
-
-    # 🔥 NOVA REGRA JULIO 05/09: Campos de auditoria para diferenciar
-    # "excluído por BUG / sistema" vs "excluído PROPOSITALMENTE por usuário na UI".
-    # - Quando usuário CLICA em EXCLUIR (toggle ignored=True):
-    #     marca deleted_at, deleted_by_user_id, delete_reason=manual_user_delete
-    # - Quando usuário CLICA em REATIVAR (toggle ignored=False):
-    #     limpa os campos (reativa completamente, agente pode coletar de novo)
-    if printer.ignored and not was_ignored:
-        printer.deleted_at = now
-        printer.deleted_by_user_id = current_user.id
-        printer.delete_reason = "manual_user_delete"
-    elif was_ignored and not printer.ignored:
-        printer.deleted_at = None
-        printer.deleted_by_user_id = None
-        printer.delete_reason = None
 
     # Se está SENDO IGNORADA AGORA: fecha todos os alertas abertos dela!
     if printer.ignored:
@@ -4123,80 +4064,38 @@ async def agent_report(
                 r_toner_magenta = _safe_float(reading.toner_magenta)
                 r_toner_yellow = _safe_float(reading.toner_yellow)
 
-                # ----- PASSO 1: busca impressora (PRIORIDADE: SERIAL, depois IP) -----
-                #   🔥 NOVA REGRA JULIO 05/09: Buscar PRIMEIRO por SERIAL (se houver),
-                #      pois serial é o identificador PERMANENTE da impressora. IP pode
-                #      mudar no DHCP, serial NUNCA muda (a menos que troque a placa!).
-                #
+                # ----- PASSO 1: busca impressora por IP OU serial NO CLIENTE ATUAL -----
                 #   NOTA: usamos ILIKE (case-insensitive) no serial e no IP para nao
                 #   duplicar impressoras por diferenca maiuscula/minuscula no SNMP.
                 #   (ex: serial ABC123 na primeira coleta, abc123 na segunda -> 2 impressoras!)
                 _ip_filter = Printer.ip_address.ilike(r_ip) if r_ip else sql_false()
-                _serial_filter = Printer.serial_number.ilike(r_serial) if r_serial else sql_false()
-
-                printer = None
-                # PRIORIDADE 1: Buscar por SERIAL (se temos serial!)
-                if r_serial:
+                printer = (
+                    db.query(Printer)
+                    .filter(
+                        Printer.client_id == agent.client_id,
+                        _ip_filter,
+                    )
+                    .first()
+                )
+                if not printer and r_serial:
                     printer = (
                         db.query(Printer)
                         .filter(
                             Printer.client_id == agent.client_id,
-                            _serial_filter,
-                        )
-                        .first()
-                    )
-                # PRIORIDADE 2: Se nao achou por serial (ou nao tinha serial), buscar por IP
-                if not printer and r_ip:
-                    printer = (
-                        db.query(Printer)
-                        .filter(
-                            Printer.client_id == agent.client_id,
-                            _ip_filter,
+                            Printer.serial_number.ilike(r_serial),
                         )
                         .first()
                     )
 
-                # ==================================================================
-                # 🔥 NOVA REGRA JULIO 05/09: BLOQUEIO DE REATIVAÇÃO DE IMPRESSORA
-                #    EXCLUÍDA MANUALMENTE NA UI PELO USUÁRIO.
-                #
-                #    Regra: Se impressora TEM deleted_at != NULL (não é None)
-                #    → significa que o USUÁRIO a excluiu de propósito na dashboard!
-                #    → NÃO PODEMOS REATIVÁ-LA, NEM GRAVAR COLETA NELA, NEM NADA!
-                #    → PULAR TOTALMENTE essa impressora (continue) e registrar
-                #       um WARNING CLARO para aparecer no --verbose do agente.
-                # ==================================================================
-                if printer and printer.deleted_at is not None:
-                    _dt_str = ""
-                    try:
-                        _d = printer.deleted_at
-                        if _d.tzinfo is None:
-                            _d = _d.replace(tzinfo=timezone.utc)
-                        _dt_str = _d.astimezone(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
-                    except Exception:
-                        _dt_str = str(printer.deleted_at)[:16]
-                    warnings.append(
-                        f"[BLOQUEADO — Impressora Excluída Manualmente] "
-                        f"IP={r_ip or '?'} SN={r_serial or '(sem serial)'}: "
-                        f"Esta impressora foi EXCLUÍDA MANUALMENTE na dashboard "
-                        f"em {_dt_str} (delete_reason='{str(printer.delete_reason or '')}'). "
-                        f"Impressora NÃO foi reativada e NÃO recebeu coleta. "
-                        f"Para voltar a monitorar, reative ela na dashboard ou crie manualmente."
-                    )
-                    processed_errors += 1
-                    continue
-
-                # ----- Se encontrou e esta ignorada (mas NAO deletada manual): REATIVA -----
+                # ----- Se encontrou e esta ignorada: REATIVA (nao pula!) -----
                 #   🔥 FIX PERMANENTE 05/09 JULIO: Antes tinha `continue` aqui →
                 #      quando usuario APAGAVA (soft delete ignored=TRUE) uma impressora
                 #      e rodava o agente de novo para reinstalar, ela NAO voltava nunca.
-                #      Agora: se a impressora ja existe mas esta ignorada (POR BUG / SISTEMA,
-                #      NÃO por exclusão manual que já pulamos acima!), REATIVAMOS
+                #      Agora: se a impressora ja existe mas esta ignorada, REATIVAMOS
                 #      E CONTINUAMOS com o UPDATE normal abaixo (mesmo fluxo de ativa).
                 if printer and printer.ignored:
                     printer.ignored = False
                     printer.active = True
-                    printer.updated_at = now
 
                 # ----- PASSO 2: Se nao achou, VERIFICA se existe IGNORADA igual (reativa!) -----
                 #   🔥 FIX PERMANENTE 05/09 JULIO: Antes aqui fazia `if ignored_found: continue`
@@ -4231,63 +4130,13 @@ async def agent_report(
                             .first()
                         )
                     if ignored_found:
-                        # ==================================================================
-                        # 🔥 NOVA REGRA JULIO 05/09: BLOQUEIO DELETADA MANUALMENTE
-                        #    MESMO que a impressora esteja marcada como ignored,
-                        #    se ela TEM deleted_at != NULL → usuário a excluiu PROPOSITALMENTE!
-                        #    → NÃO REATIVAR, NÃO USAR ELA, NÃO CRIAR NOVA! Pular (continue)!
-                        # ==================================================================
-                        if ignored_found.deleted_at is not None:
-                            _dt_str2 = ""
-                            try:
-                                _d2 = ignored_found.deleted_at
-                                if _d2.tzinfo is None:
-                                    _d2 = _d2.replace(tzinfo=timezone.utc)
-                                _dt_str2 = _d2.astimezone(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
-                            except Exception:
-                                _dt_str2 = str(ignored_found.deleted_at)[:16]
-                            warnings.append(
-                                f"[BLOQUEADO — Impressora Excluída Manualmente (ignored)] "
-                                f"IP={r_ip or '?'} SN={r_serial or '(sem serial)'}: "
-                                f"Impressora id={ignored_found.id} foi EXCLUÍDA MANUALMENTE "
-                                f"na dashboard em {_dt_str2}. NÃO será reativada automaticamente. "
-                                f"Reative na dashboard se quiser voltar a monitorar."
-                            )
-                            processed_errors += 1
-                            continue
-
-                        # 👇 Encontrei uma impressora igual marcada como apagada (SISTEMA / BUG, NÃO manual!):
+                        # 👇 Encontrei uma impressora igual marcada como apagada:
                         #    uso ela como "printer" e sigo pro UPDATE abaixo (que
                         #    vai setar ignored=False de novo e atualizar todos os campos!).
                         printer = ignored_found
                         printer.ignored = False
                         printer.active = True
-                        printer.updated_at = now
                     else:
-                        # ==============================================================
-                        # 🔥 NOVA REGRA JULIO 05/09: ANTES DE CRIAR IMPRESSORA NOVA,
-                        #    checar se o serial (se temos) já existe em OUTRO CLIENTE!
-                        #    Se existir → BLOQUEAR: não criar, pular continue warning.
-                        #    (Isso impede que o agente crie uma impressora COM MESMO
-                        #     SERIAL em cliente diferente por engano!)
-                        # ==============================================================
-                        if r_serial:
-                            cross_client_dup = (
-                                db.query(Printer)
-                                .filter(Printer.serial_number.ilike(r_serial))
-                                .first()
-                            )
-                            if cross_client_dup:
-                                warnings.append(
-                                    f"[BLOQUEADO — Serial duplicado em OUTRO CLIENTE] "
-                                    f"SN={r_serial} IP={r_ip or '?'}: "
-                                    f"Este serial já existe na impressora id={cross_client_dup.id} "
-                                    f"no cliente id={cross_client_dup.client_id}. "
-                                    f"Não foi criada nova impressora para evitar duplicata."
-                                )
-                                processed_errors += 1
-                                continue
-
                         printer = Printer(
                             client_id=agent.client_id,
                             ip_address=r_ip,
@@ -4311,18 +4160,10 @@ async def agent_report(
                             except Exception:
                                 pass
                             processed_errors += 1
-                            flush_msg = str(flush_create_err).lower()
-                            if "serial" in flush_msg or "uq_printers_serial" in flush_msg:
-                                warnings.append(
-                                    f"[CREATE FAIL: Serial Duplicado] ip={r_ip or '?'} "
-                                    f"serial={r_serial or ''}: Proteção UNIQUE serial disparou. "
-                                    f"Não foi possível criar impressora (já existe mesma serial no banco)."
-                                )
-                            else:
-                                warnings.append(
-                                    f"[FLUSH CREATE PRINTER FAIL] ip={r_ip or '?'} serial={r_serial or ''}: "
-                                    + str(flush_create_err)[:220]
-                                )
+                            warnings.append(
+                                f"[FLUSH CREATE PRINTER FAIL] ip={r_ip or '?'} serial={r_serial or ''}: "
+                                + str(flush_create_err)[:220]
+                            )
                             # Recarrega agent (rollback remove da sessao!)
                             try:
                                 agent = _get_agent(x_agent_token, db)
@@ -4336,26 +4177,12 @@ async def agent_report(
                 #   Impressoras reiniciam/firmware bug/erro SNMP reportam 0 ou valor antigo
                 #   de tempos em tempos. Se o valor novo for MENOR que o salvo no banco,
                 #   MANTER o valor MAIOR. Nunca sobreescrever contador para baixo.
-
-                # 🔥 ÚLTIMA CAMADA DE PROTEÇÃO (belt and suspenders): se por ACASO
-                #    chegou aqui com deleted_at != None (impossível depois dos checks
-                #    acima, mas por segurança), bloquear e pular!
-                if printer and printer.deleted_at is not None:
-                    warnings.append(
-                        f"[BLOQUEADO ÚLTIMA CAMADA] Impressora id={printer.id} "
-                        f"IP={r_ip or '?'} SN={r_serial or ''}: marcada deleted_at, "
-                        f"pulando atualização (segurança extra)."
-                    )
-                    processed_errors += 1
-                    continue
-
                 printer.ip_address = r_ip
                 # 🔥 CRITICO: Garante que NENHUMA impressora reportada pelo agente fique
                 #    marcada como ignorada ou inativa (resolvido bug que Julio nao via
                 #    impressora no dashboard pq estava active=True/ignored=True!)
                 printer.active = True
                 printer.ignored = False
-                printer.updated_at = now
                 if r_mac:
                     printer.mac_address = r_mac
                 if r_serial:

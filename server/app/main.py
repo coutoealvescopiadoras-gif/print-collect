@@ -1,5 +1,6 @@
 from fastapi import FastAPI, __version__ as fastapi_version
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.routing import APIRoute as _APIRoute
 from sqlalchemy import text
 
 from app.config import settings
@@ -7,7 +8,104 @@ from app.database import Agent, Client, Location, Printer, User, init_db, Sessio
 from app.routes import router, hash_password
 from app.routes import __name__ as _routes_mod_name  # garantia import deu certo
 import app.schemas as _schemas_mod  # garantia que ReadingOut existe agora (para nao crashar runtime)
-import os, sys, time
+import os, sys, time, warnings
+
+
+_EXPECTED_FASTAPI_MIN = "0.110"
+_EXPECTED_FASTAPI_MAX = "0.116"
+def _ver_supported() -> bool:
+    try:
+        parts = [int(x) for x in fastapi_version.split(".")[:3]]
+        lo = [int(x) for x in _EXPECTED_FASTAPI_MIN.split(".")]
+        hi = [int(x) for x in _EXPECTED_FASTAPI_MAX.split(".")]
+        ok_lo = all(a >= b for a, b in zip(parts, lo)) or parts >= lo[: len(parts)]
+        ok_hi = parts <= hi[: len(parts)]
+        return ok_lo and ok_hi
+    except Exception:
+        return False
+
+
+if not _ver_supported():
+    warnings.warn(
+        f"FASTAPI VERSION MISMATCH! Expectada ~{_EXPECTED_FASTAPI_MIN}-{_EXPECTED_FASTAPI_MAX}, "
+        f"rodando {fastapi_version}. Usando workaround de registro de rotas robusto.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+
+
+def _robust_include_router(app: FastAPI, r) -> int:
+    """Registra rotas de um APIRouter SEM depender do app.include_router.
+       Compativel com FastAPI 0.110 - 0.145+ e Starlette 0.38 - 1.x.
+       Contorna bug de include_router em versoes novas/desatualizadas.
+       Retorna nro de rotas efetivamente adicionadas.
+    """
+    added = 0
+    sub = getattr(r, "routes", None) or []
+    _SAFE_BASE_KWARGS = (
+        "response_model",
+        "status_code",
+        "tags",
+        "summary",
+        "description",
+        "dependencies",
+        "response_class",
+        "include_in_schema",
+        "deprecated",
+        "response_model_include",
+        "response_model_exclude",
+        "response_model_by_alias",
+        "response_model_exclude_unset",
+        "response_model_exclude_defaults",
+        "response_model_exclude_none",
+        "responses",
+        "name",
+        "operation_id",
+    )
+    for entry in sub:
+        try:
+            path = getattr(entry, "path", None)
+            methods = getattr(entry, "methods", None) or set()
+            endpoint = getattr(entry, "endpoint", None)
+            if not path or not endpoint:
+                continue
+            methods_clean = set()
+            for m in methods:
+                if isinstance(m, str):
+                    methods_clean.add(m.upper())
+            if not methods_clean:
+                methods_clean = {"GET"}
+            kwargs = {}
+            for attr in _SAFE_BASE_KWARGS:
+                v = getattr(entry, attr, None)
+                if v is not None:
+                    kwargs[attr] = v
+            try:
+                app.add_api_route(path, endpoint, methods=sorted(methods_clean), **kwargs)
+                added += 1
+            except TypeError as te:
+                msg = str(te).lower()
+                bad_keys = set()
+                if "unexpected keyword argument" in msg:
+                    import re
+                    for m in re.finditer(r"'([a-zA-Z_][a-zA-Z0-9_]*)'", msg):
+                        bad_keys.add(m.group(1))
+                filtered = {k: v for k, v in kwargs.items() if k not in bad_keys}
+                try:
+                    app.add_api_route(path, endpoint, methods=sorted(methods_clean), **filtered)
+                    added += 1
+                except Exception as ex_inner:
+                    try:
+                        app.add_api_route(path, endpoint, methods=sorted(methods_clean))
+                        added += 1
+                    except Exception as ex_final:
+                        print(
+                            f"[WARN] Falha ao registrar rota {sorted(methods_clean)} {path}: {ex_inner} / {ex_final}",
+                            file=sys.stderr,
+                        )
+        except Exception as ex:
+            print(f"[WARN] Erro processando entrada rota: {ex}", file=sys.stderr)
+    return added
 
 
 def seed_demo_data() -> None:
@@ -126,7 +224,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    app.include_router(router)
+    _api_routes_added = _robust_include_router(app, router)
 
     @app.get("/", include_in_schema=False)
     @app.head("/", include_in_schema=False)
@@ -177,15 +275,22 @@ def create_app() -> FastAPI:
             db_status = "error"
             db_error = str(e)[:500]
         rotas = []
+        rotas_api = 0
         for r in app.routes:
             if hasattr(r, "path") and hasattr(r, "methods"):
-                rotas.append(f"{sorted(list(r.methods or set()))!s} {r.path!s}")
+                p = str(getattr(r, "path", ""))
+                if p.startswith("/api"):
+                    rotas_api += 1
+                rotas.append(f"{sorted(list(r.methods or set()))!s} {p!s}")
         return {
             "status": "ok",
             "initialized_at_unix": int(time.time()),
             "python_version": sys.version.split()[0],
             "fastapi_version": fastapi_version,
+            "fastapi_supported": _ver_supported(),
             "routes_total": len(app.routes),
+            "routes_api_count": rotas_api,
+            "api_routes_added_by_workaround": _api_routes_added,
             "cors_origins": settings.cors_origins[:300],
             "cors_regex_len": len(settings.cors_origin_regex or ""),
             "database_type": db_status,
