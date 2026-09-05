@@ -355,15 +355,50 @@ def _ensure_client_code_column(target_engine) -> None:
 
 
 def init_db() -> None:
+    target = _get_migration_engine() if settings.is_postgres else engine
     if settings.auto_create_tables:
-        target = _get_migration_engine() if settings.is_postgres else engine
-        Base.metadata.create_all(bind=target)
+        try:
+            Base.metadata.create_all(bind=target)
+        except Exception as _create_all_error:
+            import sys
+            print(
+                f"[WARN-MIGRATION] Base.metadata.create_all falhou (tabelas provavelmente ja existem): {_create_all_error!r}",
+                file=sys.stderr,
+            )
+    # Sempre rodar todos os ensures de colunas/indices, independente de create_all
+    # (pois create_all NAO adiciona colunas a tabelas que ja existem!)
+    try:
         _ensure_user_multitenancy_columns(target)
+    except Exception as e:
+        print(f"[WARN-MIGRATION] _ensure_user_multitenancy_columns: {e!r}", file=sys.stderr)
+    try:
         _ensure_partner_multitenancy_columns(target)
+    except Exception as e:
+        print(f"[WARN-MIGRATION] _ensure_partner_multitenancy_columns: {e!r}", file=sys.stderr)
+    try:
         _ensure_agent_pairing_columns(target)
+    except Exception as e:
+        print(f"[WARN-MIGRATION] _ensure_agent_pairing_columns: {e!r}", file=sys.stderr)
+    try:
         _ensure_client_code_column(target)
+    except Exception as e:
+        print(f"[WARN-MIGRATION] _ensure_client_code_column: {e!r}", file=sys.stderr)
+    try:
         _ensure_printer_serial_unique(target)
+    except Exception as e:
+        print(f"[WARN-MIGRATION] _ensure_printer_serial_unique: {e!r}", file=sys.stderr)
+    try:
         _ensure_printer_manual_delete_columns(target)
+    except Exception as e:
+        print(f"[WARN-MIGRATION] _ensure_printer_manual_delete_columns: {e!r}", file=sys.stderr)
+    try:
+        _ensure_printer_ignored_column(target)
+    except Exception as e:
+        print(f"[WARN-MIGRATION] _ensure_printer_ignored_column: {e!r}", file=sys.stderr)
+    try:
+        _ensure_historico_coletas_missing_fks(target)
+    except Exception as e:
+        print(f"[WARN-MIGRATION] _ensure_historico_coletas_missing_fks: {e!r}", file=sys.stderr)
 
 
 def _ensure_printer_serial_unique(target_engine) -> None:
@@ -396,20 +431,86 @@ def _ensure_printer_manual_delete_columns(target_engine) -> None:
         return
     existing_columns = {column["name"] for column in inspector.get_columns("printers")}
     statements: list[str] = []
+    if "ignored" not in existing_columns:
+        statements.append(
+            "ALTER TABLE printers ADD COLUMN IF NOT EXISTS ignored BOOLEAN NOT NULL DEFAULT FALSE"
+        )
     if "deleted_at" not in existing_columns:
-        statements.append("ALTER TABLE printers ADD COLUMN deleted_at TIMESTAMP WITH TIME ZONE NULL")
+        statements.append(
+            "ALTER TABLE printers ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE NULL"
+        )
     if "deleted_by_user_id" not in existing_columns:
-        statements.append("ALTER TABLE printers ADD COLUMN deleted_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL")
+        statements.append(
+            "ALTER TABLE printers ADD COLUMN IF NOT EXISTS deleted_by_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL"
+        )
     if "delete_reason" not in existing_columns:
-        statements.append("ALTER TABLE printers ADD COLUMN delete_reason VARCHAR(200) NULL")
+        statements.append(
+            "ALTER TABLE printers ADD COLUMN IF NOT EXISTS delete_reason VARCHAR(200) NULL"
+        )
+    if "mac_address" not in existing_columns:
+        statements.append(
+            "ALTER TABLE printers ADD COLUMN IF NOT EXISTS mac_address VARCHAR(20) NULL"
+        )
     if not statements:
+        # Apenas garantir o indice da coluna ignored
+        with target_engine.begin() as connection:
+            try:
+                connection.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_printers_ignored ON printers(ignored)"
+                ))
+            except Exception:
+                pass
         return
     with target_engine.begin() as connection:
         for statement in statements:
             try:
                 connection.execute(text(statement))
-            except Exception:
-                pass
+            except Exception as e:
+                import sys
+                print(f"[WARN-MIGRATION] stmt falhou (ignorando): {statement[:80]}... -> {e!r}", file=sys.stderr)
+        # Garante valores default para linhas existentes (NULL -> FALSE para colunas boolean)
+        try:
+            connection.execute(text("UPDATE printers SET ignored = FALSE WHERE ignored IS NULL"))
+        except Exception:
+            pass
+        try:
+            connection.execute(text("UPDATE printers SET active = TRUE WHERE active IS NULL"))
+        except Exception:
+            pass
+        try:
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_printers_ignored ON printers(ignored)"
+            ))
+        except Exception:
+            pass
+
+
+def _ensure_printer_ignored_column(target_engine) -> None:
+    """Wrapper retroativo. Atualmente incluso em _ensure_printer_manual_delete_columns."""
+    _ensure_printer_manual_delete_columns(target_engine)
+
+
+def _ensure_historico_coletas_missing_fks(target_engine) -> None:
+    """Garante que a tabela historico_coletas exista (create_all acima ja faz) e
+       que nao tenhamos constraints quebradas. Op segura: nada por enquanto,
+       apenas garante que a tabela exista via Base.metadata.create_all."""
+    inspector = inspect(target_engine)
+    table_names = set(inspector.get_table_names())
+    if "historico_coletas" in table_names:
+        # Criar indices caso nao existam
+        with target_engine.begin() as connection:
+            for stmt in (
+                "CREATE INDEX IF NOT EXISTS ix_historico_coletas_data_registro ON historico_coletas(data_registro)",
+                "CREATE INDEX IF NOT EXISTS ix_historico_coletas_printer_id ON historico_coletas(printer_id)",
+                "CREATE INDEX IF NOT EXISTS ix_historico_coletas_cliente_id ON historico_coletas(cliente_id)",
+                "CREATE INDEX IF NOT EXISTS ix_historico_coletas_ip_impressora ON historico_coletas(ip_impressora)",
+                "CREATE INDEX IF NOT EXISTS ix_historico_coletas_status_coleta ON historico_coletas(status_coleta)",
+                "CREATE INDEX IF NOT EXISTS ix_historico_coletas_tipo_contador ON historico_coletas(tipo_contador)",
+            ):
+                try:
+                    connection.execute(text(stmt))
+                except Exception:
+                    pass
 
 
 def get_db():
