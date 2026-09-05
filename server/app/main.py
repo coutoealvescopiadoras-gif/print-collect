@@ -3,8 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.config import settings
-from app.database import Agent, Client, Location, Printer, init_db, SessionLocal, engine
-from app.routes import router
+from app.database import Agent, Client, Location, Printer, User, init_db, SessionLocal, engine
+from app.routes import router, hash_password
 from app.routes import __name__ as _routes_mod_name  # garantia import deu certo
 import app.schemas  # garantia que ReadingOut existe agora (para nao crashar runtime)
 import os, sys, time
@@ -13,52 +13,69 @@ import os, sys, time
 def seed_demo_data() -> None:
     db = SessionLocal()
     try:
-        if db.query(Client).count() > 0:
-            return
+        # ----- PASSO 1: Superadmins Julio + Financeiro (banco novo, tabela users vazia) -----
+        if db.query(User).count() == 0:
+            db.add(User(
+                username="julio",
+                email="Julio@ceacopiadoras.com.br",
+                hashed_password=hash_password("CeaJulio2026!"),
+                role="superadmin",
+                active=True,
+            ))
+            db.add(User(
+                username="financeiro",
+                email="financeiro@ceacopiadoras.com.br",
+                hashed_password=hash_password("CeaFinancas2026!"),
+                role="superadmin",
+                active=True,
+            ))
+            db.flush()
 
-        client = Client(
-            name="Empresa Exemplo Ltda",
-            cnpj="12.345.678/0001-90",
-            contact_name="João Silva",
-            contact_email="joao@empresa.com",
-            contact_phone="(11) 99999-0000",
-            address="Av. Paulista, 1000 - São Paulo/SP",
-        )
-        db.add(client)
-        db.flush()
-
-        location = Location(
-            client_id=client.id,
-            name="Matriz",
-            sector="Administrativo",
-            responsible="Maria Santos",
-        )
-        db.add(location)
-        db.flush()
-
-        db.add(
-            Printer(
-                client_id=client.id,
-                location_id=location.id,
-                ip_address="192.168.1.100",
-                serial_number="DEMO001",
-                model="HP LaserJet Pro M404dn",
-                manufacturer="HP",
-                status="online",
-                pages_total=15420,
-                pages_bw=15420,
-                pages_color=0,
-                toner_black=45.0,
+        # ----- PASSO 2: Dados exemplo (só se realmente nada foi cadastrado ainda) -----
+        if db.query(Client).count() == 0:
+            client = Client(
+                name="Empresa Exemplo Ltda",
+                cnpj="12.345.678/0001-90",
+                contact_name="João Silva",
+                contact_email="joao@empresa.com",
+                contact_phone="(11) 99999-0000",
+                address="Av. Paulista, 1000 - São Paulo/SP",
             )
-        )
+            db.add(client)
+            db.flush()
 
-        db.add(
-            Agent(
+            location = Location(
                 client_id=client.id,
-                name="Agente Matriz",
-                api_token=settings.api_key,
+                name="Matriz",
+                sector="Administrativo",
+                responsible="Maria Santos",
             )
-        )
+            db.add(location)
+            db.flush()
+
+            db.add(
+                Printer(
+                    client_id=client.id,
+                    location_id=location.id,
+                    ip_address="192.168.1.100",
+                    serial_number="DEMO001",
+                    model="HP LaserJet Pro M404dn",
+                    manufacturer="HP",
+                    status="online",
+                    pages_total=15420,
+                    pages_bw=15420,
+                    pages_color=0,
+                    toner_black=45.0,
+                )
+            )
+
+            db.add(
+                Agent(
+                    client_id=client.id,
+                    name="Agente Matriz",
+                    api_token=settings.api_key,
+                )
+            )
 
         db.commit()
     finally:
@@ -68,8 +85,7 @@ def seed_demo_data() -> None:
 def _safe_init_db() -> None:
     try:
         init_db()
-        if not settings.is_postgres:
-            seed_demo_data()
+        seed_demo_data()
     except Exception as e:
         import traceback
         import sys

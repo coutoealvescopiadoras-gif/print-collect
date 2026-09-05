@@ -229,6 +229,10 @@ if settings.database_url.startswith("sqlite"):
     _engine_kwargs["connect_args"] = {"check_same_thread": False}
 elif True:
     _engine_kwargs["poolclass"] = NullPool
+    _engine_kwargs["connect_args"] = {
+        "connect_timeout": 30,
+        "prefer_ipv4": True,
+    }
 
 engine = create_engine(_db_url, **_engine_kwargs)
 SessionLocal = sessionmaker(
@@ -244,7 +248,15 @@ _migration_engine = None
 def _get_migration_engine():
     global _migration_engine
     if _migration_engine is None:
-        _migration_engine = create_engine(_mig_url, pool_pre_ping=True)
+        _migration_engine = create_engine(
+            _mig_url,
+            pool_pre_ping=True,
+            poolclass=NullPool,
+            connect_args={
+                "connect_timeout": 30,
+                "prefer_ipv4": True,
+            },
+        )
     return _migration_engine
 
 
