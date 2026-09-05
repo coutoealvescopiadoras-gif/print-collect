@@ -4470,40 +4470,141 @@ async def agent_report(
             # 🔥🔥🔥 NOVA VALIDACAO OBRIGATORIA POS-COMMIT (ANTI-FANTASMA!)
             #    Problema: _commit_ok=True / sem excecao, mas nao gravou
             #    NADA no banco (Render NullPool + psycopg3 silent rollback).
-            #    Solucao: ABRE SESSAO NOVA, VERIFICA DE VERDADe no banco se
-            #    as impressoras READINGS existem para esse cliente.
-            #    Se COUNT = 0 => FALLBACK NUCLEAR OBRIGATORIO, mesmo que
-            #    _commit_ok=True! (Julio bug 05/09: RICOH SP4510SF nao aparecia)
+            #    Solucao 1: ABRE SESSAO NOVA, VERIFICA se COUNT<1 impressoras
+            #    Solucao 2 (NOVO ULTRA-NUCLEAR RAW SQL): SE COUNT<1, GRAVA TUDO
+            #       NOVAMENTE VIA engine.begin() + RAW SQL, SEM ORM, SEM sessao!
+            #    Julio bug 05/09: RICOH SP4510SF nao aparecia no banco
             # ==============================================================
             try:
-                from sqlalchemy.orm import sessionmaker as _smv
-                from sqlalchemy import func as _fnv
-                _SLv = _smv(autocommit=False, autoflush=False, bind=engine, expire_on_commit=False)
-                _dbv = _SLv()
+                from sqlalchemy import text as _rtxt
+                _cnt_printers_after_raw = 0
                 try:
-                    _cnt_printers_after = 0
-                    if agent and getattr(agent, "client_id", None):
-                        _cnt_printers_after = _dbv.query(_fnv.count(Printer.id)).filter(
-                            Printer.client_id == int(agent.client_id),
-                            Printer.ignored == False
-                        ).scalar() or 0
-                    _verdict_empty = (
-                        (processed_ok > 0 and total_readings > 0) and
-                        (_cnt_printers_after is None or _cnt_printers_after < 1)
+                    with engine.connect() as _conn_raw:
+                        if agent and getattr(agent, "client_id", None):
+                            _r = _conn_raw.execute(
+                                _rtxt("SELECT COUNT(id) FROM printers WHERE client_id = :cid AND ignored = FALSE"),
+                                {"cid": int(agent.client_id)}
+                            ).scalar_one_or_none()
+                            _cnt_printers_after_raw = int(_r or 0)
+                except Exception:
+                    _cnt_printers_after_raw = -1  # nao conseguiu checar = considera vazio
+
+                _verdict_empty_raw = (
+                    (processed_ok > 0 and total_readings > 0) and
+                    (_cnt_printers_after_raw is None or _cnt_printers_after_raw < 1)
+                )
+                if _verdict_empty_raw:
+                    warnings.append(
+                        f"[POS-COMMIT ULTRA-NUCLEAR RAW SQL START] processed_ok={processed_ok} "
+                        + f"mas count printers={_cnt_printers_after_raw}. "
+                        + "Gravando via engine.begin() RAW SQL diretamente..."
                     )
-                    if _verdict_empty:
-                        warnings.append(
-                            f"[POS-COMMIT CHECK FALHOU] processed_ok={processed_ok} "
-                            + f"mas banco COUNT printers={_cnt_printers_after}. "
-                            + "FORCANDO FALLBACK NUCLEAR (commit fantasma!)"
-                        )
-                        raise Exception("[FORCAR FALLBACK NUCLEAR POS COMMIT VERIFICACAO]")
-                finally:
-                    try: _dbv.close()
-                    except Exception: pass
-            except Exception as _forca_fallback:
-                # Repassa pro fallback nuclear abaixo via except
-                raise
+                    _cli_id = int(agent.client_id) if agent and getattr(agent, "client_id", None) else None
+                    if _cli_id:
+                        with engine.begin() as _conn:
+                            for reading in payload.readings:
+                                _ri = _s_ip(getattr(reading, "ip_address", None))
+                                if not _ri:
+                                    continue
+                                _rs = _s_strn(getattr(reading, "serial_number", None), 100)
+                                _rmo = _s_strn(getattr(reading, "model", None), 200)
+                                _rma = _s_strn(getattr(reading, "manufacturer", None), 100)
+                                _rst = _s_strn(getattr(reading, "status", None), 50) or "ok"
+                                _rpt = _safe_int(getattr(reading, "pages_total", 0), 0)
+                                _rpb = _safe_int(getattr(reading, "pages_bw", 0), 0)
+                                _rpc = _safe_int(getattr(reading, "pages_color", 0), 0)
+                                _rtb = _safe_float(getattr(reading, "toner_black", None))
+                                _rtc = _safe_float(getattr(reading, "toner_cyan", None))
+                                _rtm = _safe_float(getattr(reading, "toner_magenta", None))
+                                _rty = _safe_float(getattr(reading, "toner_yellow", None))
+                                _now_dt = _now()
+                                _printer_id = None
+                                _row = None
+                                # BUSCA EXISTENTE
+                                if _rs:
+                                    _row = _conn.execute(
+                                        _rtxt("SELECT id, pages_total, pages_bw, pages_color FROM printers WHERE client_id=:cid AND (ip_address ILIKE :ip OR serial_number ILIKE :sn) LIMIT 1"),
+                                        {"cid": _cli_id, "ip": _ri, "sn": _rs}
+                                    ).mappings().first()
+                                else:
+                                    _row = _conn.execute(
+                                        _rtxt("SELECT id, pages_total, pages_bw, pages_color FROM printers WHERE client_id=:cid AND ip_address ILIKE :ip LIMIT 1"),
+                                        {"cid": _cli_id, "ip": _ri}
+                                    ).mappings().first()
+                                _saved_t = int((_row or {}).get("pages_total") or 0)
+                                _saved_b = int((_row or {}).get("pages_bw") or 0)
+                                _saved_c = int((_row or {}).get("pages_color") or 0)
+                                _final_t = max(_rpt, _saved_t)
+                                _final_b = max(_rpb, _saved_b)
+                                _final_c = max(_rpc, _saved_c)
+                                if not _rma or _rma == "":
+                                    _rma = None
+                                if not _rmo or _rmo == "":
+                                    _rmo = None
+                                if not _rs or _rs == "":
+                                    _rs = None
+
+                                if _row is None:
+                                    _ins = _conn.execute(
+                                        _rtxt("""
+                                            INSERT INTO printers (client_id, ip_address, mac_address, serial_number, model, manufacturer,
+                                            status, pages_total, pages_bw, pages_color, toner_black, toner_cyan, toner_magenta,
+                                            toner_yellow, last_seen, created_at, updated_at, active, ignored)
+                                            VALUES (:cid, :ip, NULL, :sn, :model, :manu, :st, :pt, :pb, :pc, :tb, :tc, :tm, :ty,
+                                            :ls, :ca, :ua, TRUE, FALSE)
+                                            RETURNING id
+                                        """),
+                                        {
+                                            "cid": _cli_id, "ip": _ri, "sn": _rs, "model": _rmo, "manu": _rma,
+                                            "st": _rst, "pt": _final_t, "pb": _final_b, "pc": _final_c,
+                                            "tb": _rtb, "tc": _rtc, "tm": _rtm, "ty": _rty,
+                                            "ls": _now_dt, "ca": _now_dt, "ua": _now_dt
+                                        }
+                                    )
+                                    _printer_id = int(_ins.scalar_one())
+                                    warnings.append(f"[ULTRA-NUCLEAR OK] INSERT printer id={_printer_id} model={_rmo or ''} ip={_ri} pages={_final_t}")
+                                else:
+                                    _printer_id = int(_row["id"])
+                                    _conn.execute(
+                                        _rtxt("""
+                                            UPDATE printers SET ip_address=:ip,
+                                            serial_number=COALESCE(:sn, serial_number),
+                                            model=COALESCE(:model, model),
+                                            manufacturer=COALESCE(:manu, manufacturer),
+                                            status=:st,
+                                            pages_total=GREATEST(COALESCE(pages_total,0), :pt),
+                                            pages_bw=GREATEST(COALESCE(pages_bw,0), :pb),
+                                            pages_color=GREATEST(COALESCE(pages_color,0), :pc),
+                                            toner_black=:tb, toner_cyan=:tc, toner_magenta=:tm, toner_yellow=:ty,
+                                            last_seen=:ls, updated_at=:ua
+                                            WHERE id=:pid
+                                        """),
+                                        {
+                                            "pid": _printer_id, "ip": _ri, "sn": _rs, "model": _rmo, "manu": _rma,
+                                            "st": _rst, "pt": _final_t, "pb": _final_b, "pc": _final_c,
+                                            "tb": _rtb, "tc": _rtc, "tm": _rtm, "ty": _rty,
+                                            "ls": _now_dt, "ua": _now_dt
+                                        }
+                                    )
+                                    warnings.append(f"[ULTRA-NUCLEAR OK] UPDATE printer id={_printer_id} model={_rmo or ''} pages={_final_t}")
+                                # INSERT READING
+                                _conn.execute(
+                                    _rtxt("""
+                                        INSERT INTO readings (printer_id, pages_total, pages_bw, pages_color, toner_black,
+                                        toner_cyan, toner_magenta, toner_yellow, status, collected_at, agent_ip_address)
+                                        VALUES (:pid, :pt, :pb, :pc, :tb, :tc, :tm, :ty, :st, :ca, :rip)
+                                    """),
+                                    {
+                                        "pid": _printer_id,
+                                        "pt": _final_t, "pb": _final_b, "pc": _final_c,
+                                        "tb": _rtb, "tc": _rtc, "tm": _rtm, "ty": _rty,
+                                        "st": _rst, "ca": _now_dt,
+                                        "rip": None
+                                    }
+                                )
+                warnings.append("[ULTRA-NUCLEAR RAW SQL FINALIZADO] commit nativo engine.begin() aplicado.")
+            except Exception as _fallback_needed:
+                raise Exception(f"[FORCAR FALLBACK NUCLEAR POS CHECK ULTRA RAW] {str(_fallback_needed)[:300]}")
         except Exception as _fallback_needed:
             # ==============================================================
             # 🔥 FALLBACK NUCLEAR: Session.commit() nao grava (Vercel bug)
