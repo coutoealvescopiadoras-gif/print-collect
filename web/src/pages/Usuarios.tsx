@@ -113,7 +113,6 @@ export default function Usuarios() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [resetPassword, setResetPassword] = useState("");
   const [form, setForm] = useState({
-    username: "",
     email: "",
     password: "",
     role: "client_viewer" as RoleValue,
@@ -153,7 +152,6 @@ export default function Usuarios() {
     setEditMode("create");
     setEditingUserId(null);
     setForm({
-      username: "",
       email: "",
       password: "",
       role: "client_viewer",
@@ -169,7 +167,6 @@ export default function Usuarios() {
     setEditMode("edit");
     setEditingUserId(item.id);
     setForm({
-      username: item.username || "",
       email: item.email,
       password: "",
       role: item.role,
@@ -198,11 +195,8 @@ export default function Usuarios() {
           : isSuperadmin && form.role !== "superadmin"
           ? null
           : null;
-      const usernameClean = form.username.trim();
-
       if (editMode === "create") {
         await api.createUser({
-          username: usernameClean || undefined,
           email: form.email,
           password: form.password,
           role: form.role,
@@ -218,12 +212,10 @@ export default function Usuarios() {
           partner_id: payloadPartnerId,
           active: form.active,
         };
-        if (usernameClean) updatePayload.username = usernameClean;
         await api.updateUser(editingUserId, updatePayload);
       }
       setShowModal(false);
       setForm({
-        username: "",
         email: "",
         password: "",
         role: "client_viewer",
@@ -319,8 +311,7 @@ export default function Usuarios() {
           <table>
             <thead>
               <tr>
-                <th>Login</th>
-                <th>E-mail</th>
+                <th>E-mail / Login</th>
                 <th>Perfil</th>
                 <th>Revendedor vinculado</th>
                 <th>Cliente vinculado</th>
@@ -342,11 +333,10 @@ export default function Usuarios() {
                         >
                           ✏️
                         </button>
-                        <strong>{item.username || item.email}</strong>
+                        <strong>{item.email}</strong>
                       </div>
                     </div>
                   </td>
-                  <td>{item.email}</td>
                   <td><RoleBadge role={item.role} /></td>
                   <td>{partners.find((p) => p.id === item.partner_id)?.name || (item.partner_id ? `#${item.partner_id}` : "—")}</td>
                   <td>{clients.find((client) => client.id === item.client_id)?.name || (item.client_id ? `#${item.client_id}` : "—")}</td>
@@ -430,16 +420,8 @@ export default function Usuarios() {
             )}
             <form onSubmit={handleSubmit}>
               <div className="form-group">
-                <label>Nome de usuário (login) — opcional</label>
-                <input
-                  value={form.username}
-                  onChange={(e) => setForm({ ...form, username: e.target.value })}
-                  placeholder="Se vazio, usa o e-mail como login"
-                />
-              </div>
-              <div className="form-group">
-                <label>E-mail *</label>
-                <input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+                <label>E-mail * (login do usuário)</label>
+                <input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="ex.: financeiro@ceacopiadoras.com.br" />
               </div>
               {editMode === "create" && (
                 <div className="form-group">
