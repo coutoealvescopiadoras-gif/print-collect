@@ -779,7 +779,7 @@ def cmd_pair(args: argparse.Namespace) -> int:
     server_url = (args.server_url or "").strip() or os.environ.get("SERVER_URL", "").strip()
     if not server_url:
         try:
-            server_url = input("URL do servidor (ex.: https://www.printcollect.com.br): ").strip()
+            server_url = input("URL do servidor (ex.: https://print-collect.onrender.com): ").strip()
         except (EOFError, KeyboardInterrupt):
             return 2
     if not server_url:
@@ -870,7 +870,7 @@ def cmd_wizard(args: argparse.Namespace) -> int:
 
     # URL DO SERVIDOR SEMPRE PADRAO — NUNCA PERGUNTA!
     # Julio tem razao: URL nunca muda, para que perguntar?
-    DEFAULT_SERVER_URL = "https://www.printcollect.com.br"
+    DEFAULT_SERVER_URL = "https://print-collect.onrender.com"
 
     config_path = resolve_config_path(args.config)
 
