@@ -161,24 +161,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (err) {
         if (cancelled) return;
 
-        if (retryCount < 3) {
+        if (retryCount < 1) {
           console.warn(
-            `⚠️ AuthContext: getMe falhou (tentativa ${retryCount + 1}/3). Retentando em 600ms...`,
+            `⚠️ AuthContext: getMe falhou (tentativa ${retryCount + 1}/2). Retentando em 400ms...`,
             err
           );
           retryTimer = window.setTimeout(() => {
             if (!cancelled) bootstrap(retryCount + 1);
-          }, 600);
+          }, 400);
           return;
         }
 
         console.error(
-          "❌ AuthContext: getMe falhou em todas as 3 tentativas. Mantendo token salvo para retry manual (F5)...",
+          "❌ AuthContext: getMe falhou. Limpando token invalido para tela de login aparecer.",
           err
         );
-        setToken(INITIAL_TOKEN);
+        window.localStorage.removeItem("token");
+        setAuthToken(null);
+        setToken(null);
         setUser(null);
-        // ⛔ Token invalido: branding null para nao mostrar logo nenhuma
         setBranding(null);
         clearBrandingCache();
         safeDocumentTitle(DEFAULT_BRANDING.display_name, DEFAULT_BRANDING.tagline);

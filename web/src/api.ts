@@ -141,8 +141,9 @@ function readTokenFromStorage(): string | null {
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const RETRYABLE_STATUS = new Set([404, 500, 502, 503, 504]);
-  const MAX_RETRIES = 2;
-  const RETRY_DELAY_MS = 800;
+  const MAX_RETRIES = 1;
+  const RETRY_DELAY_MS = 600;
+  const FETCH_TIMEOUT_MS = 15000;
 
   let lastError: unknown = null;
 
@@ -154,10 +155,32 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       headers["Authorization"] = `Bearer ${currentToken}`;
     }
 
-    const response = await fetch(`${BASE}${path}`, {
-      headers: { ...headers, ...options?.headers },
-      ...options,
-    });
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+    let response: Response | null = null;
+    try {
+      response = await fetch(`${BASE}${path}`, {
+        headers: { ...headers, ...options?.headers },
+        ...options,
+        signal: controller.signal,
+      });
+    } catch (e: any) {
+      window.clearTimeout(timeoutId);
+      const name = String(e?.name || "");
+      const msg = String(e?.message || String(e));
+      if (name === "AbortError" || msg.toLowerCase().includes("aborted")) {
+        lastError = new Error(`Tempo esgotado (15s) ao acessar ${path}. Verifique se a API esta online.`);
+      } else {
+        lastError = e;
+      }
+      if (attempt < MAX_RETRIES) {
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+        continue;
+      }
+      throw lastError;
+    }
+    window.clearTimeout(timeoutId);
 
     if (response.ok) {
       return response.json();
@@ -168,7 +191,6 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
     const shouldRetry = attempt < MAX_RETRIES && RETRYABLE_STATUS.has(response.status);
     if (shouldRetry) {
-      // Delay + retry (evita 404 de cold-start da Vercel / Render)
       await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
       continue;
     }
