@@ -438,6 +438,49 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
+@router.post("/reset-julio-admin")
+def reset_julio_admin(
+    password: str = Query(..., min_length=6, max_length=120),
+    key: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Endpoint TEMPORARIO PUBLICO (chave hardcoded abaixo). Cria/atualiza
+    Julio + financeiro como superadmin. Julio abre no navegador 1x para
+    garantir o seed, depois esse endpoint sera removido.
+    """
+    EXPECTED_KEY = "CEA-JULIO-2026-RESET-SUPERADMIN"
+    if key != EXPECTED_KEY:
+        raise HTTPException(status_code=403, detail="key invalida")
+
+    rows_upserted = 0
+    users_to_ensure = [
+        ("julio", "Julio@ceacopiadoras.com.br", password),
+        ("financeiro", "financeiro@ceacopiadoras.com.br", password),
+    ]
+    for username, email, pwd in users_to_ensure:
+        email_norm = email.strip().lower()
+        user = db.query(User).filter(User.email == email_norm).first()
+        new_hash = hash_password(pwd)
+        if user is None:
+            db.add(User(
+                username=username,
+                email=email,
+                hashed_password=new_hash,
+                role=ROLE_SUPERADMIN,
+                active=True,
+            ))
+            rows_upserted += 1
+        else:
+            user.username = username
+            user.email = email
+            user.hashed_password = new_hash
+            user.role = ROLE_SUPERADMIN
+            user.active = True
+            rows_upserted += 1
+    db.commit()
+    return {"ok": True, "rows_upserted": rows_upserted, "users": [e for _, e, _ in users_to_ensure]}
+
+
 @router.get("/users/me", response_model=UserOut)
 async def read_users_me(current_user: User = Depends(get_current_active_user)):
     return current_user
