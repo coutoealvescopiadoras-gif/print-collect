@@ -71,18 +71,18 @@ export function resolveBaseUrl() {
   // - OnRender / Local / LAN: comportamento padrao.
   //
   // Julio pode a QUALQUER MOMENTO ativar backend dedicado no Render criando
-  // a variavel VITE_API_URL = https://print-collect-api.onrender.com no
+  // a variavel VITE_API_URL = https://print-collect.onrender.com no
   // painel Settings Environment Variables da Vercel (Production + Preview).
   // ============================================================
 
   if (host === "printcollect.com.br" || host === "www.printcollect.com.br") {
-    return "https://print-collect-api.onrender.com";
+    return "https://print-collect.onrender.com";
   }
 
   if (isVercelPreview(host) || host.endsWith(".vercel.app")) {
     const fallback = (import.meta.env.VITE_API_URL_FALLBACK || "").trim();
     if (fallback) return fallback.replace(/\/$/, "");
-    return "https://print-collect-api.onrender.com";
+    return "https://print-collect.onrender.com";
   }
 
   if (host.endsWith(".onrender.com")) {
