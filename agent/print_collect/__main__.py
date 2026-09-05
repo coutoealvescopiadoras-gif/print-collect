@@ -776,15 +776,13 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 def cmd_pair(args: argparse.Namespace) -> int:
     config_path = resolve_config_path(args.config)
     # Server URL
+    DEFAULT_SERVER_URL = "https://print-collect.onrender.com"
     server_url = (args.server_url or "").strip() or os.environ.get("SERVER_URL", "").strip()
     if not server_url:
-        try:
-            server_url = input("URL do servidor (ex.: https://print-collect.onrender.com): ").strip()
-        except (EOFError, KeyboardInterrupt):
-            return 2
-    if not server_url:
-        print("[ERRO] URL do servidor nao informada.")
-        return 1
+        # Julio: nao perguntar mais, usar Render oficial! Usuario ainda pode sobrescrever via arg/env.
+        server_url = DEFAULT_SERVER_URL
+        print(f"[OK] URL do servidor (padrao): {server_url}")
+        print("     (se precisar mudar, use: pair --server-url https://sua-url.com)")
     if not server_url.startswith("http"):
         server_url = "https://" + server_url
 

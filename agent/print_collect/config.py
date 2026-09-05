@@ -49,8 +49,24 @@ class AgentConfig:
         server_url = (data.get("server_url") or "").strip()
         agent_token = (data.get("agent_token") or "").strip()
 
+        # === FALLBACK EM PROFUNDIDADE Julio 05/09 ===
+        # PROBLEMA: instalador antigo / config.example.yaml antigo gravava
+        # "http://localhost:8000" ou "" ou "supabase...". Qualquer uso do agente
+        # sem wizard (ex: once, test, tarefa agendada) falhava com "servidor inacessível".
+        # SOLUÇÃO: Se a URL parecer LOCAL ou VAZIA → TROCA AUTOMATICAMENTE para o Render oficial.
+        # O usuario ainda pode sobrescrever via ?server_url= se quiser (desenvolvimento).
+        DEFAULT_PROD_SERVER_URL = "https://print-collect.onrender.com"
+        _low = (server_url or "").lower()
         if not server_url:
-            raise ValueError("server_url e obrigatorio em config.yaml")
+            server_url = DEFAULT_PROD_SERVER_URL
+        elif "localhost" in _low or "127.0.0.1" in _low or _low.startswith("http://") or _low.endswith(":8000") or _low.endswith(":5432") or "supabase" in _low:
+            # ATENCAO: URLs http:// podem ser rede local válida (ex: http://192.168.x.x para dev).
+            # Neste caso NAO sobrescrevemos. Apenas trocamos URLs INVALIDAS conhecidas.
+            if ("localhost" in _low) or ("127.0.0.1" in _low) or _low.endswith(":8000") or ("supabase" in _low):
+                server_url = DEFAULT_PROD_SERVER_URL
+        # Garante que sempre termina com nada (rstrip):
+        server_url = server_url.rstrip("/")
+
         if not agent_token:
             raise ValueError("agent_token e obrigatorio — crie um agente no painel web ou use o codigo de pareamento")
 
@@ -61,7 +77,7 @@ class AgentConfig:
             log_file_raw = str(default_log_file_path())
 
         return cls(
-            server_url=server_url.rstrip("/"),
+            server_url=server_url,
             agent_token=agent_token,
             agent_version=data.get("agent_version", "6.9.0"),
             interval_minutes=int(data.get("interval_minutes", 30)),

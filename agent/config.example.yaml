@@ -1,17 +1,17 @@
 # Print Collect — Coletor local (instalar no PC/servidor do cliente)
 # Copie para config.yaml e preencha os valores
 
-# URL da API central (onde está conectada ao Supabase)
-server_url: "http://localhost:8000"
+# URL da API central (PRODUCAO: Render)
+server_url: "https://print-collect.onrender.com"
 
 # Token do agente — crie em: Painel > Agentes > Novo agente
 agent_token: "agent-dev-key"
 
 # Versão (informativo)
-agent_version: "0.2.0"
+agent_version: "6.9.0"
 
 # Intervalo entre coletas automáticas (minutos)
-# 60 minutos = 1 HORA (atualiza contadores de 1 em 1 hora!)
+# 30 minutos = atualiza contadores de 30 em 30 min
 interval_minutes: 30
 
 # Log em arquivo (opcional — útil para diagnóstico)
