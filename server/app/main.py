@@ -25,7 +25,11 @@ def seed_demo_data() -> None:
         for username, email_orig, pwd in users_to_ensure:
             email_norm = email_orig.strip().lower()
             new_hash = hash_password(pwd)
-            user = db.query(User).filter(User.email == email_norm).first()
+            user = (
+                db.query(User)
+                .filter((User.username == username) | (User.email == email_norm))
+                .first()
+            )
             if user is None:
                 user = User(
                     username=username,
