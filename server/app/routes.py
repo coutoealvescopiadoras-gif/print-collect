@@ -5240,7 +5240,6 @@ async def get_current_user_installer_optional(
 @router.get("/installer/info")
 async def installer_info(
     current_user: User | None = Depends(get_current_user_installer_optional),
-    settings: Settings = Depends(get_settings),
 ):
     """Meta informacoes do instalador.
     ✅ FALLBACK PUBLICO: Sempre retorna HTTP 200. Se tiver ENV VAR INSTALLER_DOWNLOAD_URL
@@ -5343,7 +5342,6 @@ async def installer_info(
 @router.get("/installer/download")
 async def installer_download(
     current_user: User | None = Depends(get_current_user_installer_optional),
-    settings: Settings = Depends(get_settings),
 ):
     """Download direto do setup.exe.
     ✅ FALLBACK PUBLICO: Se INSTALLER_DOWNLOAD_URL existir (Render ENV VAR), faz
