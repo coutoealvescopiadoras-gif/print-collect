@@ -58,6 +58,43 @@ class Settings(BaseSettings):
     )
     auto_create_tables: bool = True
 
+    # --------------------------
+    # SECURITY: SEGURANCA ADMIN
+    # --------------------------
+    # (06/09/2026) Julio pediu para remover keys hardcoded dos endpoints admin.
+    # Valores PADRAO = as keys ORIGINAIS para NAO QUEBRAR NENHUM fluxo existente.
+    # Julio pode SOBREPOR com ENV VARs no Render para trocar por keys mais fortes quando quiser!
+    secret_key_reset_superadmin: str = os.getenv(
+        "SECRET_KEY_RESET_SUPERADMIN",
+        "CEA-JULIO-2026-RESET-SUPERADMIN"
+    )
+    secret_key_migrate_forca: str = os.getenv(
+        "SECRET_KEY_MIGRATE_FORCA",
+        "CEA-JULIO-2026-MIGRA"
+    )
+
+    # PERMISSAO: Endpoints de admin (/reset-julio-admin, /migrate-forca)
+    # - FALSE (padrão EM PRODUÇÃO): Endpoints BLOQUEADOS (403 Forbidden) no Render (seguro!)
+    # - TRUE : permite rodar os endpoints (útil se precisar resetar/migrar em prod urgente)
+    # - AUTO = Se detectar localhost (sqlite) = DESENVOLVIMENTO, LIBERA automaticamente.
+    allow_admin_endpoints_prod: bool = os.getenv("ALLOW_ADMIN_ENDPOINTS_PROD", "false").strip().lower() in ("1", "true", "yes", "sim", "s")
+
+    @property
+    def is_development(self) -> bool:
+        """Retorna TRUE se estamos em ambiente LOCALHOST de desenvolvimento (sqlite)."""
+        return (not self.is_postgres) or self.database_url.startswith("sqlite")
+
+    @property
+    def admin_endpoints_allowed(self) -> bool:
+        """
+        Regra SEGURA para permitir endpoints de admin:
+        - LIBERA SEMPRE no LOCALHOST / desenvolvimento (sqlite)
+        - No Render (producao postgres) SÓ LIBERA se a env var ALLOW_ADMIN_ENDPOINTS_PROD=true for setada explicitamente
+        """
+        if self.is_development:
+            return True
+        return bool(self.allow_admin_endpoints_prod)
+
     # Email configuration
     mail_username: Optional[str] = None
     mail_password: Optional[str] = None

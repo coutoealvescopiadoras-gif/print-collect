@@ -446,10 +446,27 @@ def reset_julio_admin(
     """Endpoint TEMPORARIO PUBLICO: via ?password=...&key=... ou ENV RESET_JULIO_PASSWORD.
     Cria/atualiza Julio + financeiro superadmin sempre (email lower).
 
+    🔥 06/09 SEGURANCA (Julio pediu):
+    - EXPECTED_KEY agora vem de ENV VAR `SECRET_KEY_RESET_SUPERADMIN` (via settings)
+      Valor PADRAO = CEA-JULIO-2026-RESET-SUPERADMIN (mantem retrocompatibilidade!)
+    - NO RENDER (producao): Endpoint BLOQUEADO (403) automaticamente,
+      a MENOS que voce SETE ENV VAR `ALLOW_ADMIN_ENDPOINTS_PROD=true` no Render.
+    - NO LOCALHOST (sqlite dev): Sempre LIBERADO (como antes!)
+
     🔥 05/09 BONUS: Tambem REATIVA VIA RAW SQL FORCADO todas impressoras cliente_id=2 (Julio)
     que estejam ignored=TRUE (soft-deleted). Resolve bug "exclui impressora, reinstalei, nao aparece".
     """
-    EXPECTED_KEY = "CEA-JULIO-2026-RESET-SUPERADMIN"
+    # --------------------
+    # SEGURANCA 06/09 Julio: Bloqueia em producao se nao houver permissao explicita
+    # --------------------
+    if not settings.admin_endpoints_allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="[SEGURANCA] Endpoint reset-julio-admin BLOQUEADO em Producao. "
+                   "Use localmente ou ative ALLOW_ADMIN_ENDPOINTS_PROD=true no Render temporariamente."
+        )
+
+    EXPECTED_KEY = settings.secret_key_reset_superadmin
     qp = request.query_params
     pwd_q = (qp.get("password") or "").strip()
     key_q = (qp.get("key") or "").strip()
@@ -528,8 +545,25 @@ def debug_create_julio_printer_temp(
     """TEMPORARIO (APAGAR DEPOIS!) — Cria OU REATIVA impressora RICOH SP 4510SF no cliente Julio id=2 diretamente via engine.begin() RAW SQL, sem ORM.
     🔥 05/09 Julio: UPDATE agora FORÇA active=TRUE, ignored=FALSE (resolve bug impressora excluida que nao volta!).
     Protegido por RESET_JULIO_PASSWORD env ou ?password=.
+
+    🔥 06/09 SEGURANCA (Julio pediu):
+    - EXPECTED_KEY agora vem de ENV VAR `SECRET_KEY_RESET_SUPERADMIN` (via settings)
+      Valor PADRAO = CEA-JULIO-2026-RESET-SUPERADMIN (mantem retrocompatibilidade!)
+    - NO RENDER (producao): Endpoint BLOQUEADO (403) automaticamente,
+      a MENOS que voce SETE ENV VAR `ALLOW_ADMIN_ENDPOINTS_PROD=true` no Render.
+    - NO LOCALHOST (sqlite dev): Sempre LIBERADO (como antes!)
     """
-    EXPECTED_KEY = "CEA-JULIO-2026-RESET-SUPERADMIN"
+    # --------------------
+    # SEGURANCA 06/09 Julio: Bloqueia em producao se nao houver permissao explicita
+    # --------------------
+    if not settings.admin_endpoints_allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="[SEGURANCA] Endpoint debug/create-julio-printer-temp BLOQUEADO em Producao. "
+                   "Use localmente ou ative ALLOW_ADMIN_ENDPOINTS_PROD=true no Render temporariamente."
+        )
+
+    EXPECTED_KEY = settings.secret_key_reset_superadmin
     qp = request.query_params
     pwd_q = (qp.get("password") or "").strip()
     key_q = (qp.get("key") or "").strip()
