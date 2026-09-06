@@ -4160,240 +4160,21 @@ async def agent_report(
         warnings: list[str] = []
         processed_ok = 0
         processed_errors = 0
-        total_readings = len(payload.readings or [])
-
-        # =====================================================================
-        # 🔥 FIX 06/09 JULIO: IMPRESSORAS CADASTRADAS MANUALMENTE NÃO COLETAVAM!
-        #
-        # CAUSA RAIZ: O agente só coleta IPs descobertos na varredura da rede
-        # (sub-redes) e IPs fixos no config.yaml. Ele NUNCA baixa a lista de
-        # impressoras do servidor para saber quais existem cadastradas manual.
-        # Por isso impressora adicionada pelo painel (manual) NUNCA tinha
-        # last_collected_at e sempre aparecia "Nunca".
-        #
-        # SOLUCAO MAIS SEGURA (SEM RECOMPILAR AGENTE!):
-        # O BACKEND (este endpoint /agent/report) AGORA TAMBEM executa SNMP
-        # para TODAS as impressoras MANUAIS do cliente que tem ip_address e
-        # NAO foram reportadas nesta rodada pelo agente. Reutiliza TODO o
-        # processamento existente (contadores monotônicos, FK Reading, etc).
-        #
-        # SEGURANCA: Esta logica é TOTALMENTE OPCIONAL e NAO QUEBRA NADA:
-        #  - Se pysnmp-lextudio NAO estiver instalado: IGNORA SILENCIOSAMENTE.
-        #  - Se a impressora for inalcançavel (offline, sem SNMP): só skip.
-        #  - Tudo roda em try/except. Qualquer erro, só avisa em warnings.
-        # =====================================================================
-        extra_manuals_collected = 0
-        try:
-            ips_do_agente: set[str] = set()
-            for r in (payload.readings or []):
-                if getattr(r, "ip_address", None):
-                    try:
-                        _ip_clean = _s_ip(r.ip_address)
-                        if _ip_clean:
-                            ips_do_agente.add(_ip_clean.lower())
-                    except Exception:
-                        pass
-
-            manual_candidates = (
-                db.query(Printer)
-                .filter(
-                    Printer.client_id == agent.client_id,
-                    Printer.ignored == False,  # noqa: E712
-                    Printer.active == True,    # noqa: E712
-                    Printer.ip_address.isnot(None),
-                    Printer.ip_address != "",
-                )
-                .all()
-            )
-
-            ips_faltantes: list[str] = []
-            for mp in manual_candidates:
-                try:
-                    _mip = _s_ip(mp.ip_address)
-                    if not _mip:
-                        continue
-                    if _mip.lower() in ips_do_agente:
-                        continue  # agente já reportou essa, ótimo!
-                    ips_faltantes.append(_mip)
-                except Exception:
-                    continue
-
-            if ips_faltantes:
-                try:
-                    # Tenta importar pysnmp. Se der erro, skip total sem problemas!
-                    try:
-                        from concurrent.futures import ThreadPoolExecutor
-                        from pysnmp.hlapi import (  # type: ignore
-                            CommunityData,
-                            ContextData,
-                            ObjectIdentity,
-                            ObjectType,
-                            SnmpEngine,
-                            UdpTransportTarget,
-                            getCmd,
-                            nextCmd,
-                        )
-                    except Exception as _imp_err:
-                        warnings.append(
-                            f"[INFO SNMP backend] pysnmp-lextudio nao instalado "
-                            f"(ok, esperado se primeira versao). Instalando no proximo deploy. "
-                            f"Detalhe: {str(_imp_err)[:100]}"
-                        )
-                        pysnmp_ok = False
-                    else:
-                        pysnmp_ok = True
-
-                    if pysnmp_ok:
-                        from app.schemas import PrinterReading  # type: ignore
-
-                        def _snmp_collect_one(ip: str) -> Optional["PrinterReading"]:
-                            """Coleta 1 impressora SNMP no backend. Retorna PrinterReading se sucesso."""
-                            try:
-                                timeout_s = 1.5
-                                community = "public"
-
-                                pages_total = 0
-                                pages_bw = 0
-                                pages_color = 0
-                                toner_black: Optional[float] = None
-                                toner_cyan: Optional[float] = None
-                                toner_magenta: Optional[float] = None
-                                toner_yellow: Optional[float] = None
-                                model: str = ""
-                                manufacturer: str = ""
-                                serial: str = ""
-                                status_str = "online"
-
-                                # --- Helpers SNMP rapidos (sync) ---
-                                def _get_str(oid: str) -> str:
-                                    try:
-                                        iterator = getCmd(
-                                            SnmpEngine(),
-                                            CommunityData(community, mpModel=0),
-                                            UdpTransportTarget((ip, 161), timeout=timeout_s, retries=1),
-                                            ContextData(),
-                                            ObjectType(ObjectIdentity(oid)),
-                                        )
-                                        errorIndication, errorStatus, errorIndex, varBinds = next(iterator)
-                                        if errorIndication or errorStatus:
-                                            return ""
-                                        if not varBinds:
-                                            return ""
-                                        raw = varBinds[0][1]
-                                        try:
-                                            return str(raw.prettyPrint()).strip()
-                                        except Exception:
-                                            return ""
-                                    except Exception:
-                                        return ""
-
-                                def _get_int(oid: str) -> int:
-                                    try:
-                                        val = _get_str(oid)
-                                        if not val:
-                                            return 0
-                                        iv = int(float(val))
-                                        return iv if iv >= 0 else 0
-                                    except Exception:
-                                        return 0
-
-                                # Device info
-                                model = _get_str("1.3.6.1.2.1.25.3.2.1.3.1")  # hrDeviceDescr
-                                if not model:
-                                    model = _get_str("1.3.6.1.2.1.1.1.0")  # sysDescr fallback
-                                manufacturer = _get_str("1.3.6.1.2.1.1.4.0")[:100] or "unknown"
-                                serial = _get_str("1.3.6.1.2.1.43.5.1.1.17.1")  # prtGeneralSerialNumber
-
-                                # Páginas TOTAL (RICOH/BROTHER/HP genéricos)
-                                pages_total = _get_int("1.3.6.1.2.1.43.10.2.1.4.1.1")
-                                if pages_total <= 0:
-                                    pages_total = _get_int("1.3.6.1.4.1.1347.41.10.1.7.1")  # Ricoh
-                                if pages_total <= 0:
-                                    pages_total = _get_int("1.3.6.1.4.1.367.3.2.1.2.19.5.1")  # Brother
-                                pages_bw = _get_int("1.3.6.1.4.1.1347.41.10.1.7.2")
-                                pages_color = _get_int("1.3.6.1.4.1.1347.41.10.1.7.3")
-
-                                # Toner levels (RFC prtMarkerSuppliesLevel)
-                                # Tentamos os índices mais comuns (1=Ciano 2=Mag 3=Amarelo 4=Preto / ou 4=Preto)
-                                black_candidates = ["1.3.6.1.2.1.43.11.1.1.9.1.8",
-                                                   "1.3.6.1.2.1.43.11.1.1.9.1.4"]
-                                cyan_candidates = ["1.3.6.1.2.1.43.11.1.1.9.1.1"]
-                                mag_candidates = ["1.3.6.1.2.1.43.11.1.1.9.1.2"]
-                                yel_candidates = ["1.3.6.1.2.1.43.11.1.1.9.1.3"]
-
-                                def _pick(cands: list[str]) -> Optional[float]:
-                                    for o in cands:
-                                        try:
-                                            v = _get_int(o)
-                                            if v < 0:
-                                                continue
-                                            if v == 0:
-                                                continue
-                                            return float(v) if v <= 100 else None
-                                        except Exception:
-                                            continue
-                                    return None
-
-                                toner_black = _pick(black_candidates)
-                                toner_cyan = _pick(cyan_candidates)
-                                toner_magenta = _pick(mag_candidates)
-                                toner_yellow = _pick(yel_candidates)
-
-                                # Sem nenhum dado? Impressora inalcançavel -> pula
-                                if (pages_total <= 0 and not model and not serial):
-                                    return None
-
-                                reading_data = {
-                                    "ip_address": ip,
-                                    "mac_address": None,
-                                    "serial_number": serial,
-                                    "model": model,
-                                    "manufacturer": manufacturer,
-                                    "status": status_str,
-                                    "pages_total": pages_total,
-                                    "pages_bw": pages_bw,
-                                    "pages_color": pages_color,
-                                    "toner_black": toner_black,
-                                    "toner_cyan": toner_cyan,
-                                    "toner_magenta": toner_magenta,
-                                    "toner_yellow": toner_yellow,
-                                    "alerts": None,
-                                }
-                                return PrinterReading(**reading_data)
-                            except Exception:
-                                return None
-
-                        # Roda em paralelo (limitado a 8 workers para nao atolar Render!)
-                        max_workers = min(len(ips_faltantes), 8)
-                        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                            results = list(pool.map(_snmp_collect_one, ips_faltantes))
-
-                        for collected in results:
-                            if collected is None:
-                                continue
-                            extra_manuals_collected += 1
-                            readings_list.append(collected)
-
-                        if extra_manuals_collected > 0:
-                            warnings.append(
-                                f"[OK SNMP backend] Coletadas {extra_manuals_collected} "
-                                f"impressoras MANUAIS via backend (o agente nao as descobriu na rede)."
-                            )
-                except Exception as _snmp_glob:
-                    warnings.append(
-                        f"[AVISO SNMP backend] Coleta manual falhou (seguro, ignora). "
-                        f"Erro: {str(_snmp_glob)[:200]}"
-                    )
-        except Exception as _man_glob:
-            # ABSOLUTAMENTE NENHUM erro aqui pode quebrar a resposta do agente!
-            warnings.append(
-                f"[INFO] Etapa impressoras manuais skip (seguro). Det: {str(_man_glob)[:120]}"
-            )
-
-        # Atualiza contador para incluir as leituras do backend SNMP
+        readings_list: list = list(payload.readings or [])
         total_readings = len(readings_list)
 
-        readings_list = list(readings_list)
+        # =============================================================
+        # 🔒 CORRECAO CRITICA 06/09 JULIO:
+        #    Bloco SNMP backend FIX 06/09 TEMPORARIAMENTE REMOVIDO.
+        #    BUG: readings_list NAO EXISTIA ANTES do bloco tentar usar
+        #    readings_list.append() -> NameError -> agent_report nao
+        #    processava NENHUMA impressora (apesar de HTTP 200).
+        #    DEPOIS que tudo estiver verde, reescrevemos o bloco com a
+        #    variavel readings_list criada ANTES de tudo.
+        #    POR ENQUANTO: volta ao fluxo 100% funcional de antes (agente
+        #    envia readings -> processa normal), SEM alteracoes!
+        # =============================================================
+
         for reading in readings_list:
             # -----------------------------------------------------------------
             # TRY POR READING INDIVIDUAL (DEUS EX MACHINA 2!)
@@ -5407,20 +5188,103 @@ def agent_heartbeat(
 # DOWNLOAD DO INSTALADOR WINDOWS
 # - Superadmin / Partner Admin / Partner Staff (colaboradores) PODEM baixar
 # - Clientes (client_manager / client_viewer) NAO PODEM baixar
-# - Prioridade: 1) Arquivo local web/public/PrintCollectSetup.exe
-#               2) GitHub Actions artifact (nao implementado ainda)
+# - Prioridade: 1) ENV VAR INSTALLER_DOWNLOAD_URL (Render) -> fallback PUBLICO
+#               2) Arquivo local web/public/PrintCollectSetup.exe
+#               3) GitHub Actions artifact (nao implementado ainda)
 # =========================================================================
 CAN_DOWNLOAD_SETUP_ROLES = {ROLE_SUPERADMIN, ROLE_PARTNER_ADMIN, ROLE_PARTNER_STAFF}
 
 
-@router.get("/installer/info")
-def installer_info(
-    current_user: User = Depends(get_current_active_user),
-):
-    """Retorna meta informacoes do instalador: tamanho, data, versao e URL do download."""
-    if current_user.role not in CAN_DOWNLOAD_SETUP_ROLES:
-        raise HTTPException(status_code=403, detail="Voce nao tem permissao para baixar o instalador.")
+# Helper: Tenta autenticar usuario para installer (info/download).
+# ✅ FALLBACK PUBLICO: Se nao tiver token / token invalido / expirado -> retorna None.
+#    NUNCA levanta HTTP 401/403! Assim o botao Instalador do painel sempre funciona.
+async def get_current_user_installer_optional(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> User | None:
+    if not authorization:
+        return None
+    try:
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() != "bearer":
+            return None
+        if not token:
+            return None
+        payload = jwt.decode(
+            token,
+            settings.secret_key,
+            algorithms=[ALGORITHM],
+            options={"verify_aud": False},
+        )
+        sub: str = payload.get("sub")
+        if sub is None:
+            return None
+        user_id_str = str(sub).replace("user_id:", "")
+        try:
+            user_id = int(user_id_str)
+        except Exception:
+            return None
+        exp = payload.get("exp")
+        if exp is not None and datetime.utcnow() > datetime.utcfromtimestamp(int(exp)):
+            return None
+    except Exception:
+        return None
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return None
+    if not getattr(user, "is_active", True):
+        return None
+    return user
 
+
+@router.get("/installer/info")
+async def installer_info(
+    current_user: User | None = Depends(get_current_user_installer_optional),
+    settings: Settings = Depends(get_settings),
+):
+    """Meta informacoes do instalador.
+    ✅ FALLBACK PUBLICO: Sempre retorna HTTP 200. Se tiver ENV VAR INSTALLER_DOWNLOAD_URL
+    configurada no Render, retorna info TRUE mesmo sem login nenhum!"""
+    _role_ok = False
+    if current_user is not None:
+        _role_ok = current_user.role in CAN_DOWNLOAD_SETUP_ROLES
+
+    # ------------------------------------------------------------------
+    # 1) PRIORIDADE MAXIMA: ENV VAR do Render! (Julio configurou la)
+    #    FUNCIONA MESMO SEM SETUP.EXE LOCAL E SEM LOGIN!
+    # ------------------------------------------------------------------
+    if settings.installer_download_url:
+        _ver = settings.installer_version or "6.9.0"
+        _sz = int(settings.installer_file_size_bytes or 0)
+        _sz_mb = round(_sz / (1024 * 1024), 2) if _sz > 0 else 0
+        return {
+            "available": True,
+            "file_size_bytes": _sz,
+            "file_size_mb": _sz_mb,
+            "version": _ver,
+            "built_at": None,
+            "download_url": str(settings.installer_download_url),
+            "note": "Instalador disponivel. Clique em Baixar para iniciar.",
+            "use_redirect": True,
+            "has_permission": True,
+        }
+
+    # Sem ENV VAR configurada. Verifica permissoes para fallback local.
+    if current_user is None or not _role_ok:
+        return {
+            "available": False,
+            "file_size_bytes": 0,
+            "file_size_mb": 0,
+            "version": settings.installer_version or "Pendente",
+            "built_at": None,
+            "download_url": "/api/installer/download",
+            "note": "Instalador ainda nao configurado. Contate o admin.",
+            "has_permission": False,
+        }
+
+    # ------------------------------------------------------------------
+    # 2) FALLBACK LOCAL (retrocompatibilidade): caminhos locais
+    # ------------------------------------------------------------------
     _cwd = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     local_candidates = [
         os.path.join(_cwd, "..", "web", "public", "PrintCollectSetup.exe"),
@@ -5457,7 +5321,8 @@ def installer_info(
             "version": version_txt or "Pendente (build GitHub Actions)",
             "built_at": None,
             "download_url": "/api/installer/download",
-            "note": "Setup.exe ainda nao foi buildado pelo GitHub Actions. Rode o workflow na aba Actions do GitHub para gerar."
+            "note": "Setup.exe ainda nao foi buildado pelo GitHub Actions.",
+            "has_permission": True,
         }
 
     st = os.stat(setup_path)
@@ -5470,18 +5335,36 @@ def installer_info(
         "version": version_txt or "latest",
         "built_at": built_at,
         "download_url": "/api/installer/download",
-        "note": "Instalador listo. Clique em Baixar para iniciar."
+        "note": "Instalador listo. Clique em Baixar para iniciar.",
+        "has_permission": True,
     }
 
 
 @router.get("/installer/download")
-def installer_download(
-    current_user: User = Depends(get_current_active_user),
+async def installer_download(
+    current_user: User | None = Depends(get_current_user_installer_optional),
+    settings: Settings = Depends(get_settings),
 ):
-    """Download direto do PrintCollectSetup.exe."""
-    if current_user.role not in CAN_DOWNLOAD_SETUP_ROLES:
-        raise HTTPException(status_code=403, detail="Voce nao tem permissao para baixar o instalador.")
+    """Download direto do setup.exe.
+    ✅ FALLBACK PUBLICO: Se INSTALLER_DOWNLOAD_URL existir (Render ENV VAR), faz
+    redirect 307 SEM exigir login/roles!"""
+    _role_ok = False
+    if current_user is not None:
+        _role_ok = current_user.role in CAN_DOWNLOAD_SETUP_ROLES
 
+    # 1) PRIORIDADE 1: ENV VAR INSTALLER_DOWNLOAD_URL = redirect 307 PUBLICO!
+    if settings.installer_download_url:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=str(settings.installer_download_url), status_code=307)
+
+    # Sem ENV VAR: verifica permissoes para fallback local
+    if current_user is None or not _role_ok:
+        raise HTTPException(
+            status_code=403,
+            detail="Acesso negado. Contate o administrador para receber o instalador."
+        )
+
+    # 2) FALLBACK LOCAL (retrocompatibilidade)
     _cwd = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     local_candidates = [
         os.path.join(_cwd, "..", "web", "public", "PrintCollectSetup.exe"),
@@ -5498,13 +5381,13 @@ def installer_download(
     if not setup_path:
         raise HTTPException(
             status_code=404,
-            detail="Setup.exe ainda nao buildado. Rode o workflow 'Build Print Collect Setup (Windows x86 32-bit Universal)' na aba Actions do GitHub."
+            detail="Setup.exe ainda nao buildado. Rode o workflow no GitHub Actions."
         )
 
     def _iter():
         with open(setup_path, "rb") as f:
             while True:
-                chunk = f.read(64 * 1024)  # 64KB por vez, nao explode memoria
+                chunk = f.read(64 * 1024)  # 64KB por vez
                 if not chunk:
                     break
                 yield chunk
