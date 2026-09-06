@@ -4056,7 +4056,238 @@ async def agent_report(
         processed_errors = 0
         total_readings = len(payload.readings or [])
 
-        readings_list = list(payload.readings or [])
+        # =====================================================================
+        # 🔥 FIX 06/09 JULIO: IMPRESSORAS CADASTRADAS MANUALMENTE NÃO COLETAVAM!
+        #
+        # CAUSA RAIZ: O agente só coleta IPs descobertos na varredura da rede
+        # (sub-redes) e IPs fixos no config.yaml. Ele NUNCA baixa a lista de
+        # impressoras do servidor para saber quais existem cadastradas manual.
+        # Por isso impressora adicionada pelo painel (manual) NUNCA tinha
+        # last_collected_at e sempre aparecia "Nunca".
+        #
+        # SOLUCAO MAIS SEGURA (SEM RECOMPILAR AGENTE!):
+        # O BACKEND (este endpoint /agent/report) AGORA TAMBEM executa SNMP
+        # para TODAS as impressoras MANUAIS do cliente que tem ip_address e
+        # NAO foram reportadas nesta rodada pelo agente. Reutiliza TODO o
+        # processamento existente (contadores monotônicos, FK Reading, etc).
+        #
+        # SEGURANCA: Esta logica é TOTALMENTE OPCIONAL e NAO QUEBRA NADA:
+        #  - Se pysnmp-lextudio NAO estiver instalado: IGNORA SILENCIOSAMENTE.
+        #  - Se a impressora for inalcançavel (offline, sem SNMP): só skip.
+        #  - Tudo roda em try/except. Qualquer erro, só avisa em warnings.
+        # =====================================================================
+        extra_manuals_collected = 0
+        try:
+            ips_do_agente: set[str] = set()
+            for r in (payload.readings or []):
+                if getattr(r, "ip_address", None):
+                    try:
+                        _ip_clean = _s_ip(r.ip_address)
+                        if _ip_clean:
+                            ips_do_agente.add(_ip_clean.lower())
+                    except Exception:
+                        pass
+
+            manual_candidates = (
+                db.query(Printer)
+                .filter(
+                    Printer.client_id == agent.client_id,
+                    Printer.ignored == False,  # noqa: E712
+                    Printer.active == True,    # noqa: E712
+                    Printer.ip_address.isnot(None),
+                    Printer.ip_address != "",
+                )
+                .all()
+            )
+
+            ips_faltantes: list[str] = []
+            for mp in manual_candidates:
+                try:
+                    _mip = _s_ip(mp.ip_address)
+                    if not _mip:
+                        continue
+                    if _mip.lower() in ips_do_agente:
+                        continue  # agente já reportou essa, ótimo!
+                    ips_faltantes.append(_mip)
+                except Exception:
+                    continue
+
+            if ips_faltantes:
+                try:
+                    # Tenta importar pysnmp. Se der erro, skip total sem problemas!
+                    try:
+                        from concurrent.futures import ThreadPoolExecutor
+                        from pysnmp.hlapi import (  # type: ignore
+                            CommunityData,
+                            ContextData,
+                            ObjectIdentity,
+                            ObjectType,
+                            SnmpEngine,
+                            UdpTransportTarget,
+                            getCmd,
+                            nextCmd,
+                        )
+                    except Exception as _imp_err:
+                        warnings.append(
+                            f"[INFO SNMP backend] pysnmp-lextudio nao instalado "
+                            f"(ok, esperado se primeira versao). Instalando no proximo deploy. "
+                            f"Detalhe: {str(_imp_err)[:100]}"
+                        )
+                        pysnmp_ok = False
+                    else:
+                        pysnmp_ok = True
+
+                    if pysnmp_ok:
+                        from app.schemas import PrinterReading  # type: ignore
+
+                        def _snmp_collect_one(ip: str) -> Optional["PrinterReading"]:
+                            """Coleta 1 impressora SNMP no backend. Retorna PrinterReading se sucesso."""
+                            try:
+                                timeout_s = 1.5
+                                community = "public"
+
+                                pages_total = 0
+                                pages_bw = 0
+                                pages_color = 0
+                                toner_black: Optional[float] = None
+                                toner_cyan: Optional[float] = None
+                                toner_magenta: Optional[float] = None
+                                toner_yellow: Optional[float] = None
+                                model: str = ""
+                                manufacturer: str = ""
+                                serial: str = ""
+                                status_str = "online"
+
+                                # --- Helpers SNMP rapidos (sync) ---
+                                def _get_str(oid: str) -> str:
+                                    try:
+                                        iterator = getCmd(
+                                            SnmpEngine(),
+                                            CommunityData(community, mpModel=0),
+                                            UdpTransportTarget((ip, 161), timeout=timeout_s, retries=1),
+                                            ContextData(),
+                                            ObjectType(ObjectIdentity(oid)),
+                                        )
+                                        errorIndication, errorStatus, errorIndex, varBinds = next(iterator)
+                                        if errorIndication or errorStatus:
+                                            return ""
+                                        if not varBinds:
+                                            return ""
+                                        raw = varBinds[0][1]
+                                        try:
+                                            return str(raw.prettyPrint()).strip()
+                                        except Exception:
+                                            return ""
+                                    except Exception:
+                                        return ""
+
+                                def _get_int(oid: str) -> int:
+                                    try:
+                                        val = _get_str(oid)
+                                        if not val:
+                                            return 0
+                                        iv = int(float(val))
+                                        return iv if iv >= 0 else 0
+                                    except Exception:
+                                        return 0
+
+                                # Device info
+                                model = _get_str("1.3.6.1.2.1.25.3.2.1.3.1")  # hrDeviceDescr
+                                if not model:
+                                    model = _get_str("1.3.6.1.2.1.1.1.0")  # sysDescr fallback
+                                manufacturer = _get_str("1.3.6.1.2.1.1.4.0")[:100] or "unknown"
+                                serial = _get_str("1.3.6.1.2.1.43.5.1.1.17.1")  # prtGeneralSerialNumber
+
+                                # Páginas TOTAL (RICOH/BROTHER/HP genéricos)
+                                pages_total = _get_int("1.3.6.1.2.1.43.10.2.1.4.1.1")
+                                if pages_total <= 0:
+                                    pages_total = _get_int("1.3.6.1.4.1.1347.41.10.1.7.1")  # Ricoh
+                                if pages_total <= 0:
+                                    pages_total = _get_int("1.3.6.1.4.1.367.3.2.1.2.19.5.1")  # Brother
+                                pages_bw = _get_int("1.3.6.1.4.1.1347.41.10.1.7.2")
+                                pages_color = _get_int("1.3.6.1.4.1.1347.41.10.1.7.3")
+
+                                # Toner levels (RFC prtMarkerSuppliesLevel)
+                                # Tentamos os índices mais comuns (1=Ciano 2=Mag 3=Amarelo 4=Preto / ou 4=Preto)
+                                black_candidates = ["1.3.6.1.2.1.43.11.1.1.9.1.8",
+                                                   "1.3.6.1.2.1.43.11.1.1.9.1.4"]
+                                cyan_candidates = ["1.3.6.1.2.1.43.11.1.1.9.1.1"]
+                                mag_candidates = ["1.3.6.1.2.1.43.11.1.1.9.1.2"]
+                                yel_candidates = ["1.3.6.1.2.1.43.11.1.1.9.1.3"]
+
+                                def _pick(cands: list[str]) -> Optional[float]:
+                                    for o in cands:
+                                        try:
+                                            v = _get_int(o)
+                                            if v < 0:
+                                                continue
+                                            if v == 0:
+                                                continue
+                                            return float(v) if v <= 100 else None
+                                        except Exception:
+                                            continue
+                                    return None
+
+                                toner_black = _pick(black_candidates)
+                                toner_cyan = _pick(cyan_candidates)
+                                toner_magenta = _pick(mag_candidates)
+                                toner_yellow = _pick(yel_candidates)
+
+                                # Sem nenhum dado? Impressora inalcançavel -> pula
+                                if (pages_total <= 0 and not model and not serial):
+                                    return None
+
+                                reading_data = {
+                                    "ip_address": ip,
+                                    "mac_address": None,
+                                    "serial_number": serial,
+                                    "model": model,
+                                    "manufacturer": manufacturer,
+                                    "status": status_str,
+                                    "pages_total": pages_total,
+                                    "pages_bw": pages_bw,
+                                    "pages_color": pages_color,
+                                    "toner_black": toner_black,
+                                    "toner_cyan": toner_cyan,
+                                    "toner_magenta": toner_magenta,
+                                    "toner_yellow": toner_yellow,
+                                    "alerts": None,
+                                }
+                                return PrinterReading(**reading_data)
+                            except Exception:
+                                return None
+
+                        # Roda em paralelo (limitado a 8 workers para nao atolar Render!)
+                        max_workers = min(len(ips_faltantes), 8)
+                        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                            results = list(pool.map(_snmp_collect_one, ips_faltantes))
+
+                        for collected in results:
+                            if collected is None:
+                                continue
+                            extra_manuals_collected += 1
+                            readings_list.append(collected)
+
+                        if extra_manuals_collected > 0:
+                            warnings.append(
+                                f"[OK SNMP backend] Coletadas {extra_manuals_collected} "
+                                f"impressoras MANUAIS via backend (o agente nao as descobriu na rede)."
+                            )
+                except Exception as _snmp_glob:
+                    warnings.append(
+                        f"[AVISO SNMP backend] Coleta manual falhou (seguro, ignora). "
+                        f"Erro: {str(_snmp_glob)[:200]}"
+                    )
+        except Exception as _man_glob:
+            # ABSOLUTAMENTE NENHUM erro aqui pode quebrar a resposta do agente!
+            warnings.append(
+                f"[INFO] Etapa impressoras manuais skip (seguro). Det: {str(_man_glob)[:120]}"
+            )
+
+        # Atualiza contador para incluir as leituras do backend SNMP
+        total_readings = len(readings_list)
+
+        readings_list = list(readings_list)
         for reading in readings_list:
             # -----------------------------------------------------------------
             # TRY POR READING INDIVIDUAL (DEUS EX MACHINA 2!)
