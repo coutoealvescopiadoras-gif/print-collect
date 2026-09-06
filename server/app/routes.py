@@ -3997,6 +3997,112 @@ def _get_scoped_printer(db: Session, current_user: User, printer_id: int, includ
             
 
 
+# =============================================================================
+# ENDPOINT NOVO (Julio 06/09: impressoras MANUAIS em sub-redes diferentes!)
+# GET /api/agent/extra-targets
+#
+# AUTENTICACAO: Header X-Agent-Token (IGUAL ao /agent/report!)
+# OBJETIVO: Retornar LISTA DE IPs das impressoras CADASRADAS MANUALMENTE
+#           (no PAINEL) que o cliente do agente tem e que TEM ip_address!
+#
+# SEGURANCA ANTI-QUEBRA (100% ADITIVA, NAO MEXE EM NADA):
+#   - SEMPRE retorna HTTP 200 OK (NUNCA 4xx/5xx!)
+#   - Em QUALQUER erro (token invalido, banco fora, query erro...):
+#       => retorna {"status":"ok","extra_targets":[],"warnings":["..."]}
+#   - Assim AGENTES ANTIGOS (que nao conhecem esse endpoint) CONTINUAM
+#     FUNCIONANDO 100% IGUAL. AGENTES NOVOS (que chamam este endpoint)
+#     usam a lista extra para adicionar alvos de coleta no Windows do cliente
+#     (funciona mesmo se impressora manual estiver em OUTRA VLAN/sub-rede
+#      desde que o Windows do agente consiga pingar a impressora!)
+# =============================================================================
+@router.get("/agent/extra-targets", status_code=200)
+async def agent_extra_targets(
+    x_agent_token: str = Header(...),
+    db: Session = Depends(get_db),
+):
+    warnings = []
+    extra_targets = []
+    try:
+        # Autentica agente (mesma helper do /agent/report)
+        try:
+            agent = _get_agent(x_agent_token, db)
+        except Exception as auth_err:
+            warnings.append(f"[extra-targets] Autenticacao falhou (token invalido?): {str(auth_err)[:150]}. Retornando lista vazia por seguranca.")
+            return {
+                "status": "ok",
+                "extra_targets": [],
+                "warnings": warnings,
+                "count": 0,
+            }
+
+        # Seguranca extra: agente precisa ter client_id
+        if not agent or not getattr(agent, "client_id", None):
+            warnings.append("[extra-targets] Agente sem client_id associado. Retornando lista vazia.")
+            return {
+                "status": "ok",
+                "extra_targets": [],
+                "warnings": warnings,
+                "count": 0,
+            }
+
+        # ==========================================================
+        # QUERY BUSCA IMPRESSORAS CADASTRADAS NO PAINEL MANUALMENTE
+        # (ou qualquer impressora deste cliente com IP valido!)
+        # Regras:
+        #   - Ativa (active=True)
+        #   - Nao ignorada (ignored=False)
+        #   - Tem ip_address NAO VAZIO
+        # ==========================================================
+        try:
+            rows = (
+                db.query(Printer.ip_address)
+                .filter(
+                    Printer.client_id == agent.client_id,
+                    Printer.active == True,
+                    Printer.ignored == False,
+                )
+                .all()
+            )
+        except Exception as query_err:
+            warnings.append(f"[extra-targets] Erro na query do banco: {str(query_err)[:200]}. Retornando lista vazia.")
+            return {
+                "status": "ok",
+                "extra_targets": [],
+                "warnings": warnings,
+                "count": 0,
+            }
+
+        # Sanitiza ips: remove None, strings vazias, faz strip, deixa unique
+        seen = set()
+        for (ip_raw,) in rows:
+            if ip_raw is None:
+                continue
+            ip = str(ip_raw).strip()
+            if not ip:
+                continue
+            if ip in seen:
+                continue
+            seen.add(ip)
+            extra_targets.append(ip)
+
+        # Tudo OK! Retorna a lista para o agente coletar SNMP no Windows!
+        return {
+            "status": "ok",
+            "extra_targets": extra_targets,
+            "warnings": warnings,
+            "count": len(extra_targets),
+        }
+
+    except Exception as top_level_err:
+        # ABSOLUTAMENTE NENHUM ERRO VAI VAZAR! SEMPRE HTTP 200!
+        return {
+            "status": "ok",
+            "extra_targets": [],
+            "warnings": [f"[extra-targets] Erro top-level (não quebra nada!): {str(top_level_err)[:200]}"],
+            "count": 0,
+        }
+
+
 @router.post("/agent/report", status_code=200)
 async def agent_report(
     payload: AgentReport,
