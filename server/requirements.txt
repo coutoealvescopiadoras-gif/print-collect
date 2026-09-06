@@ -15,13 +15,20 @@ python-dotenv==1.0.1
 httpx==0.28.1
 mangum==0.17.0
 pg8000==1.31.3
-# ----- SNMP (06/09 Julio: impressoras MANUAIS nao coletavam!) -----
-# BACKEND agora tambem coleta SNMP diretamente para impressoras cadastradas
-# manualmente que o agente nao descobriu automaticamente na rede.
-# Julio pediu: se a impressora estiver cadastrada manual, coleta de qualquer jeito!
-# OBS: Se a instalacao nao quiser SNMP no servidor (ex: rede isolada), basta
-# comentar as 2 linhas abaixo. O sistema funciona NORMALMENTE sem elas (o
-# endpoint /agent/report apenas PULA a coleta extra de impressoras manuais!)
-pysnmp-lextudio==6.1.7
-pyasn1==0.6.1
-pysmi-lextudio==1.5.10
+# =================================================================
+# SNMP BACKEND PARA IMPRESSORAS MANUAIS (Julio 06/09)
+# -----------------------------------------------------------------
+# O CODIGO no routes.py JA ESTA PRONTO e usa try/except TOTALMENTE SEGURO
+# (se as libs abaixo NAO estiverem instaladas ele SKIPA silenciosamente
+#  — NUNCA QUEBRA a resposta do agente nem da API!).
+#
+# O deploy inicial do Render falhou porque algumas destas bibliotecas
+# precisam de compilação C. Para manter tudo SEGURO e ESTAVEL, DEIXAMOS
+# COMENTADAS por PADRÃO. Para ATIVAR depois, basta:
+#   1) Descomentar as 3 linhas abaixo
+#   2) Commit & push (Render deploya)
+#   3) Se falhar de novo, voltamos a comentar e pronto.
+# =================================================================
+# pysnmp-lextudio==6.1.7
+# pyasn1==0.6.1
+# pysmi-lextudio==1.5.10

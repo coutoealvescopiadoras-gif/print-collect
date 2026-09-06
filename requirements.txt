@@ -16,7 +16,12 @@ httpx==0.28.1
 mangum==0.17.0
 pg8000==1.31.3
 starlette==0.41.3
-# ----- SNMP (06/09 Julio: impressoras MANUAIS nao coletavam!) -----
-pysnmp-lextudio==6.1.7
-pyasn1==0.6.1
-pysmi-lextudio==1.5.10
+# =================================================================
+# SNMP BACKEND - IMPRESSORAS MANUAIS (Julio 06/09)
+# Deixamos COMENTADAS por padrao para nao quebrar deploy Render.
+# O codigo em routes.py continua la e funciona se a lib for instalada
+# manualmente depois (try/except seguro).
+# =================================================================
+# pysnmp-lextudio==6.1.7
+# pyasn1==0.6.1
+# pysmi-lextudio==1.5.10
