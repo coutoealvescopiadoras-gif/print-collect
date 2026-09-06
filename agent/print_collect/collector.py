@@ -37,6 +37,46 @@ def setup_logging(log_file: str | None = None) -> None:
 
 def run_cycle(config: AgentConfig, sender: ApiSender) -> int:
     snmp = config.snmp
+
+    # ==============================================================
+    # NOVO (Julio 06/09: IMPRESSORAS MANUAIS EM SUB-REDES DIFERENTES!)
+    # Baixa IPs adicionais direto do servidor (endpoint novo
+    # /api/agent/extra-targets, ja autenticado via X-Agent-Token).
+    #
+    # 🔒 SEGURANCA 100% ADITIVA (NAO QUEBRA NADA!):
+    #   - Chama fetch_extra_targets() que internamente TEM try/except TOTAL.
+    #   - Qualquer erro (servidor antigo sem endpoint, rede, timeout...)
+    #       => retorna lista vazia, log warning apenas, NAO ABORTA CICLO!
+    #   - Existe FEATURE FLAG de emergencia PRINTCOLLECT_DISABLE_EXTRA_TARGETS=1
+    #       para DESATIVAR TUDO e voltar comportamento 100% original.
+    # ==============================================================
+    try:
+        extra_ips = sender.fetch_extra_targets()
+        if extra_ips:
+            # Adiciona aos IPs fixos ja configurados, SEM duplicatas!
+            existing_lower = {str(ip).strip().lower() for ip in (snmp.ips or [])}
+            added_count = 0
+            # Nao queremos alterar a lista original sem necessidade
+            new_ips = list(snmp.ips or [])
+            for extra in extra_ips:
+                if extra.strip().lower() not in existing_lower:
+                    new_ips.append(extra)
+                    existing_lower.add(extra.strip().lower())
+                    added_count += 1
+            if added_count > 0:
+                snmp.ips = new_ips
+                logger.info(
+                    "[extra-targets] Adicionados %d IP(s) do servidor na lista de alvos SNMP. Total IPs agora: %d.",
+                    added_count,
+                    len(snmp.ips),
+                )
+    except Exception as exc_top:
+        # Ultima camada de protecao: NUNCA deixa erro escapar aqui!
+        logger.warning(
+            "[extra-targets] Erro ao integrar IPs extras (ignorado, coleta normal continua 100%% ok): %s",
+            exc_top,
+        )
+
     readings = collect_all(snmp.subnets, snmp.ips, snmp.community, snmp.timeout)
 
     # ==============================================================

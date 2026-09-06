@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Optional
 
@@ -47,6 +48,69 @@ class ApiSender:
     def heartbeat(self) -> None:
         result = self._post("/api/agent/heartbeat")
         logger.debug("Heartbeat OK: %s", result)
+
+    # =========================================================================
+    # NOVO (Julio 06/09: IMPRESSORAS MANUAIS EM SUB-REDES DIFERENTES!)
+    # GET /api/agent/extra-targets
+    #
+    # 🔒 CAMADAS DE SEGURANCA ANTI-QUEBRA (NUNCA QUEBRA a coleta normal!):
+    #   1. FEATURE FLAG: se PRINTCOLLECT_DISABLE_EXTRA_TARGETS = 1 (qualquer
+    #      valor verdadeiro) => NAO CHAMA NADA, retorna lista vazia.
+    #      (comando Windows p/ desativar urgente: setx PRINTCOLLECT_DISABLE_EXTRA_TARGETS 1 /M)
+    #   2. Timeout CURTO 8s (nao atrasa a coleta)
+    #   3. 1 tentativa so (nao fica retentando)
+    #   4. QUALQUER erro: retorna lista vazia, log warning, NAO ABORTA CICLO
+    #   5. Backwards compatibility: servidor antigo sem esse endpoint retorna
+    #      404 => tratado como erro normal (retorna [], nao quebra nada!)
+    # =========================================================================
+    def fetch_extra_targets(self) -> list[str]:
+        # Camada 1: Feature flag de emergencia (desativa tudo, volta original!)
+        _env_disable = str(os.environ.get("PRINTCOLLECT_DISABLE_EXTRA_TARGETS") or "").strip().lower()
+        if _env_disable in ("1", "true", "yes", "sim", "on", "s"):
+            logger.info("[extra-targets] Desativado por variavel PRINTCOLLECT_DISABLE_EXTRA_TARGETS=%s (modo 100% original).", _env_disable)
+            return []
+
+        try:
+            url = f"{self.server_url}/api/agent/extra-targets"
+            headers = {"X-Agent-Token": self.agent_token}
+            # Camada 2: timeout curto, 1 tentativa so
+            response = requests.get(url, headers=headers, timeout=8)
+            response.raise_for_status()
+            data = response.json()
+
+            targets_raw = data.get("extra_targets") or []
+            if not isinstance(targets_raw, list):
+                logger.warning("[extra-targets] Resposta inesperada (extra_targets nao eh lista). Ignorado.")
+                return []
+
+            # Sanitiza
+            result = []
+            seen = set()
+            for t in targets_raw:
+                if not isinstance(t, str):
+                    continue
+                ip = t.strip()
+                if not ip:
+                    continue
+                if ip in seen:
+                    continue
+                seen.add(ip)
+                result.append(ip)
+
+            if result:
+                logger.info("[extra-targets] Obtidos %d IPs adicionais do servidor: %s", len(result), result)
+            else:
+                logger.debug("[extra-targets] Nenhum IP adicional retornado pelo servidor (normal).")
+            return result
+
+        except Exception as exc:
+            # Camada 3: QUALQUER erro (404 servidor antigo, rede, DNS, timeout...)
+            # LOGA apenas WARNING e retorna lista vazia — NAO QUEBRA NADA!
+            logger.warning(
+                "[extra-targets] Nao foi possivel obter IPs extras (ignorado, coleta normal continua 100%% ok): %s",
+                exc,
+            )
+            return []
 
     def send_readings(self, readings: list[PrinterData], agent_version: str) -> dict:
         payload = {
