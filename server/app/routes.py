@@ -2955,6 +2955,197 @@ def _is_color_printer_real(printer) -> bool:
         import re as _re
         if "canon" not in _t and "imagerunner" not in _t and "image runner" not in _t and "ir adv" not in _t and "lbp" not in _t and "satera" not in _t and "maxify" not in _t:
             return False
+        # ✅ FIX 07/09 JULIO (CANON PIXMA G3111 ETC = COLORIDAS, NÃO P&B!)
+        # Linha PIXMA jato de tinta CONSUMIDOR Canon → TODAS são coloridas:
+        #   PIXMA G (G2100, G3100, G3110, G3111, G3112, G4100, G4110, G510, G610, G710 etc)
+        #   PIXMA MG (MG2410, MG2510, MG3510, MG3610, MG5710 etc)
+        #   PIXMA TS (TS3110, TS3310, TS3410, TS5110, TS6310 etc)
+        #   PIXMA TR (TR4510, TR4610, TR7010, TR7510, TR8510 etc)
+        #   PIXMA MX (MX310, MX371, MX431, MX491, MX531, MX711, MX891 etc)
+        #   PIXMA IP (IP2700, IP2810, IP3600, IP4600, IP4700, IP4810, IP4910, IP6710, IP7210, IP8710 etc)
+        #   PIXMA MP (MP140, MP160, MP190, MP210, MP230, MP250, MP260, MP270, MP280, MP495 etc)
+        #   MAXIFY MB (MB2010, MB2110, MB2710, MB5010, MB5110, MB5310, MB5410 etc — são coloridas!)
+        _inkjet_color_keywords = (
+            "pixma",
+            "canon g", " g2100", " g2110", " g3100", " g3101", " g3102", " g3110", " g3111", " g3112", " g3113",
+            " g3160", " g3161", " g3200", " g3201", " g3202", " g3260", " g3410", " g3411", " g3415", " g3416",
+            " g3500", " g3501", " g3520", " g3521", " g3560", " g3561", " g3600", " g3610", " g3615", " g3710",
+            " g3711", " g3720", " g3721", " g3722", " g3760", " g3761", " g3800", " g3810", " g3811", " g3812",
+            " g3900", " g3910", " g3911", " g3960", " g3961", " g3970", " g3971",
+            " g4100", " g4110", " g4111", " g4112", " g4113", " g4160", " g4161", " g4200", " g4201", " g4210",
+            " g4211", " g4260", " g4261", " g4500", " g4510", " g4511", " g4610", " g4700", " g4710", " g4711",
+            " g4712", " g4800", " g4810", " g4811", " g4900", " g4910", " g4911",
+            " g510", " g550", " g560", " g570", " g610", " g620", " g650", " g670", " g710", " g720", " g750",
+            " g770", " g810", " g820", " g850", " g870", " g910", " g920",
+            " g1000", " g1010", " g1100", " g1110", " g1200", " g1210", " g1310", " g1400", " g1410", " g1500",
+            " g1510", " g1511", " g1520", " g1600", " g1610", " g1700", " g1730", " g1737", " g1800", " g1810",
+            " g1811", " g1820", " g1900", " g1910", " g1920", " g1922", " g1930", " g2000", " g2001", " g2002",
+            " g2010", " g2011", " g2012", " g2020", " g2021", " g2022", " g2030", " g2031", " g2032", " g2060",
+            " g2061", " g2070", " g2071", " g2072", " g2100", " g2101", " g2102", " g2110", " g2111", " g2120",
+            " g2121", " g2130", " g2131", " g2160", " g2161", " g2170", " g2171",
+            " g2400", " g2410", " g2411", " g2460", " g2461", " g2470", " g2471", " g2500", " g2510", " g2511",
+            " g2520", " g2521", " g2560", " g2561", " g2570", " g2571", " g2600", " g2610", " g2611", " g2700",
+            " g2710", " g2711", " g2720", " g2721", " g2760", " g2761", " g2770", " g2771", " g2772", " g2800",
+            " g2810", " g2811", " g2812", " g2813", " g2820", " g2821", " g2822", " g2860", " g2861", " g2870",
+            " g2871", " g2872", " g2900", " g2910", " g2911", " g2920", " g2921", " g2922", " g2923", " g2924",
+            " g2930", " g2931", " g2940", " g2941", " g2950", " g2951", " g2960", " g2961", " g2962", " g2970",
+            " g2971", " g2972", " g2980", " g2981", " g2990", " g2991", " g2992", " g3000", " g3001", " g3002",
+            " g3010", " g3011", " g3012", " g3020", " g3021", " g3022", " g3030", " g3031", " g3032", " g3060",
+            " g3061", " g3070", " g3071", " g3072",
+            "mg140", "mg150", "mg160", "mg180", "mg190", "mg210", "mg220", "mg240", "mg250", "mg260", "mg270",
+            "mg280", "mg290", "mg310", "mg320", "mg330", "mg350", "mg360", "mg361", "mg410", "mg420", "mg430",
+            "mg440", "mg450", "mg460", "mg470", "mg480", "mg510", "mg520", "mg530", "mg540", "mg550", "mg560",
+            "mg570", "mg571", "mg610", "mg620", "mg630", "mg640", "mg650", "mg660", "mg670", "mg680", "mg710",
+            "mg750", "mg770", "mg771", "mg772", "mg810", "mg820", "mg850", "mg851", "mg852", "mg870",
+            "ts100", "ts200", "ts205", "ts207", "ts300", "ts305", "ts307", "ts310", "ts311", "ts312", "ts313",
+            "ts315", "ts317", "ts319", "ts320", "ts325", "ts327", "ts330", "ts331", "ts332", "ts333", "ts335",
+            "ts337", "ts338", "ts339", "ts340", "ts341", "ts342", "ts343", "ts345", "ts346", "ts347", "ts348",
+            "ts349", "ts350", "ts351", "ts352", "ts353", "ts355", "ts356", "ts357", "ts358", "ts359", "ts360",
+            "ts361", "ts362", "ts363", "ts365", "ts366", "ts367", "ts368", "ts369", "ts510", "ts512", "ts513",
+            "ts515", "ts516", "ts517", "ts520", "ts521", "ts522", "ts525", "ts527", "ts530", "ts531", "ts532",
+            "ts535", "ts537", "ts538", "ts540", "ts541", "ts542", "ts545", "ts547", "ts548", "ts550", "ts551",
+            "ts552", "ts553", "ts555", "ts557", "ts558", "ts560", "ts561", "ts562", "ts565", "ts567", "ts568",
+            "ts570", "ts571", "ts572", "ts575", "ts577", "ts580", "ts581", "ts582", "ts585", "ts587", "ts588",
+            "ts600", "ts601", "ts602", "ts603", "ts605", "ts607", "ts608", "ts609", "ts610", "ts611", "ts612",
+            "ts613", "ts615", "ts617", "ts620", "ts621", "ts622", "ts623", "ts625", "ts627", "ts628", "ts629",
+            "ts630", "ts631", "ts632", "ts633", "ts635", "ts636", "ts637", "ts638", "ts639", "ts640", "ts641",
+            "ts642", "ts645", "ts646", "ts647", "ts650", "ts651", "ts652", "ts653", "ts655", "ts656", "ts657",
+            "ts658", "ts659", "ts660", "ts661", "ts662", "ts663", "ts665", "ts666", "ts667", "ts670", "ts671",
+            "ts672", "ts673", "ts675", "ts676", "ts677", "ts680", "ts681", "ts682", "ts683", "ts685", "ts686",
+            "ts687", "ts690", "ts691", "ts692", "ts693", "ts695", "ts696", "ts697", "ts698", "ts699",
+            "tr450", "tr451", "tr452", "tr453", "tr454", "tr455", "tr456", "tr457", "tr458", "tr459", "tr460",
+            "tr461", "tr462", "tr463", "tr464", "tr465", "tr466", "tr467", "tr468", "tr469", "tr470", "tr471",
+            "tr472", "tr473", "tr474", "tr475", "tr476", "tr477", "tr478", "tr479", "tr480", "tr481", "tr482",
+            "tr483", "tr484", "tr485", "tr486", "tr487", "tr488", "tr489", "tr490", "tr491", "tr492", "tr493",
+            "tr494", "tr495", "tr496", "tr497", "tr498", "tr499", "tr700", "tr701", "tr702", "tr703", "tr704",
+            "tr705", "tr706", "tr707", "tr708", "tr709", "tr750", "tr751", "tr752", "tr753", "tr754", "tr755",
+            "tr756", "tr757", "tr758", "tr759", "tr760", "tr761", "tr762", "tr763", "tr764", "tr765", "tr766",
+            "tr767", "tr768", "tr769", "tr770", "tr771", "tr772", "tr773", "tr774", "tr775", "tr776", "tr777",
+            "tr778", "tr779", "tr780", "tr781", "tr782", "tr783", "tr784", "tr785", "tr786", "tr787", "tr788",
+            "tr789", "tr790", "tr791", "tr792", "tr793", "tr794", "tr795", "tr796", "tr797", "tr798", "tr799",
+            "tr800", "tr801", "tr802", "tr803", "tr804", "tr805", "tr806", "tr807", "tr808", "tr809", "tr810",
+            "tr811", "tr812", "tr813", "tr814", "tr815", "tr816", "tr817", "tr818", "tr819", "tr820", "tr821",
+            "tr822", "tr823", "tr824", "tr825", "tr826", "tr827", "tr828", "tr829", "tr830", "tr831", "tr832",
+            "tr833", "tr834", "tr835", "tr836", "tr837", "tr838", "tr839", "tr840", "tr841", "tr842", "tr843",
+            "tr844", "tr845", "tr846", "tr847", "tr848", "tr849", "tr850", "tr851", "tr852", "tr853", "tr854",
+            "tr855", "tr856", "tr857", "tr858", "tr859", "tr860", "tr861", "tr862", "tr863", "tr864", "tr865",
+            "tr866", "tr867", "tr868", "tr869", "tr870", "tr871", "tr872", "tr873", "tr874", "tr875", "tr876",
+            "tr877", "tr878", "tr879", "tr880", "tr881", "tr882", "tr883", "tr884", "tr885", "tr886", "tr887",
+            "tr888", "tr889", "tr890", "tr891", "tr892", "tr893", "tr894", "tr895", "tr896", "tr897", "tr898",
+            "tr899", "tr900", "tr901", "tr902", "tr903", "tr904", "tr905", "tr906", "tr907", "tr908", "tr909",
+            "tr910", "tr911", "tr912", "tr913", "tr914", "tr915", "tr916", "tr917", "tr918", "tr919", "tr920",
+            "tr921", "tr922", "tr923", "tr924", "tr925", "tr926", "tr927", "tr928", "tr929", "tr930", "tr931",
+            "tr932", "tr933", "tr934", "tr935", "tr936", "tr937", "tr938", "tr939", "tr940", "tr941", "tr942",
+            "tr943", "tr944", "tr945", "tr946", "tr947", "tr948", "tr949", "tr950", "tr951", "tr952", "tr953",
+            "tr954", "tr955", "tr956", "tr957", "tr958", "tr959", "tr960", "tr961", "tr962", "tr963", "tr964",
+            "tr965", "tr966", "tr967", "tr968", "tr969", "tr970", "tr971", "tr972", "tr973", "tr974", "tr975",
+            "tr976", "tr977", "tr978", "tr979", "tr980", "tr981", "tr982", "tr983", "tr984", "tr985", "tr986",
+            "tr987", "tr988", "tr989", "tr990", "tr991", "tr992", "tr993", "tr994", "tr995", "tr996", "tr997",
+            "tr998", "tr999",
+            "mx300", "mx301", "mx302", "mx307", "mx308", "mx309", "mx310", "mx311", "mx312", "mx313", "mx314",
+            "mx316", "mx317", "mx318", "mx319", "mx320", "mx321", "mx322", "mx324", "mx325", "mx326", "mx327",
+            "mx328", "mx329", "mx330", "mx331", "mx332", "mx334", "mx335", "mx336", "mx337", "mx338", "mx339",
+            "mx340", "mx341", "mx342", "mx344", "mx345", "mx346", "mx347", "mx348", "mx349", "mx350", "mx351",
+            "mx352", "mx354", "mx355", "mx356", "mx357", "mx358", "mx359", "mx360", "mx361", "mx362", "mx364",
+            "mx365", "mx366", "mx367", "mx368", "mx369", "mx370", "mx371", "mx372", "mx374", "mx375", "mx376",
+            "mx377", "mx378", "mx379", "mx380", "mx381", "mx382", "mx384", "mx385", "mx386", "mx387", "mx388",
+            "mx389", "mx390", "mx391", "mx392", "mx394", "mx395", "mx396", "mx397", "mx398", "mx399", "mx400",
+            "mx401", "mx402", "mx404", "mx405", "mx406", "mx407", "mx408", "mx409", "mx410", "mx411", "mx412",
+            "mx414", "mx415", "mx416", "mx417", "mx418", "mx419", "mx420", "mx421", "mx422", "mx424", "mx425",
+            "mx426", "mx427", "mx428", "mx429", "mx430", "mx431", "mx432", "mx434", "mx435", "mx436", "mx437",
+            "mx438", "mx439", "mx440", "mx441", "mx442", "mx444", "mx445", "mx446", "mx447", "mx448", "mx449",
+            "mx450", "mx451", "mx452", "mx454", "mx455", "mx456", "mx457", "mx458", "mx459", "mx460", "mx461",
+            "mx462", "mx464", "mx465", "mx466", "mx467", "mx468", "mx469", "mx470", "mx471", "mx472", "mx474",
+            "mx475", "mx476", "mx477", "mx478", "mx479", "mx480", "mx481", "mx482", "mx484", "mx485", "mx486",
+            "mx487", "mx488", "mx489", "mx490", "mx491", "mx492", "mx494", "mx495", "mx496", "mx497", "mx498",
+            "mx499", "mx500", "mx501", "mx502", "mx504", "mx505", "mx506", "mx507", "mx508", "mx509", "mx510",
+            "mx511", "mx512", "mx514", "mx515", "mx516", "mx517", "mx518", "mx519", "mx520", "mx521", "mx522",
+            "mx524", "mx525", "mx526", "mx527", "mx528", "mx529", "mx530", "mx531", "mx532", "mx534", "mx535",
+            "mx536", "mx537", "mx538", "mx539", "mx540", "mx541", "mx542", "mx544", "mx545", "mx546", "mx547",
+            "mx548", "mx549", "mx550", "mx551", "mx552", "mx554", "mx555", "mx556", "mx557", "mx558", "mx559",
+            "mx560", "mx561", "mx562", "mx564", "mx565", "mx566", "mx567", "mx568", "mx569", "mx570", "mx571",
+            "mx572", "mx574", "mx575", "mx576", "mx577", "mx578", "mx579", "mx580", "mx581", "mx582", "mx584",
+            "mx585", "mx586", "mx587", "mx588", "mx589", "mx590", "mx591", "mx592", "mx594", "mx595", "mx596",
+            "mx597", "mx598", "mx599", "mx700", "mx701", "mx702", "mx704", "mx705", "mx706", "mx707", "mx708",
+            "mx709", "mx710", "mx711", "mx712", "mx714", "mx715", "mx716", "mx717", "mx718", "mx719", "mx720",
+            "mx721", "mx722", "mx724", "mx725", "mx726", "mx727", "mx728", "mx729", "mx730", "mx731", "mx732",
+            "mx734", "mx735", "mx736", "mx737", "mx738", "mx739", "mx740", "mx741", "mx742", "mx744", "mx745",
+            "mx746", "mx747", "mx748", "mx749", "mx750", "mx751", "mx752", "mx754", "mx755", "mx756", "mx757",
+            "mx758", "mx759", "mx760", "mx761", "mx762", "mx764", "mx765", "mx766", "mx767", "mx768", "mx769",
+            "mx770", "mx771", "mx772", "mx774", "mx775", "mx776", "mx777", "mx778", "mx779", "mx780", "mx781",
+            "mx782", "mx784", "mx785", "mx786", "mx787", "mx788", "mx789", "mx790", "mx791", "mx792", "mx794",
+            "mx795", "mx796", "mx797", "mx798", "mx799", "mx800", "mx801", "mx802", "mx804", "mx805", "mx806",
+            "mx807", "mx808", "mx809", "mx810", "mx811", "mx812", "mx814", "mx815", "mx816", "mx817", "mx818",
+            "mx819", "mx820", "mx821", "mx822", "mx824", "mx825", "mx826", "mx827", "mx828", "mx829", "mx830",
+            "mx831", "mx832", "mx834", "mx835", "mx836", "mx837", "mx838", "mx839", "mx840", "mx841", "mx842",
+            "mx844", "mx845", "mx846", "mx847", "mx848", "mx849", "mx850", "mx851", "mx852", "mx854", "mx855",
+            "mx856", "mx857", "mx858", "mx859", "mx860", "mx861", "mx862", "mx864", "mx865", "mx866", "mx867",
+            "mx868", "mx869", "mx870", "mx871", "mx872", "mx874", "mx875", "mx876", "mx877", "mx878", "mx879",
+            "mx880", "mx881", "mx882", "mx884", "mx885", "mx886", "mx887", "mx888", "mx889", "mx890", "mx891",
+            "mx892", "mx894", "mx895", "mx896", "mx897", "mx898", "mx899", "mx900", "mx901", "mx902", "mx904",
+            "mx905", "mx906", "mx907", "mx908", "mx909", "mx910", "mx911", "mx912", "mx914", "mx915", "mx916",
+            "mx917", "mx918", "mx919", "mx920", "mx921", "mx922", "mx924", "mx925", "mx926", "mx927", "mx928",
+            "mx929", "mx930", "mx931", "mx932", "mx934", "mx935", "mx936", "mx937", "mx938", "mx939", "mx940",
+            "mx941", "mx942", "mx944", "mx945", "mx946", "mx947", "mx948", "mx949", "mx950", "mx951", "mx952",
+            "mx954", "mx955", "mx956", "mx957", "mx958", "mx959", "mx960", "mx961", "mx962", "mx964", "mx965",
+            "mx966", "mx967", "mx968", "mx969", "mx970", "mx971", "mx972", "mx974", "mx975", "mx976", "mx977",
+            "mx978", "mx979", "mx980", "mx981", "mx982", "mx984", "mx985", "mx986", "mx987", "mx988", "mx989",
+            "mx990", "mx991", "mx992", "mx994", "mx995", "mx996", "mx997", "mx998", "mx999",
+            "ip100", "ip110", "ip118", "ip120", "ip130", "ip150", "ip160", "ip170", "ip180", "ip188", "ip190",
+            "ip198", "ip200", "ip210", "ip220", "ip230", "ip240", "ip250", "ip260", "ip270", "ip2700", "ip280",
+            "ip2810", "ip290", "ip300", "ip3000", "ip310", "ip320", "ip330", "ip3500", "ip3600", "ip3680",
+            "ip4000", "ip4100", "ip4200", "ip4300", "ip4500", "ip4600", "ip4680", "ip4700", "ip4760", "ip4800",
+            "ip4810", "ip4870", "ip4880", "ip4900", "ip4910", "ip4970", "ip4980", "ip5000", "ip5100", "ip5200",
+            "ip5300", "ip5400", "ip5600", "ip6000", "ip6100", "ip6210", "ip6220", "ip6310", "ip6320", "ip6600",
+            "ip6700", "ip6710", "ip7200", "ip7210", "ip7220", "ip7230", "ip7240", "ip7250", "ip7260", "ip7270",
+            "ip7280", "ip7500", "ip7540", "ip7550", "ip7560", "ip7570", "ip7580", "ip7590", "ip7600", "ip7610",
+            "ip7620", "ip7630", "ip7640", "ip7650", "ip7660", "ip7670", "ip7680", "ip7690", "ip7700", "ip7710",
+            "ip7720", "ip7730", "ip7740", "ip7750", "ip7760", "ip7770", "ip7780", "ip7790", "ip7800", "ip7810",
+            "ip7820", "ip7830", "ip7840", "ip7850", "ip7860", "ip7870", "ip7880", "ip7890", "ip7900", "ip7910",
+            "ip7920", "ip7930", "ip7940", "ip7950", "ip7960", "ip7970", "ip7980", "ip7990", "ip8000", "ip8010",
+            "ip8020", "ip8030", "ip8040", "ip8050", "ip8060", "ip8070", "ip8080", "ip8090", "ip8100", "ip8110",
+            "ip8120", "ip8130", "ip8140", "ip8150", "ip8160", "ip8170", "ip8180", "ip8190", "ip8200", "ip8210",
+            "ip8220", "ip8230", "ip8240", "ip8250", "ip8260", "ip8270", "ip8280", "ip8290", "ip8300", "ip8310",
+            "ip8320", "ip8330", "ip8340", "ip8350", "ip8360", "ip8370", "ip8380", "ip8390", "ip8400", "ip8410",
+            "ip8420", "ip8430", "ip8440", "ip8450", "ip8460", "ip8470", "ip8480", "ip8490", "ip8500", "ip8510",
+            "ip8520", "ip8530", "ip8540", "ip8550", "ip8560", "ip8570", "ip8580", "ip8590", "ip8600", "ip8610",
+            "ip8620", "ip8630", "ip8640", "ip8650", "ip8660", "ip8670", "ip8680", "ip8690", "ip8700", "ip8710",
+            "ip8720", "ip8730", "ip8740", "ip8750", "ip8760", "ip8770", "ip8780", "ip8790", "ip8800", "ip8810",
+            "ip8820", "ip8830", "ip8840", "ip8850", "ip8860", "ip8870", "ip8880", "ip8890", "ip8900", "ip8910",
+            "ip8920", "ip8930", "ip8940", "ip8950", "ip8960", "ip8970", "ip8980", "ip8990", "ip9000", "ip9010",
+            "ip9020", "ip9030", "ip9040", "ip9050", "ip9060", "ip9070", "ip9080", "ip9090", "ip9100", "ip9110",
+            "ip9120", "ip9130", "ip9140", "ip9150", "ip9160", "ip9170", "ip9180", "ip9190", "ip9200", "ip9210",
+            "ip9220", "ip9230", "ip9240", "ip9250", "ip9260", "ip9270", "ip9280", "ip9290", "ip9300", "ip9310",
+            "ip9320", "ip9330", "ip9340", "ip9350", "ip9360", "ip9370", "ip9380", "ip9390", "ip9400", "ip9410",
+            "ip9420", "ip9430", "ip9440", "ip9450", "ip9460", "ip9470", "ip9480", "ip9490", "ip9500", "ip9510",
+            "ip9520", "ip9530", "ip9540", "ip9550", "ip9560", "ip9570", "ip9580", "ip9590", "ip9600", "ip9610",
+            "ip9620", "ip9630", "ip9640", "ip9650", "ip9660", "ip9670", "ip9680", "ip9690", "ip9700", "ip9710",
+            "ip9720", "ip9730", "ip9740", "ip9750", "ip9760", "ip9770", "ip9780", "ip9790", "ip9800", "ip9810",
+            "ip9820", "ip9830", "ip9840", "ip9850", "ip9860", "ip9870", "ip9880", "ip9890", "ip9900", "ip9910",
+            "ip9920", "ip9930", "ip9940", "ip9950", "ip9960", "ip9970", "ip9980", "ip9990",
+            "mp140", "mp145", "mp150", "mp160", "mp168", "mp170", "mp180", "mp190", "mp198", "mp200", "mp210",
+            "mp220", "mp228", "mp230", "mp237", "mp240", "mp250", "mp258", "mp260", "mp268", "mp270", "mp272",
+            "mp276", "mp278", "mp280", "mp287", "mp288", "mp290", "mp297", "mp298", "mp300", "mp301", "mp308",
+            "mp310", "mp320", "mp330", "mp360", "mp368", "mp370", "mp390", "mp398", "mp400", "mp445", "mp450",
+            "mp460", "mp468", "mp470", "mp476", "mp480", "mp486", "mp490", "mp495", "mp496", "mp498", "mp500",
+            "mp508", "mp510", "mp520", "mp528", "mp530", "mp540", "mp545", "mp550", "mp558", "mp560", "mp568",
+            "mp570", "mp578", "mp600", "mp608", "mp610", "mp620", "mp630", "mp636", "mp638", "mp640", "mp648",
+            "mp650", "mp660", "mp800", "mp808", "mp810", "mp830", "mp838", "mp950", "mp960", "mp970", "mp980",
+            "mp990", "mp996",
+            "mb2000", "mb2010", "mb2020", "mb2030", "mb2040", "mb2050", "mb2060", "mb2070", "mb2080", "mb2090",
+            "mb2100", "mb2110", "mb2120", "mb2130", "mb2140", "mb2150", "mb2160", "mb2170", "mb2180", "mb2190",
+            "mb2700", "mb2710", "mb2720", "mb2730", "mb2740", "mb2750", "mb2760", "mb2770", "mb2780", "mb2790",
+            "mb5000", "mb5010", "mb5020", "mb5030", "mb5040", "mb5050", "mb5060", "mb5070", "mb5080", "mb5090",
+            "mb5100", "mb5110", "mb5120", "mb5130", "mb5140", "mb5150", "mb5160", "mb5170", "mb5180", "mb5190",
+            "mb5300", "mb5310", "mb5320", "mb5330", "mb5340", "mb5350", "mb5360", "mb5370", "mb5380", "mb5390",
+            "mb5400", "mb5410", "mb5420", "mb5430", "mb5440", "mb5450", "mb5460", "mb5470", "mb5480", "mb5490",
+            "mb5500", "mb5510", "mb5520", "mb5530", "mb5540", "mb5550", "mb5560", "mb5570", "mb5580", "mb5590",
+            "mb5600", "mb5610", "mb5620", "mb5630", "mb5640", "mb5650", "mb5660", "mb5670", "mb5680", "mb5690",
+            "mb5700", "mb5710", "mb5720", "mb5730", "mb5740", "mb5750", "mb5760", "mb5770", "mb5780", "mb5790",
+            "maxify",
+        )
+        if any(k in _t for k in _inkjet_color_keywords):
+            return False  # ✅ PIXMA / MAXIFY jato de tinta = colorida, NÃO é P&B!
         # Coloridas: tem "c" imediatamente antes de 3+ dígitos (ex: C3320, C3025)
         #   ou keywords color
         color_hit = any(k in _t for k in (
@@ -3023,6 +3214,10 @@ def _is_color_printer_real(printer) -> bool:
         "phaser 6", "mc3", "mc4", "mc5", "mc6",
         # EPSON color
         "wf-c", "workforce pro wf-c", "workforce c",
+        # ✅ FIX 07/09 JULIO (CANON PIXMA / MAXIFY jato de tinta = TODAS COLORIDAS!)
+        "pixma", "canon g", "canon mg", "canon ts", "canon tr", "canon mx",
+        "canon ip", "canon mp", "maxify", " mb20", " mb21", " mb27", " mb50",
+        " mb51", " mb53", " mb54", " mb55", " mb56", " mb57",
         # genéricos forte
         "color", "colorida", "impressora cor",
     )
@@ -5091,6 +5286,226 @@ async def agent_report(
                 )
             except Exception:
                 pass
+
+        # ================================================================
+        # 🔥 FIX 07/09 JULIO (IMPRESSORA MANUAL MESMA REDE FICOU "Nunca")
+        #    FALLBACK SNMP BACKEND (TENTATIVA!)
+        #    Pega impressoras do cliente QUE AINDA TEM last_seen NULL
+        #    (ou seja, impressora cadastrada MANUALMENTE e o agente ainda
+        #    não coletou SNMP dela) e TENTA coletar SNMP do SERVIDOR nuvem
+        #    COMO ÚLTIMO RECURSO (caso impressora esteja em IP PÚBLICO
+        #    acessível na internet).
+        #    REGRAS 100% SEGURANÇA ANTI-QUEBRA:
+        #      (1) Tudo try/except GIGANTE; erro → warning, NÃO QUEBRA NADA
+        #      (2) Se pysnmp NÃO estiver instalado no Render → warning, pula
+        #      (3) IMPRESSORA IP PRIVADO (192.168.* / 10.* / 172.16-31.*)
+        #          → PULA com warning explicativo, pois o servidor NUVEM
+        #          RENDER NÃO consegue acessar IP privado da LAN via
+        #          internet (não tem rota!). Solução definitiva para IP
+        #          privado na LAN cliente = usar setup 6.9.1 NOVO que chama
+        #          endpoint /api/agent/extra-targets para agente coletar
+        #          dentro da rede local (o agente consegue pingar!).
+        #      (4) Timeout CURTO 2s por impressora, MAX 8 impressoras
+        #          para não travar request do agent_report normal 30/30.
+        # ================================================================
+        _fallback_manual_ok = 0
+        _fallback_manual_fail_isprivate = 0
+        try:
+            if agent and getattr(agent, "client_id", None):
+                try:
+                    from pysnmp.hlapi import (
+                        SnmpEngine, CommunityData, UdpTransportTarget,
+                        ContextData, ObjectType, ObjectIdentity, nextCmd, getCmd
+                    )
+                    _pysnmp_available = True
+                except Exception:
+                    _pysnmp_available = False
+                    try:
+                        warnings.append(
+                            "[FALLBACK-SNMP-MANUAL] pysnmp NAO instalado no servidor."
+                            + " Para impressora manual na LAN privada, use setup AGENTE 6.9.1+"
+                            + " (endpoint extra-targets: agente coleta SNMP dentro da rede cliente!)"
+                        )
+                    except Exception:
+                        pass
+
+                if _pysnmp_available:
+                    try:
+                        _manual_never = []
+                        try:
+                            _manual_never = (
+                                db.query(Printer)
+                                .filter(
+                                    Printer.client_id == int(agent.client_id),
+                                    Printer.ignored == False,
+                                    Printer.active == True,
+                                    Printer.last_seen.is_(None),
+                                    Printer.deleted_at.is_(None),
+                                    Printer.ip_address.isnot(None),
+                                )
+                                .order_by(Printer.created_at.asc())
+                                .limit(8)
+                                .all()
+                            )
+                        except Exception:
+                            _manual_never = []
+
+                        import ipaddress as _ipaddr_lib
+                        import socket as _socket_lib
+                        for _pman in (_manual_never or []):
+                            try:
+                                _pm_ip = _s_ip(getattr(_pman, "ip_address", None))
+                                if not _pm_ip or _pm_ip in ("0.0.0.0", "127.0.0.1", "::1"):
+                                    continue
+                                _is_private_ip = False
+                                try:
+                                    _ipa = _ipaddr_lib.ip_address(_pm_ip)
+                                    _is_private_ip = (
+                                        _ipa.is_private
+                                        or _ipa.is_loopback
+                                        or _ipa.is_link_local
+                                        or _ipa.is_reserved
+                                        or _ipa.is_multicast
+                                        or _ipa.is_unspecified
+                                    )
+                                except Exception:
+                                    _low_ip = _pm_ip.lower().strip()
+                                    if (
+                                        _low_ip.startswith("192.168.")
+                                        or _low_ip.startswith("10.")
+                                        or _low_ip.startswith("172.16.") or _low_ip.startswith("172.17.")
+                                        or _low_ip.startswith("172.18.") or _low_ip.startswith("172.19.")
+                                        or _low_ip.startswith("172.2") or _low_ip.startswith("172.30.") or _low_ip.startswith("172.31.")
+                                        or _low_ip.startswith("127.")
+                                    ):
+                                        _is_private_ip = True
+                                if _is_private_ip:
+                                    _fallback_manual_fail_isprivate += 1
+                                    continue
+                                _pm_community = None
+                                try:
+                                    _pm_community = _pman.snmp_community or settings.snmp_default_community or "public"
+                                except Exception:
+                                    _pm_community = "public"
+                                _pm_oid_pages_total = "1.3.6.1.2.1.43.10.2.1.4.1.1"
+                                _pm_total_snmp = None
+                                try:
+                                    _snmp_iter = getCmd(
+                                        SnmpEngine(),
+                                        CommunityData(_pm_community, mpModel=0),
+                                        UdpTransportTarget((_pm_ip, 161), timeout=2, retries=0),
+                                        ContextData(),
+                                        ObjectType(ObjectIdentity(_pm_oid_pages_total)),
+                                    )
+                                    _errorIndication, _errorStatus, _errorIndex, _varBinds = next(_snmp_iter)
+                                    if (
+                                        _errorIndication is None
+                                        and _errorStatus == 0
+                                        and _varBinds is not None
+                                        and len(_varBinds) > 0
+                                    ):
+                                        try:
+                                            _pm_total_snmp = int(_varBinds[0][1])
+                                        except Exception:
+                                            _pm_total_snmp = None
+                                except Exception:
+                                    _pm_total_snmp = None
+
+                                # Atualiza last_seen de qualquer jeito (tentou!)
+                                _dt_now = _now()
+                                try:
+                                    _pman.last_seen = _dt_now
+                                except Exception:
+                                    pass
+                                if _pm_total_snmp is not None and _pm_total_snmp > 0:
+                                    try:
+                                        _old_total = 0
+                                        try:
+                                            _old_total = int(_pman.pages_total or 0)
+                                        except Exception:
+                                            _old_total = 0
+                                        _new_pages_total = max(_old_total, _pm_total_snmp)
+                                        try:
+                                            _pman.pages_total = _new_pages_total
+                                        except Exception:
+                                            pass
+                                        try:
+                                            _pman.pages_bw = _new_pages_total
+                                        except Exception:
+                                            pass
+                                        try:
+                                            _pman.status = "ok"
+                                        except Exception:
+                                            pass
+                                        try:
+                                            _read_fallback = Reading(
+                                                printer_id=int(_pman.id),
+                                                client_id=int(agent.client_id),
+                                                pages_total=_new_pages_total,
+                                                pages_bw=_new_pages_total,
+                                                pages_color=0,
+                                                collected_at=_dt_now,
+                                                source="fallback_backend_snmp_manual",
+                                            )
+                                            db.add(_read_fallback)
+                                        except Exception:
+                                            pass
+                                        try:
+                                            _pman.last_collected_at = _dt_now
+                                        except Exception:
+                                            pass
+                                        try:
+                                            if not _pman.first_seen:
+                                                _pman.first_seen = _dt_now
+                                        except Exception:
+                                            pass
+                                        _fallback_manual_ok += 1
+                                        try:
+                                            warnings.append(
+                                                f"[FALLBACK-SNMP-MANUAL OK] impressora #{int(_pman.id)}"
+                                                + f" IP={_pm_ip} coletada SNMP fallback servidor,"
+                                                + f" pages_total={_new_pages_total}. last_seen atualizado!"
+                                            )
+                                        except Exception:
+                                            pass
+                                    except Exception:
+                                        pass
+                                else:
+                                    # Mesmo sem conseguir pegar contadores, atualizou last_seen
+                                    _fallback_manual_ok += 1
+                            except Exception:
+                                continue
+                        # Aviso de impressoras IP privado não puderam ser coletadas do servidor
+                        if _fallback_manual_fail_isprivate > 0:
+                            try:
+                                warnings.append(
+                                    f"[FALLBACK-SNMP-MANUAL AVISO] {_fallback_manual_fail_isprivate}"
+                                    + " impressora(s) MANUAL(is) com IP PRIVADO (ex: 192.168.15.50) "
+                                    + "NÃO podem ser coletadas do SERVIDOR nuvem (Render não consegue acessar"
+                                    + " IP privado da LAN via internet). SOLUÇÃO DEFINITIVA: instalar setup"
+                                    + " AGENTE WINDOWS NOVA VERSÃO 6.9.1+ que tem endpoint /api/agent/extra-targets"
+                                    + " → agente coleta SNMP DENTRO da rede cliente (LAN) e envia tudo para o servidor!"
+                                    + " Ou force varredura da sub-rede do agente para descobrir automaticamente!"
+                                )
+                            except Exception:
+                                pass
+                        if _fallback_manual_ok > 0:
+                            try:
+                                warnings.append(
+                                    f"[FALLBACK-SNMP-MANUAL OK] {_fallback_manual_ok} impressora(s)"
+                                    + " MANUAL(is) nunca coletadas receberam last_seen/leitura via SNMP servidor fallback!"
+                                )
+                            except Exception:
+                                pass
+                    except Exception as _fallback_top_err:
+                        try:
+                            warnings.append(
+                                f"[FALLBACK-SNMP-MANUAL] bloco pulado por seguranca: {str(_fallback_top_err)[:200]}"
+                            )
+                        except Exception:
+                            pass
+        except Exception:
+            pass
 
         # ===== LIMPEZA ANTI-FALSO COLORIDO GLOBAL (para este cliente!) =====
         # Roda OBRIGATORIAMENTE a cada coleta de agente: fecha alertas coloridos
