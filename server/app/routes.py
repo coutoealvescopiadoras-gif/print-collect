@@ -1251,8 +1251,27 @@ def dashboard_stats(db: Session = Depends(get_db), current_user: User = Depends(
         _cleanup_false_color_alerts(db, partner_id=None, client_id=client_id)
     db.commit()
 
-    printers_query = db.query(Printer).filter(Printer.ignored == False)
-    alerts_query = db.query(Alert).join(Printer).filter(Printer.ignored == False)
+    # =============================================================
+    # 🔥 FIX 07/09 JULIO BUG EXCLUIDAS VOLTAM LISTAGEM:
+    #    Adicionar FILTRO deleted_at IS NULL em TODAS queries que
+    #    retornam impressoras para o FRONTEND. Impressora marcada
+    #    como EXCLUIDA OFICIAL (deleted_at) nao aparece mais em
+    #    lugar NENHUM do painel (nem dashboard, nem listagem, nem alertas).
+    #    100% ADITIVO: nao toca em nenhuma query interna (agent_report etc).
+    # =============================================================
+    from sqlalchemy import and_ as _and_list_excluidas
+    printers_query = db.query(Printer).filter(
+        _and_list_excluidas(
+            Printer.ignored == False,
+            Printer.deleted_at.is_(None),
+        )
+    )
+    alerts_query = db.query(Alert).join(Printer).filter(
+        _and_list_excluidas(
+            Printer.ignored == False,
+            Printer.deleted_at.is_(None),
+        )
+    )
     clients_query = db.query(Client).filter(Client.active == True)
 
     if _is_partner(current_user):
@@ -1541,7 +1560,18 @@ def list_printers(
         pass
 
     scoped_client_id = _scoped_client_id(current_user, client_id)
-    query = db.query(Printer).filter(Printer.ignored == False)
+    # =============================================================
+    # 🔥 FIX 07/09 JULIO BUG EXCLUIDAS VOLTAM LISTAGEM (paralelo L1254):
+    #    MESMO filtro deleted_at IS NULL. Impressora excluida oficial
+    #    NAO aparece em lugar NENHUM da lista de impressoras no painel.
+    # =============================================================
+    from sqlalchemy import and_ as _and_list_excluidas2
+    query = db.query(Printer).filter(
+        _and_list_excluidas2(
+            Printer.ignored == False,
+            Printer.deleted_at.is_(None),
+        )
+    )
     # =================== 🔥 HOTFIX PAPELARIA EXATA 500 ===================
     #  ERA isouter=False (INNER JOIN): se impressora tivesse client_id NULL
     #  ou cliente FOSSE DELETADO/INEXISTENTE, JOIN matava TUDO ou dava erro
@@ -4318,14 +4348,19 @@ async def agent_extra_targets(
         #   - Ativa (active=True)
         #   - Nao ignorada (ignored=False)
         #   - Tem ip_address NAO VAZIO
+        #   - Nao excluida oficialmente (deleted_at IS NULL) - FIX 07/09
         # ==========================================================
         try:
+            from sqlalchemy import and_ as _and_extra
             rows = (
                 db.query(Printer.ip_address)
                 .filter(
-                    Printer.client_id == agent.client_id,
-                    Printer.active == True,
-                    Printer.ignored == False,
+                    _and_extra(
+                        Printer.client_id == agent.client_id,
+                        Printer.active == True,
+                        Printer.ignored == False,
+                        Printer.deleted_at.is_(None),
+                    )
                 )
                 .all()
             )
@@ -6128,12 +6163,66 @@ async def agent_report(
         except Exception:
             pass
 
+        # =================================================================
+        # 🔥🔥🔥 FIX 07/09 JULIO BUG IMPRESSORAS MANUAIS NAO COLETAM 30/30!
+        #    INJETA extra_targets DIRETAMENTE NA RESPOSTA DO agent_report!
+        #    Motivo: agente v6.9.0 (que voce esta usando agora!) NAO CHAMA
+        #    o endpoint GET /agent/extra-targets separado (isso era pra
+        #    ser feature do setup 6.9.1 que ainda nao buildamos!).
+        #    SOLUCAO BACKWARD COMPATIBLE: retorna lista de IPs na propria
+        #    resposta do report. AGENTES ANTIGOS ignoram campo novo no JSON
+        #    (campos extras sao silenciosamente pulados no parse),
+        #    AGENTES NOVOS (6.9.1+) usam tanto a resposta quanto o endpoint!
+        #    Resultado: IMPRESSORAS MANUAIS (IP cadastrado no painel, SEM
+        #    coleta nunca) comecam a ser COLETADAS NO PROXIMO ciclo de 30
+        #    min AUTOMATICAMENTE, SEM PRECISAR buildar setup novo!
+        # =================================================================
+        extra_targets_list: list = []
+        extra_targets_count = 0
+        try:
+            if agent and getattr(agent, "client_id", None):
+                try:
+                    from sqlalchemy import and_ as _and_targets_inline
+                    _rows_targets = (
+                        db.query(Printer.ip_address)
+                        .filter(
+                            _and_targets_inline(
+                                Printer.client_id == int(agent.client_id),
+                                Printer.active == True,
+                                Printer.ignored == False,
+                                Printer.deleted_at.is_(None),
+                            )
+                        )
+                        .all()
+                    )
+                    _seen_targets: set = set()
+                    for (_ip_t_raw,) in _rows_targets:
+                        if _ip_t_raw is None:
+                            continue
+                        _ip_t = str(_ip_t_raw).strip()
+                        if not _ip_t:
+                            continue
+                        if _ip_t in _seen_targets:
+                            continue
+                        _seen_targets.add(_ip_t)
+                        extra_targets_list.append(_ip_t)
+                    extra_targets_count = len(extra_targets_list)
+                except Exception:
+                    extra_targets_list = []
+                    extra_targets_count = 0
+        except Exception:
+            extra_targets_list = []
+            extra_targets_count = 0
+
         return {
             "status": "ok" if processed_errors == 0 else "partial",
             "readings_received": total_readings,
             "processed_ok": processed_ok,
             "processed_errors": processed_errors,
             "warnings": warnings[:50],
+            # 👇 NOVO: IPs impressoras cadastradas manualmente no painel!
+            "extra_targets": extra_targets_list,
+            "extra_targets_count": extra_targets_count,
         }
 
     except HTTPException as known_err:
@@ -6154,6 +6243,9 @@ async def agent_report(
             "processed_ok": 0,
             "processed_errors": len(getattr(payload, "readings", None) or []),
             "warnings": ["[FATAL] Nao foi possivel processar esta coleta no servidor."],
+            # Consistencia de schema: campos sempre existem mesmo em erro fatal
+            "extra_targets": [],
+            "extra_targets_count": 0,
         }
 
 
