@@ -114,6 +114,41 @@ def _s_mac(value) -> Optional[str]:
     return _s_strn(value, 20)
 
 
+# =============================================================================
+# 🔥 HELPER NOVA 07/09 JULIO: IMPRESSORA EXCLUIDA PROPOSITALMENTE (NAO VOLTA!)
+#  =============================================================================
+#  Regra: Usuario clicou no botao EXCLUIR do painel (soft delete oficial).
+#  Entao: marca deleted_at / deleted_by_user_id / delete_reason na linha.
+#  Essa impressora NUNCA MAIS deve ser reativada automaticamente por coleta
+#  do agente (nem por match normal, nem por ignored_found, nem por update final).
+#
+#  Excecao: APENAS impressora que TEM ignored=True MAS NAO TEM NENHUM campo de
+#           delete oficial (deleted_at/deleted_by/delete_reason) PODE ser
+#           reativada automaticamente - pois era "ignorada" antiga (pre-05/09),
+#           nao exclusao real do usuario.
+# =============================================================================
+def _printer_soft_deleted_oficial(printer_obj) -> bool:
+    """Retorna TRUE se o usuario EXCLUIU a impressora de proposito pelo painel.
+    NUNCA reativar automaticamente essas!"""
+    if printer_obj is None:
+        return False
+    # Campo 1: deleted_at preenchido (data/hora da exclusao)
+    if getattr(printer_obj, "deleted_at", None) is not None:
+        return True
+    # Campo 2: deleted_by_user_id (ID do usuario que apagou)
+    try:
+        _del_by = int(getattr(printer_obj, "deleted_by_user_id", None) or 0)
+        if _del_by > 0:
+            return True
+    except Exception:
+        pass
+    # Campo 3: delete_reason preenchido (ex: [MERGE AUTO] ou "removida pelo admin")
+    _del_r = getattr(printer_obj, "delete_reason", None)
+    if _del_r and str(_del_r).strip() != "":
+        return True
+    return False
+
+
 
 # #region debug-point A:agent-package-report
 def _report_agent_package_debug(hypothesis_id: str, location: str, msg: str, data: Optional[dict] = None) -> None:
@@ -4274,9 +4309,30 @@ async def agent_report(
                 #      e rodava o agente de novo para reinstalar, ela NAO voltava nunca.
                 #      Agora: se a impressora ja existe mas esta ignorada, REATIVAMOS
                 #      E CONTINUAMOS com o UPDATE normal abaixo (mesmo fluxo de ativa).
+                #   🔥🔥🔥 FIX 07/09 JULIO: REGRA NAO RETORNO DE EXCLUIDA!
+                #      SE a impressora foi EXCLUIDA OFICIALMENTE (deleted_at/deleted_by/
+                #      delete_reason preenchidos = usuario clicou em EXCLUIR no painel!)
+                #      → NUNCA MAIS REATIVA AUTOMATICAMENTE. Apenas impressora com
+                #      ignored=True MAS SEM delete oficial pode ser reativada (caso antigo).
                 if printer and printer.ignored:
-                    printer.ignored = False
-                    printer.active = True
+                    if _printer_soft_deleted_oficial(printer):
+                        # =============================================================
+                        # IMPRESSORA EXCLUIDA PELO USUARIO DE PROPOSITO!
+                        # - PULA COMPLETAMENTE esta reading (NAO atualiza NADA!)
+                        # - NAO marca processed_ok (pois foi pulada por exclusao)
+                        # - Adiciona warning somente no log (silent para o agente)
+                        # - Volta para pegar proxima reading, SEM criar NOVA impressora
+                        #   (senao criaria duplicada infinitamente todo ciclo!)
+                        # =============================================================
+                        warnings.append(
+                            f"[SKIP EXCLUIDA] printer#{printer.id} ip={r_ip}: NAO reativada "
+                            + "pois foi excluida propositalmente no painel (deleted_at setado)."
+                        )
+                        continue  # <- SAI DO LOOP PARA ESTA READING. Nao atualiza nada.
+                    else:
+                        # Apenas ignored antigo, sem exclusao oficial: reativa NORMALMENTE!
+                        printer.ignored = False
+                        printer.active = True
 
                 # ----- PASSO 2: Se nao achou, VERIFICA se existe IGNORADA igual (reativa!) -----
                 #   🔥 FIX PERMANENTE 05/09 JULIO: Antes aqui fazia `if ignored_found: continue`
@@ -4286,13 +4342,26 @@ async def agent_report(
                 #      Aqui temos soft delete (melhor para historico!), entao SE existir
                 #      impressora IGUAL marcada como ignorada, NOS APEGAMOS NELA E REATIVAMOS
                 #      (em vez de tentar criar outra e tomar UNIQUE constraint error).
+                #   🔥🔥🔥 FIX 07/09 JULIO: REGRA NAO RETORNO DE EXCLUIDA!
+                #      NO ignored_found (busca ignored=True): ADICIONA FILTRO
+                #      deleted_at IS NULL / deleted_by NULL / delete_reason NULL
+                #      → SÓ considera "ignored_found" linhas que NAO foram excluidas
+                #      oficial pelo usuario! Se for excluida oficial: NUNCA usa,
+                #      segue adiante e CRIA UMA LINHA NOVA (como se nunca existisse).
                 if not printer:
+                    # ----- (FIX 07/09): busco EXPLICITAMENTE NÃO EXCLUIDAS OFICIALMENTE -----
+                    from sqlalchemy import and_ as _and_fix
+                    _not_deleted_filter = _and_fix(
+                        Printer.deleted_at.is_(None),
+                        Printer.delete_reason.is_(None) | (Printer.delete_reason == ""),
+                    )
                     if r_serial:
                         ignored_found = (
                             db.query(Printer)
                             .filter(
                                 Printer.client_id == agent.client_id,
                                 Printer.ignored == True,
+                                _not_deleted_filter,  # <-- NOVO: nao veio excluida!
                                 or_(
                                     _ip_filter,
                                     Printer.serial_number.ilike(r_serial),
@@ -4306,6 +4375,7 @@ async def agent_report(
                             .filter(
                                 Printer.client_id == agent.client_id,
                                 Printer.ignored == True,
+                                _not_deleted_filter,  # <-- NOVO: nao veio excluida!
                                 _ip_filter,
                             )
                             .first()
@@ -4314,10 +4384,17 @@ async def agent_report(
                         # 👇 Encontrei uma impressora igual marcada como apagada:
                         #    uso ela como "printer" e sigo pro UPDATE abaixo (que
                         #    vai setar ignored=False de novo e atualizar todos os campos!).
-                        printer = ignored_found
-                        printer.ignored = False
-                        printer.active = True
-                    else:
+                        #    SAFETY: garantia extra p/ nao pegar excluida mesmo:
+                        if _printer_soft_deleted_oficial(ignored_found):
+                            warnings.append(
+                                f"[SAFETY] ignored_found retornou excluida ip={r_ip}; pulando uso."
+                            )
+                            ignored_found = None
+                        else:
+                            printer = ignored_found
+                            printer.ignored = False
+                            printer.active = True
+                    if not printer:  # continua igual: nem match nem ignored_found não excluida.
                         printer = Printer(
                             client_id=agent.client_id,
                             ip_address=r_ip,
@@ -4358,165 +4435,172 @@ async def agent_report(
                 #   Impressoras reiniciam/firmware bug/erro SNMP reportam 0 ou valor antigo
                 #   de tempos em tempos. Se o valor novo for MENOR que o salvo no banco,
                 #   MANTER o valor MAIOR. Nunca sobreescrever contador para baixo.
-                printer.ip_address = r_ip
-                # 🔥 CRITICO: Garante que NENHUMA impressora reportada pelo agente fique
-                #    marcada como ignorada ou inativa (resolvido bug que Julio nao via
-                #    impressora no dashboard pq estava active=True/ignored=True!)
-                printer.active = True
-                printer.ignored = False
-                if r_mac:
-                    printer.mac_address = r_mac
-                if r_serial:
-                    printer.serial_number = r_serial
-                if r_model:
-                    printer.model = r_model
-                if r_manufacturer:
-                    printer.manufacturer = r_manufacturer
-                printer.status = r_status
+                #
+                #   🔥🔥🔥 FIX 07/09 JULIO: REGRA NAO RETORNO DE EXCLUIDA!
+                #      SE a impressora foi EXCLUIDA OFICIALMENTE (deleted_at/deleted_by/
+                #      delete_reason preenchidos) → PULA COMPLETAMENTE os updates:
+                #      - NAO escreve active=True / ignored=False (mantem excluida!)
+                #      - NAO atualiza contadores / toners / nada!
+                #      - NAO grava Reading de historico nela!
+                #      - Controle: flag _is_deleted_oficial pulando bloco abaixo + Reading.
+                _is_deleted_oficial = _printer_soft_deleted_oficial(printer)
+                if not _is_deleted_oficial:
+                    printer.ip_address = r_ip
+                    # 🔥 CRITICO: Garante que NENHUMA impressora reportada pelo agente fique
+                    #    marcada como ignorada ou inativa (resolvido bug que Julio nao via
+                    #    impressora no dashboard pq estava active=True/ignored=True!)
+                    printer.active = True
+                    printer.ignored = False
+                else:
+                    # Excluida oficial: so atualiza o IP se for diferente (manteve historico)
+                    # MAS NAO TOCA EM active/ignored (mantem FALSE/TRUE!)
+                    try:
+                        if r_ip and r_ip != "0.0.0.0":
+                            printer.ip_address = r_ip
+                    except Exception:
+                        pass
+                    warnings.append(
+                        f"[SKIP EXCLUIDA UPDATE] printer#{printer.id} ip={r_ip}: "
+                        + "NAO reativada (excluida proposital). Updates active/ignored/contadores bloqueados."
+                    )
+                if not _is_deleted_oficial:
+                    if r_mac:
+                        printer.mac_address = r_mac
+                    if r_serial:
+                        printer.serial_number = r_serial
+                    if r_model:
+                        printer.model = r_model
+                    if r_manufacturer:
+                        printer.manufacturer = r_manufacturer
+                    printer.status = r_status
 
-                # --- CONTADORES: MANTEM SEMPRE O MAXIMO (monotonico nao-negativo) ---
-                try:
-                    if r_pages_total and r_pages_total > int(printer.pages_total or 0):
-                        printer.pages_total = r_pages_total
-                except Exception:
-                    pass
-                try:
-                    if r_pages_bw and r_pages_bw > int(printer.pages_bw or 0):
-                        printer.pages_bw = r_pages_bw
-                except Exception:
-                    pass
-                try:
-                    if r_pages_color and r_pages_color > int(printer.pages_color or 0):
-                        printer.pages_color = r_pages_color
-                except Exception:
-                    pass
+                # 🔥🔥🔥 FIX 07/09 JULIO: Impressora EXCLUIDA OFICIAL? Nao altera NADA abaixo!
+                if not _is_deleted_oficial:
+                    # --- CONTADORES: MANTEM SEMPRE O MAXIMO (monotonico nao-negativo) ---
+                    try:
+                        if r_pages_total and r_pages_total > int(printer.pages_total or 0):
+                            printer.pages_total = r_pages_total
+                    except Exception:
+                        pass
+                    try:
+                        if r_pages_bw and r_pages_bw > int(printer.pages_bw or 0):
+                            printer.pages_bw = r_pages_bw
+                    except Exception:
+                        pass
+                    try:
+                        if r_pages_color and r_pages_color > int(printer.pages_color or 0):
+                            printer.pages_color = r_pages_color
+                    except Exception:
+                        pass
 
-                # --- TONERS: sao niveis entao podem subir/descer normal (troca do toner!) ---
-                printer.toner_black = r_toner_black
-                printer.toner_cyan = r_toner_cyan
-                printer.toner_magenta = r_toner_magenta
-                printer.toner_yellow = r_toner_yellow
+                    # --- TONERS: sao niveis entao podem subir/descer normal (troca do toner!) ---
+                    printer.toner_black = r_toner_black
+                    printer.toner_cyan = r_toner_cyan
+                    printer.toner_magenta = r_toner_magenta
+                    printer.toner_yellow = r_toner_yellow
 
-                # --- TONERS PB: DEFESA EM PROFUNDIDADE (Julio pediu 10x!!!) ---
-                # Depois de escrever os valores recebidos, checamos se e PB REAL:
-                # Se for PB, APAGA toner_cyan/magenta/yellow (forca None, nao grava 0!)
-                # Muitas impressoras PB Ricoh SP 3710SF etc reportam 0 via SNMP, mas
-                # zero nao = existente. Isso era a causa #1 dos "alertas ciano baixo" em PB!
-                try:
-                    if not _is_color_printer_real(printer):
-                        printer.toner_cyan = None
-                        printer.toner_magenta = None
-                        printer.toner_yellow = None
-                except Exception:
-                    pass
+                    # --- TONERS PB: DEFESA EM PROFUNDIDADE (Julio pediu 10x!!!) ---
+                    # Depois de escrever os valores recebidos, checamos se e PB REAL:
+                    # Se for PB, APAGA toner_cyan/magenta/yellow (forca None, nao grava 0!)
+                    # Muitas impressoras PB Ricoh SP 3710SF etc reportam 0 via SNMP, mas
+                    # zero nao = existente. Isso era a causa #1 dos "alertas ciano baixo" em PB!
+                    try:
+                        if not _is_color_printer_real(printer):
+                            printer.toner_cyan = None
+                            printer.toner_magenta = None
+                            printer.toner_yellow = None
+                    except Exception:
+                        pass
+                # FIM _is_deleted_oficial protecao contadores/toners basicos
 
                 # ================================================================
                 # 🏆 MONOTONICIDADE OBRIGATÓRIA — NÃO TEM PREJUÍZO (JULIO PEDIU!)
                 # ================================================================
-                # PASSO 0 (MAIS IMPORTANTE DE TODOS!):
-                #   Contadores de páginas NUNCA DIMINUEM. Se impressora reportar um
-                #   valor MENOR que o último SALVO no banco (ex: reset na placa, erro
-                #   SNMP transitório, troca de máquina mas mesmo IP), NÓS MANTEMOS
-                #   O VALOR MAIOR (último salvo). Garante NUNCA COBRAR A MENOS.
-                #
-                #   REGRA RÍGIDA:
-                #     - pages_total novo = MAX(novo recebido, último salvo)
-                #     - pages_bw    novo = MAX(novo recebido, último salvo)
-                #     - pages_color novo = MAX(novo recebido, último salvo)
-                #
-                #   Se a monotonicidade corrigiu algo, força total = bw + color
-                #   (pois os dois agora são reais monotônicos = soma é a real produção).
-                #
-                #   ⚠️ CORREÇÃO ESPECIAL 04/09 JULIO (inchado 4M bug 02/09):
-                #   Se a impressora é P&B CONFIRMADA pelo helper oficial E o valor
-                #   salvo no banco é 2x MAIOR ou mais que o valor REAL reportado
-                #   pela impressora AGORA → a gente CONSIDERA o valor real novo!
-                #   Razão: o salvo inchado foi um FALSO calculado por "soma bw+color"
-                #   no bug 02/09 (Julio trocou permissões de revendedor). A leitura
-                #   SNMP real da impressora TEM PRIORIDADE sobre cálculo antigo errado.
-                # ================================================================
-                try:
-                    _saved_total = int(getattr(printer, "pages_total", None) or 0)
-                    _saved_bw    = int(getattr(printer, "pages_bw",    None) or 0)
-                    _saved_color = int(getattr(printer, "pages_color", None) or 0)
-                    _new_total   = int(r_pages_total or 0)
-                    _new_bw      = int(r_pages_bw    or 0)
-                    _new_color   = int(r_pages_color or 0)
-
-                    # ---- CORREÇÃO ANTI-INCHADO PB (Julio 04/09) ----
+                # 🔥🔥🔥 FIX 07/09 JULIO: Impressora excluida oficial? PULA bloco TODO!
+                if not _is_deleted_oficial:
                     try:
-                        _pb_confirmed = not _is_color_printer_real(printer)
-                    except Exception:
-                        _pb_confirmed = False
+                        _saved_total = int(getattr(printer, "pages_total", None) or 0)
+                        _saved_bw    = int(getattr(printer, "pages_bw",    None) or 0)
+                        _saved_color = int(getattr(printer, "pages_color", None) or 0)
+                        _new_total   = int(r_pages_total or 0)
+                        _new_bw      = int(r_pages_bw    or 0)
+                        _new_color   = int(r_pages_color or 0)
 
-                    if _pb_confirmed:
-                        # 1) IMPRESSORA 100% PB: color NUNCA existiu → força salvo=0 ANTES do MAX.
-                        #    Isso impede que _mono_color = max(novo 0, salvo velho errado X) = X.
-                        _saved_color = 0
-                        _new_color = 0
+                        # ---- CORREÇÃO ANTI-INCHADO PB (Julio 04/09) ----
+                        try:
+                            _pb_confirmed = not _is_color_printer_real(printer)
+                        except Exception:
+                            _pb_confirmed = False
 
-                        # 2) Se o total salvo é 2x ou MAIS que o contador REAL da impressora,
-                        #    o salvo é FALSO (inchado na classificação errada). O contador
-                        #    SNMP real da máquina TEM PRIORIDADE.
-                        if _new_total > 0 and _saved_total >= int(1.5 * _new_total):
-                            try:
-                                print(
-                                    "[AUDIT-PB-ANTI-INCHADO] printer_id=%s model=%s ip=%s "
-                                    "| DETECTADO inchado >= 1.5x SNMP REAL! salvo_total=%s "
-                                    "novo_snmp_total=%s | SUBSTITUINDO salvo por novo SNMP REAL. "
-                                    "saved_color_antes_zerado=%s | client_id=%s | ts=%s"
-                                    % (
-                                        getattr(printer, "id", "?"),
-                                        (getattr(printer, "model", "") or "")[:80],
-                                        getattr(printer, "ip_address", "?"),
-                                        _saved_total,
-                                        _new_total,
-                                        int(getattr(printer, "pages_color", None) or 0),
-                                        getattr(printer, "client_id", "?"),
-                                        str(_now().isoformat()),
-                                    )
-                                )
-                            except Exception:
-                                pass
-                            _saved_total = _new_total
-                            _saved_bw    = _new_total
-                        else:
-                            # 3) bw sempre = total (1 contador PB).
-                            if _saved_total > 0:
-                                _saved_bw = _saved_total
-
-                        # 4) Novo recebido também garante bw=total e color=0.
-                        if _new_total > 0:
-                            _new_bw = _new_total
+                        if _pb_confirmed:
+                            # 1) IMPRESSORA 100% PB: color NUNCA existiu → força salvo=0 ANTES do MAX.
+                            #    Isso impede que _mono_color = max(novo 0, salvo velho errado X) = X.
+                            _saved_color = 0
                             _new_color = 0
 
-                    _mono_total = max(_new_total, _saved_total)
-                    _mono_bw    = max(_new_bw,    _saved_bw)
-                    _mono_color = max(_new_color, _saved_color)
+                            # 2) Se o total salvo é 2x ou MAIS que o contador REAL da impressora,
+                            #    o salvo é FALSO (inchado na classificação errada). O contador
+                            #    SNMP real da máquina TEM PRIORIDADE.
+                            if _new_total > 0 and _saved_total >= int(1.5 * _new_total):
+                                try:
+                                    print(
+                                        "[AUDIT-PB-ANTI-INCHADO] printer_id=%s model=%s ip=%s "
+                                        "| DETECTADO inchado >= 1.5x SNMP REAL! salvo_total=%s "
+                                        "novo_snmp_total=%s | SUBSTITUINDO salvo por novo SNMP REAL. "
+                                        "saved_color_antes_zerado=%s | client_id=%s | ts=%s"
+                                        % (
+                                            getattr(printer, "id", "?"),
+                                            (getattr(printer, "model", "") or "")[:80],
+                                            getattr(printer, "ip_address", "?"),
+                                            _saved_total,
+                                            _new_total,
+                                            int(getattr(printer, "pages_color", None) or 0),
+                                            getattr(printer, "client_id", "?"),
+                                            str(_now().isoformat()),
+                                        )
+                                    )
+                                except Exception:
+                                    pass
+                                _saved_total = _new_total
+                                _saved_bw    = _new_total
+                            else:
+                                # 3) bw sempre = total (1 contador PB).
+                                if _saved_total > 0:
+                                    _saved_bw = _saved_total
 
-                    # Nunca deixa bw + color < total (monotonicidade pode gerar isso!)
-                    _sum_mono = _mono_bw + _mono_color
-                    if _sum_mono > _mono_total:
-                        _mono_total = _sum_mono
-                    # Também nunca deixa bw > total ou color > total (sanity total-safe!)
-                    if _mono_bw > _mono_total and _mono_total > 0:
-                        _mono_bw = _mono_total
-                    if _mono_color > _mono_total and _mono_total > 0:
-                        _mono_color = _mono_total
+                            # 4) Novo recebido também garante bw=total e color=0.
+                            if _new_total > 0:
+                                _new_bw = _new_total
+                                _new_color = 0
 
-                    if (_mono_total != _saved_total or
-                        _mono_bw    != _saved_bw    or
-                        _mono_color != _saved_color):
-                        printer.pages_total = _mono_total
-                        printer.pages_bw    = _mono_bw
-                        printer.pages_color = _mono_color
-                        # Atualiza também o objeto reading (para gravar linha do histórico correta!)
-                        reading.pages_total = _mono_total
-                        reading.pages_bw    = _mono_bw
-                        reading.pages_color = _mono_color
-                except Exception:
-                    # Qualquer falha = NÃO MEXE EM NADA (evita piorar a situação)
-                    pass
+                        _mono_total = max(_new_total, _saved_total)
+                        _mono_bw    = max(_new_bw,    _saved_bw)
+                        _mono_color = max(_new_color, _saved_color)
+
+                        # Nunca deixa bw + color < total (monotonicidade pode gerar isso!)
+                        _sum_mono = _mono_bw + _mono_color
+                        if _sum_mono > _mono_total:
+                            _mono_total = _sum_mono
+                        # Também nunca deixa bw > total ou color > total (sanity total-safe!)
+                        if _mono_bw > _mono_total and _mono_total > 0:
+                            _mono_bw = _mono_total
+                        if _mono_color > _mono_total and _mono_total > 0:
+                            _mono_color = _mono_total
+
+                        if (_mono_total != _saved_total or
+                            _mono_bw    != _saved_bw    or
+                            _mono_color != _saved_color):
+                            printer.pages_total = _mono_total
+                            printer.pages_bw    = _mono_bw
+                            printer.pages_color = _mono_color
+                            # Atualiza também o objeto reading (para gravar linha do histórico correta!)
+                            reading.pages_total = _mono_total
+                            reading.pages_bw    = _mono_bw
+                            reading.pages_color = _mono_color
+                    except Exception:
+                        # Qualquer falha = NÃO MEXE EM NADA (evita piorar a situação)
+                        pass
+                # FIM MONOTONICIDADE protegido
 
                 # ================================================================
                 # 🔥 PASSO 3.25: VALIDAÇÃO CONTADORES — 100% REAL (NÃO INVENTA!)
@@ -4563,68 +4647,71 @@ async def agent_report(
                                       "clp-", "clx-", "xpress c")
                     return any(k in text for k in color_keywords)
 
-                try:
-                    cur_total = int(printer.pages_total or 0)
-                    cur_bw = int(printer.pages_bw or 0)
-                    cur_color = int(printer.pages_color or 0)
+                # 🔥🔥🔥 FIX 07/09 JULIO: Impressora excluida oficial? PULA validacao!
+                if not _is_deleted_oficial:
+                    try:
+                        cur_total = int(printer.pages_total or 0)
+                        cur_bw = int(printer.pages_bw or 0)
+                        cur_color = int(printer.pages_color or 0)
 
-                    # ---- FONTE DE VERDADE: O QUE VEIO NA LEITURA (reportado pela IMPRESSORA!) ----
-                    reading_bw_real    = bool(reading.pages_bw    and int(reading.pages_bw)    > 0)
-                    reading_color_real = bool(reading.pages_color and int(reading.pages_color) > 0)
-                    reading_total_real = bool(reading.pages_total and int(reading.pages_total) > 0)
+                        # ---- FONTE DE VERDADE: O QUE VEIO NA LEITURA (reportado pela IMPRESSORA!) ----
+                        reading_bw_real    = bool(reading.pages_bw    and int(reading.pages_bw)    > 0)
+                        reading_color_real = bool(reading.pages_color and int(reading.pages_color) > 0)
+                        reading_total_real = bool(reading.pages_total and int(reading.pages_total) > 0)
 
-                    # ====================================================================
-                    # 🏆 PRIORIDADE 1: Helper Oficial _is_color_printer_real (NOVA REGRA JULIO!)
-                    #  1) Modelo colorido CONFIRMADO (bizhub C308, Ricoh MP C etc) → colorida!
-                    #  2) Tem toner CMY reais (0<v<=100) → colorida!
-                    #  3) pages_color > 0 → colorida!
-                    #  NENHUM dos 3 → PB.
-                    # ====================================================================
-                    is_really_color = False
-                    if (cur_total > 0 or cur_bw > 0 or cur_color > 0):
-                        # Usa helper OFICIAL (não confia mais em pages_color isolado!)
-                        is_really_color = _is_color_printer_real(printer)
-                        # Fallback: reading tem cor? Garante True (redundância segura!)
-                        if reading_color_real and not is_really_color:
-                            is_really_color = True
-                        # Fallback 2: _model_sugere_colorida (antigo, mas para cross-check seguro)
-                        if (not is_really_color) and _model_sugere_colorida(printer.model, printer.manufacturer):
-                            is_really_color = True
+                        # ====================================================================
+                        # 🏆 PRIORIDADE 1: Helper Oficial _is_color_printer_real (NOVA REGRA JULIO!)
+                        #  1) Modelo colorido CONFIRMADO (bizhub C308, Ricoh MP C etc) → colorida!
+                        #  2) Tem toner CMY reais (0<v<=100) → colorida!
+                        #  pages_color > 0 → colorida!
+                        #  NENHUM dos 3 → PB.
+                        # ====================================================================
+                        is_really_color = False
+                        if (cur_total > 0 or cur_bw > 0 or cur_color > 0):
+                            # Usa helper OFICIAL (não confia mais em pages_color isolado!)
+                            is_really_color = _is_color_printer_real(printer)
+                            # Fallback: reading tem cor? Garante True (redundância segura!)
+                            if reading_color_real and not is_really_color:
+                                is_really_color = True
+                            # Fallback 2: _model_sugere_colorida (antigo, mas para cross-check seguro)
+                            if (not is_really_color) and _model_sugere_colorida(printer.model, printer.manufacturer):
+                                is_really_color = True
 
-                    # ====================================================================
-                    # 🏆 REGRA PRINCIPAL COBRANÇA SEGURA — NÃO INVENTA NADA!
-                    # ====================================================================
-                    if not is_really_color and cur_total > 0:
-                        # PRETO & BRANCO: bw = total / color = 0  (SÓ 1 CONTADOR REAL!)
-                        if cur_bw != cur_total or cur_color != 0:
-                            printer.pages_bw = cur_total
-                            printer.pages_color = 0
-                            reading.pages_bw = int(reading.pages_total or reading.pages_bw or cur_total)
-                            reading.pages_color = 0
-                    elif is_really_color and cur_total > 0:
-                        # COLORIDA: NÃO FAZEMOS NENHUM CÁLCULO AQUI!
-                        #   Só aceitamos o que veio reportado REALMENTE pela impressora via agente
-                        #   (OID RFC .1.2 + .1.3, ou marker table real).
-                        #   NÃO calculamos pages_color = total - bw.
-                        #   Única regra aqui: se TANTO bw QUANTO color reais existirem,
-                        #   total = max(total, bw + color) — a soma real prevalece.
-                        if cur_bw > 0 and cur_color > 0:
-                            _soma = cur_bw + cur_color
-                            if _soma > cur_total:
-                                printer.pages_total = _soma
-                                if reading_total_real:
-                                    reading.pages_total = _soma
-                        # Se a impressora COLORIDA reportou só pages_color real >0 e pages_bw=0:
-                        #   bw = max(0, total - color) — É MATEMÁTICA OBRIGATÓRIA (não é chute!).
-                        #   A soma precisa bater com total real (monotônico já garantido antes).
-                        elif cur_color > 0 and (cur_bw is None or cur_bw <= 0):
-                            _bw_mat = max(0, cur_total - cur_color)
-                            if _bw_mat != cur_bw:
-                                printer.pages_bw = _bw_mat
-                                if reading_color_real:
-                                    reading.pages_bw = _bw_mat
-                except Exception:
-                    pass
+                        # ====================================================================
+                        # 🏆 REGRA PRINCIPAL COBRANÇA SEGURA — NÃO INVENTA NADA!
+                        # ====================================================================
+                        if not is_really_color and cur_total > 0:
+                            # PRETO & BRANCO: bw = total / color = 0  (SÓ 1 CONTADOR REAL!)
+                            if cur_bw != cur_total or cur_color != 0:
+                                printer.pages_bw = cur_total
+                                printer.pages_color = 0
+                                reading.pages_bw = int(reading.pages_total or reading.pages_bw or cur_total)
+                                reading.pages_color = 0
+                        elif is_really_color and cur_total > 0:
+                            # COLORIDA: NÃO FAZEMOS NENHUM CÁLCULO AQUI!
+                            #   Só aceitamos o que veio reportado REALMENTE pela impressora via agente
+                            #   (OID RFC .1.2 + .1.3, ou marker table real).
+                            #   NÃO calculamos pages_color = total - bw.
+                            #   Única regra aqui: se TANTO bw QUANTO color reais existirem,
+                            #   total = max(total, bw + color) — a soma real prevalece.
+                            if cur_bw > 0 and cur_color > 0:
+                                _soma = cur_bw + cur_color
+                                if _soma > cur_total:
+                                    printer.pages_total = _soma
+                                    if reading_total_real:
+                                        reading.pages_total = _soma
+                            # Se a impressora COLORIDA reportou só pages_color real >0 e pages_bw=0:
+                            #   bw = max(0, total - color) — É MATEMÁTICA OBRIGATÓRIA (não é chute!).
+                            #   A soma precisa bater com total real (monotônico já garantido antes).
+                            elif cur_color > 0 and (cur_bw is None or cur_bw <= 0):
+                                _bw_mat = max(0, cur_total - cur_color)
+                                if _bw_mat != cur_bw:
+                                    printer.pages_bw = _bw_mat
+                                    if reading_color_real:
+                                        reading.pages_bw = _bw_mat
+                    except Exception:
+                        pass
+                # FIM validacao contadores protegido
 
                 # ================================================================
                 # 🔥 NORMALIZAÇÃO FINAL OBRIGATÓRIA — SUPER FORTE (P&B NUNCA MAIS DIVIDIDO!)
@@ -4634,64 +4721,69 @@ async def agent_report(
                 #   -> IMPRESSORA COLORIDA: pages_total = pages_bw + pages_color
                 #   -> DETECTOR DIA 02/09: impressoras criadas a partir 2/9 que sao PB falsa-colorida -> corrige automaticamente
                 # ================================================================
-                try:
-                    cur_bw = int(printer.pages_bw or 0)
-                    cur_color = int(printer.pages_color or 0)
-                    cur_total = int(printer.pages_total or 0)
-
-                    # 🏆 REGRA SIMPLES (JULIO): Usa o helper OFICIAL.
-                    # Helper NOVO (linha 2080+) é o ÚNICO código que decide PB vs Colorida!
-                    #   - Se _is_color_printer_real(printer) = FALSE  →  P&B 100%
-                    #   - Se _is_color_printer_real(printer) = TRUE   →  COLORIDA
-                    _confirma_PB_100 = (not _is_color_printer_real(printer)) and cur_total > 0
-
-                    # ---- DETECTOR PROBLEMA DIA 02/09 (autorizacao parceiro/revendedor) ----
-                    # Qualquer impressora criada OU atualizada apos 2026-09-02 que NÃO tem
-                    # toners CMY reais e NUNCA teve pages_color > 0 de verdade = 100% PB.
-                    _suspeita_bug_02_09 = False
+                # 🔥🔥🔥 FIX 07/09 JULIO: Impressora excluida oficial? PULA normalizacao!
+                if not _is_deleted_oficial:
                     try:
-                        _data_limite = datetime(2026, 9, 2, 0, 0, 0)
-                        _ca = printer.created_at or now
-                        _ua = printer.updated_at or now
-                        if isinstance(_ca, str): _ca = datetime.fromisoformat(_ca.replace("Z",""))
-                        if isinstance(_ua, str): _ua = datetime.fromisoformat(_ua.replace("Z",""))
-                        if (_ca >= _data_limite or _ua >= _data_limite) and _confirma_PB_100:
-                            _suspeita_bug_02_09 = True
-                    except Exception:
-                        _suspeita_bug_02_09 = False
+                        cur_bw = int(printer.pages_bw or 0)
+                        cur_color = int(printer.pages_color or 0)
+                        cur_total = int(printer.pages_total or 0)
 
-                    if _confirma_PB_100 or _suspeita_bug_02_09:
-                        # ==============================================
-                        #  PRETO & BRANCO (100% CERTEZA, nao importa flag!)
-                        #  -> 1 contador = TOTAL REAL.
-                        # ==============================================
-                        if cur_bw != cur_total or cur_color != 0:
-                            printer.pages_bw = cur_total
-                            printer.pages_color = 0
-                        # Zera toners CMY para a UI NUNCA mais tratar como colorida!
-                        if _c_has_cyan:    printer.toner_cyan = None
-                        if _c_has_magenta: printer.toner_magenta = None
-                        if _c_has_yellow:  printer.toner_yellow = None
-                        # Reading tambem garante: caso reading tivesse vindo CMY errado do agente antigo
-                        if reading.toner_cyan    is not None and reading.toner_cyan    >= 0: reading.toner_cyan    = None
-                        if reading.toner_magenta is not None and reading.toner_magenta >= 0: reading.toner_magenta = None
-                        if reading.toner_yellow  is not None and reading.toner_yellow  >= 0: reading.toner_yellow  = None
-                        if reading.pages_color and reading.pages_color > 0:
-                            reading.pages_bw = int(reading.pages_total or reading.pages_bw or cur_total)
-                            reading.pages_color = 0
-                    elif (cur_bw > 0 or cur_color > 0):
-                        # ==============================================
-                        #  IMPRESSORA COLORIDA (tem toners CMY reais)
-                        #  -> Total Geral = Soma PEB + Color reais.
-                        # ==============================================
-                        _soma_real = cur_bw + cur_color
-                        if _soma_real > 0 and cur_total != _soma_real:
-                            printer.pages_total = _soma_real
-                except Exception:
-                    pass
+                        # 🏆 REGRA SIMPLES (JULIO): Usa o helper OFICIAL.
+                        # Helper NOVO (linha 2080+) é o ÚNICO código que decide PB vs Colorida!
+                        #   - Se _is_color_printer_real(printer) = FALSE  →  P&B 100%
+                        #   - Se _is_color_printer_real(printer) = TRUE   →  COLORIDA
+                        _confirma_PB_100 = (not _is_color_printer_real(printer)) and cur_total > 0
+
+                        # ---- DETECTOR PROBLEMA DIA 02/09 (autorizacao parceiro/revendedor) ----
+                        # Qualquer impressora criada OU atualizada apos 2026-09-02 que NÃO tem
+                        # toners CMY reais e NUNCA teve pages_color > 0 de verdade = 100% PB.
+                        _suspeita_bug_02_09 = False
+                        try:
+                            _data_limite = datetime(2026, 9, 2, 0, 0, 0)
+                            _ca = printer.created_at or now
+                            _ua = printer.updated_at or now
+                            if isinstance(_ca, str): _ca = datetime.fromisoformat(_ca.replace("Z",""))
+                            if isinstance(_ua, str): _ua = datetime.fromisoformat(_ua.replace("Z",""))
+                            if (_ca >= _data_limite or _ua >= _data_limite) and _confirma_PB_100:
+                                _suspeita_bug_02_09 = True
+                        except Exception:
+                            _suspeita_bug_02_09 = False
+
+                        if _confirma_PB_100 or _suspeita_bug_02_09:
+                            # ==============================================
+                            #  PRETO & BRANCO (100% CERTEZA, nao importa flag!)
+                            #  -> 1 contador = TOTAL REAL.
+                            # ==============================================
+                            if cur_bw != cur_total or cur_color != 0:
+                                printer.pages_bw = cur_total
+                                printer.pages_color = 0
+                            # Zera toners CMY para a UI NUNCA mais tratar como colorida!
+                            if _c_has_cyan:    printer.toner_cyan = None
+                            if _c_has_magenta: printer.toner_magenta = None
+                            if _c_has_yellow:  printer.toner_yellow = None
+                            # Reading tambem garante: caso reading tivesse vindo CMY errado do agente antigo
+                            if reading.toner_cyan    is not None and reading.toner_cyan    >= 0: reading.toner_cyan    = None
+                            if reading.toner_magenta is not None and reading.toner_magenta >= 0: reading.toner_magenta = None
+                            if reading.toner_yellow  is not None and reading.toner_yellow  >= 0: reading.toner_yellow  = None
+                            if reading.pages_color and reading.pages_color > 0:
+                                reading.pages_bw = int(reading.pages_total or reading.pages_bw or cur_total)
+                                reading.pages_color = 0
+                        elif (cur_bw > 0 or cur_color > 0):
+                            # ==============================================
+                            #  IMPRESSORA COLORIDA (tem toners CMY reais)
+                            #  -> Total Geral = Soma PEB + Color reais.
+                            # ==============================================
+                            _soma_real = cur_bw + cur_color
+                            if _soma_real > 0 and cur_total != _soma_real:
+                                printer.pages_total = _soma_real
+                    except Exception:
+                        pass
+                # FIM normalizacao protegido
 
                 # --- TIMESTAMPS: SEMPRE atualiza estes ---
-                printer.last_seen = now
+                # 🔥🔥🔥 FIX 07/09 JULIO: EXCETO se excluida oficial (mantem last_seen antigo!)
+                if not _is_deleted_oficial:
+                    printer.last_seen = now
                 printer.updated_at = now
 
                 # ================================================================
@@ -4701,20 +4793,24 @@ async def agent_report(
                 #    CHAMAMOS ANTES do sync_alerts para nao fechar alerta que
                 #    acabou de ser criado no mesmo passo.
                 # ================================================================
-                try:
-                    _auto_resolve_toner_alerts_for_printer(db, printer)
-                except Exception:
-                    pass
+                # 🔥🔥🔥 FIX 07/09 JULIO: Impressora excluida? PULA alertas!
+                if not _is_deleted_oficial:
+                    try:
+                        _auto_resolve_toner_alerts_for_printer(db, printer)
+                    except Exception:
+                        pass
 
                 # ================================================================
                 # 🔥 PASSO 3.2: SE IMPRESSORA VOLTOU (AGORA FOI COLETADA!)
                 #    - Se estava OFFLINE: muda status para ONLINE automaticamente!
                 #    - FECHA alertas de "sem comunicacao ha X dias" dela automaticamente
                 # ================================================================
-                try:
-                    _auto_mark_online_and_close_offline_alerts(db, printer)
-                except Exception:
-                    pass
+                # 🔥🔥🔥 FIX 07/09 JULIO: Impressora excluida? PULA tudo online/alerta!
+                if not _is_deleted_oficial:
+                    try:
+                        _auto_mark_online_and_close_offline_alerts(db, printer)
+                    except Exception:
+                        pass
 
                 # ================================================================
                 #  CRITICO: printer.id PRECISA EXISTIR (int valido > 0)
@@ -4737,8 +4833,11 @@ async def agent_report(
                 #    inserida em readings, nao apenas printer.last_seen. Sem isso,
                 #    Julio olha o dashboard e pensa "nao coletou" porque o horario
                 #    da ultima linha de leitura nao atualiza, apesar do last_seen sim.
+                #
+                # 🔥🔥🔥 FIX 07/09 JULIO: Impressora EXCLUIDA OFICIAL?
+                #    NAO cria Reading historico NENHUM (ela ta deletada, nao precisa!)
                 # ================================================================
-                if _printer_id_ok:
+                if _printer_id_ok and not _is_deleted_oficial:
                     try:
                         reading_row = Reading(
                             printer_id=printer.id,
@@ -4756,6 +4855,10 @@ async def agent_report(
                     except Exception:
                         # Nunca deixa a falha de insercao da reading matar o loop
                         pass
+                elif _is_deleted_oficial:
+                    # Excluida oficial: NAO grava reading, mas tbm NAO incrementa erro
+                    # (era para ser pulada mesmo!)
+                    pass
                 else:
                     processed_errors += 1
                     warnings.append(
@@ -4772,15 +4875,20 @@ async def agent_report(
                     agent.last_heartbeat = _now()
 
                 # ----- PASSO 4: SYNC ALERTAS (100% blindado tb!) -----
-                try:
-                    _sync_alerts(db, printer, getattr(reading, "alerts", None) or [])
-                except Exception:
+                # 🔥🔥🔥 FIX 07/09 JULIO: Impressora excluida oficial? NAO sincroniza alertas!
+                if not _is_deleted_oficial:
                     try:
-                        db.rollback()
+                        _sync_alerts(db, printer, getattr(reading, "alerts", None) or [])
                     except Exception:
-                        pass
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
 
-                processed_ok += 1
+                # 🔥🔥🔥 FIX 07/09 JULIO: Processado OK? Excluida oficial NAO conta como ok
+                # (ela foi pulada mesmo, nao quero que aparente que tudo processou super normal!)
+                if not _is_deleted_oficial:
+                    processed_ok += 1
 
             except Exception as e_inner:
                 # ROLLBACK SOMENTE DESTA IMPRESSORA (contamina nada!)
@@ -4840,7 +4948,14 @@ async def agent_report(
                 _cli_id = int(agent.client_id)
                 all_active = (
                     db.query(Printer)
-                    .filter(Printer.client_id == _cli_id, Printer.ignored == False)
+                    .filter(
+                        Printer.client_id == _cli_id,
+                        Printer.ignored == False,
+                        # 🔥 FIX 07/09 JULIO: Impressoras EXCLUIDAS OFICIALMENTE
+                        # (deleted_at setado) NAO participam de merge! Elas estao
+                        # deletadas, nao puxa elas para a "vencedora" nem nada!
+                        Printer.deleted_at.is_(None),
+                    )
                     .order_by(Printer.id.asc())
                     .all()
                 )
