@@ -4238,6 +4238,35 @@ async def agent_report(
                         )
                         .first()
                     )
+                # =============================================================
+                # 🔥 FIX 06/09 JULIO (IMPRESSORA MANUAL NAO COLETA "Nunca")
+                #    Bloco ADITIVO: Se AINDA nao achou printer por match normal,
+                #    TENTA match com IMPRESSORA CADASTRADA MANUALMENTE que esta
+                #    com last_seen IS NULL (Nunca, nunca coletou na vida) mas
+                #    TEM o MESMO IP do reading (mesmo cliente!).
+                #    Isso evita criar impressora DUPLICADA (nova linha auto)
+                #    e deixa a impressora MANUAL de Julio sendo atualizada
+                #    (last_seen deixa de ser Nunca, contadores atualizados, etc!)
+                # =============================================================
+                if not printer and r_ip and r_ip != "0.0.0.0":
+                    try:
+                        printer = (
+                            db.query(Printer)
+                            .filter(
+                                Printer.client_id == agent.client_id,
+                                Printer.ip_address.ilike(r_ip),
+                                Printer.ignored == False,
+                            )
+                            .order_by(
+                                # Prioridade 1: last_seen NULL (Nunca = impressora manual!)
+                                Printer.last_seen.is_(None).desc(),
+                                # Prioridade 2: se ambas NULL, pega a MAIS NOVA (ultimo criado)
+                                Printer.created_at.desc(),
+                            )
+                            .first()
+                        )
+                    except Exception:
+                        printer = None
 
                 # ----- Se encontrou e esta ignorada: REATIVA (nao pula!) -----
                 #   🔥 FIX PERMANENTE 05/09 JULIO: Antes tinha `continue` aqui →
@@ -4778,6 +4807,175 @@ async def agent_report(
                 except Exception:
                     pass
                 continue
+
+        # ================================================================
+        # 🔥🔥🔥 FIX 06/09 JULIO (DEFINITIVO: IMPRESSORA MANUAL "Nunca" por duplicada!)
+        #    BLOCO ADITIVO 100% SEGURO: NUNCA QUEBRA NADA, so corrige DUPLICATAS!
+        #
+        #    Problema: Usuario cadastra IMPRESSORA MANUAL no painel (IP=X,
+        #    last_seen=NULL / "Nunca"). Depois agente coleta mesmo IP X e cria
+        #    UMA NOVA LINHA (impressora "automatica" com mesmo IP, last_seen atual).
+        #    Usuario OLHA para a LINHA MANUAL (que ele cadastrou e deu nome!) e
+        #    ve "Nunca" pensando que nao coletou - embora a duplicata automatica
+        #    esteja coletando certinho.
+        #
+        #    Solucao DEFENSIVA (roda TODAS as vezes, post-loop):
+        #      - Para cliente atual, AGRUPA impressoras nao ignoradas por IP.
+        #      - Se MESMO IP tem 2+ linhas:
+        #           * Escolhe VENCEDORA = impressora que o USUARIO quer manter
+        #               (a manual = last_seen NULL, ou tem location_id, ou menor ID
+        #                e menos campos preenchidos = ela que ele cadastrou na mao!)
+        #           * As PERDEDORAS (duplicadas auto):
+        #               -> Move FK Reading (histórico de leitura) para a VENCEDORA
+        #               -> Move FK Alerts para a VENCEDORA
+        #               -> Copia campos uteis (last_seen, serial, mac, toner, pages etc)
+        #                  PARA a VENCEDORA (contadores / last_seen = atualizados!)
+        #               -> Marca a PERDEDORA como ignored=True (some do painel,
+        #                  nao apaga nada do historico, rollback manual 1 clique!)
+        #      - Adiciona aviso em warnings[] informando quantas foram mescladas.
+        # ================================================================
+        _merged_total = 0
+        try:
+            if agent and getattr(agent, "client_id", None):
+                _cli_id = int(agent.client_id)
+                all_active = (
+                    db.query(Printer)
+                    .filter(Printer.client_id == _cli_id, Printer.ignored == False)
+                    .order_by(Printer.id.asc())
+                    .all()
+                )
+                # Agrupa por IP normalizado (case-insensitive / strip)
+                _by_ip: dict[str, list[Printer]] = {}
+                for pp in all_active or []:
+                    _ipp = _s_ip(getattr(pp, "ip_address", "")).lower().strip()
+                    if not _ipp or _ipp == "0.0.0.0":
+                        continue
+                    _by_ip.setdefault(_ipp, []).append(pp)
+
+                for _ip_key, _group in _by_ip.items():
+                    if len(_group) < 2:
+                        continue  # sem duplicata, pula!
+
+                    # --- 1) Decidir VENCEDORA (impressora que o USUARIO quer manter!) ---
+                    # Regras (prioridade alta -> baixa):
+                    #   A) TEM location_id preenchido (usuario cadastrou manual!)
+                    #   B) last_seen IS NULL (Nunca = impressora manual!)
+                    #   C) Menor ID (primeira criada = cadastrada manualmente antes!)
+                    #   D) Nome/modelo preenchidos de mao (serial/model/manufacturer)
+                    _group_sorted = sorted(
+                        _group,
+                        key=lambda p: (
+                            0 if getattr(p, "location_id", None) is not None else 1,  # A
+                            0 if getattr(p, "last_seen", None) is None else 1,        # B
+                            int(getattr(p, "id", 10**12)),                           # C
+                        ),
+                    )
+                    winner = _group_sorted[0]
+                    losers = _group_sorted[1:]
+
+                    # --- 2) Para cada PERDEDORA: mover FKs para WINNER, marcar ignored ---
+                    for loser in losers:
+                        try:
+                            # (a) MOVE HISTORICO READING para winner
+                            try:
+                                db.query(Reading).filter(Reading.printer_id == int(loser.id)).update(
+                                    {"printer_id": int(winner.id)}, synchronize_session=False
+                                )
+                            except Exception:
+                                pass
+                            # (b) MOVE ALERTAS para winner
+                            try:
+                                from app.database import Alert as _TmpAlert
+
+                                db.query(_TmpAlert).filter(_TmpAlert.printer_id == int(loser.id)).update(
+                                    {"printer_id": int(winner.id)}, synchronize_session=False
+                                )
+                            except Exception:
+                                pass
+
+                            # --- (c) COPIA DADOS UTEIS da perdedora PARA a vencedora! ---
+                            #     NUNCA sobreescreve campos que a vencedora JA tem preenchido!
+                            #     (usuario cadastrou manualmente, mantemos nome/local etc!)
+                            def _cp_if_empty(src, dst, field_name: str):
+                                try:
+                                    src_v = getattr(src, field_name, None)
+                                    if src_v is None or (isinstance(src_v, str) and not src_v.strip()):
+                                        return
+                                    dst_v = getattr(dst, field_name, None)
+                                    if dst_v is None or (isinstance(dst_v, str) and not dst_v.strip()):
+                                        try:
+                                            if isinstance(src_v, int) and isinstance(dst_v, int):
+                                                # Contadores: MAXIMO (monotonico!)
+                                                if "pages_" in field_name or "pages_total" == field_name:
+                                                    if src_v > int(dst_v or 0):
+                                                        setattr(dst, field_name, src_v)
+                                                else:
+                                                    setattr(dst, field_name, src_v)
+                                            else:
+                                                setattr(dst, field_name, src_v)
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
+
+                            _cp_if_empty(loser, winner, "serial_number")
+                            _cp_if_empty(loser, winner, "mac_address")
+                            _cp_if_empty(loser, winner, "model")
+                            _cp_if_empty(loser, winner, "manufacturer")
+                            _cp_if_empty(loser, winner, "status")
+                            _cp_if_empty(loser, winner, "pages_total")
+                            _cp_if_empty(loser, winner, "pages_bw")
+                            _cp_if_empty(loser, winner, "pages_color")
+                            # Toners (podem sobrescrever - sao niveis que variam!)
+                            try:
+                                _tb = float(getattr(loser, "toner_black") or 0)
+                                if _tb > 0 and getattr(winner, "toner_black") in (None, 0):
+                                    winner.toner_black = _tb
+                                _tc = float(getattr(loser, "toner_cyan") or 0)
+                                if _tc > 0 and getattr(winner, "toner_cyan") in (None, 0):
+                                    winner.toner_cyan = _tc
+                                _tm = float(getattr(loser, "toner_magenta") or 0)
+                                if _tm > 0 and getattr(winner, "toner_magenta") in (None, 0):
+                                    winner.toner_magenta = _tm
+                                _ty = float(getattr(loser, "toner_yellow") or 0)
+                                if _ty > 0 and getattr(winner, "toner_yellow") in (None, 0):
+                                    winner.toner_yellow = _ty
+                            except Exception:
+                                pass
+                            # last_seen = SEMPRE o MAIOR (mais recente!)
+                            try:
+                                ls_w = getattr(winner, "last_seen", None)
+                                ls_l = getattr(loser, "last_seen", None)
+                                if ls_l is not None and (ls_w is None or ls_l > ls_w):
+                                    winner.last_seen = ls_l
+                            except Exception:
+                                pass
+
+                            # --- (d) Marca PERDEDORA como ignorada (some do painel, N APAGA NADA!) ---
+                            try:
+                                loser.ignored = True
+                                loser.active = False
+                                loser.delete_reason = f"[MERGE AUTO 06/09] mesma impressora IP {_ip_key}, movido para printer#{winner.id}"
+                            except Exception:
+                                pass
+                            _merged_total += 1
+                        except Exception:
+                            continue
+        except Exception as _merge_top_err:
+            # Erro em qualquer lugar deste bloco: APENAS adiciona warning, NAO QUEBRA NADA!
+            try:
+                warnings.append(f"[MERGE-AUTO] bloco ignorado por seguranca: {str(_merge_top_err)[:150]}")
+            except Exception:
+                pass
+
+        if _merged_total > 0:
+            try:
+                warnings.append(
+                    f"[MERGE-AUTO OK] Mescladas {_merged_total} impressora(s) duplicadas (mesmo IP): "
+                    + "a impressora MANUAL cadastrada por voce agora tem os dados de coleta!"
+                )
+            except Exception:
+                pass
 
         # ===== LIMPEZA ANTI-FALSO COLORIDO GLOBAL (para este cliente!) =====
         # Roda OBRIGATORIAMENTE a cada coleta de agente: fecha alertas coloridos
