@@ -4441,6 +4441,75 @@ async def agent_report(
         #    envia readings -> processa normal), SEM alteracoes!
         # =============================================================
 
+        # =================================================================
+        # 🔥🔥🔥 FIX 07/09 JULIO (BLOCO ADITIVO! NÃO ALTERA NADA ANTERIOR!)
+        #    PATCH RETROATIVO (ANTES DO LOOP DE READINGS! ACONTECE PRIMEIRO!)
+        #    Julio tinha excluido impressoras ANTES deste fix (elas so
+        #    receberam ignored=True/active=False sem os 3 campos delete
+        #    oficial!). Isso fazia elas VOLTAREM na PRIMEIRA coleta (pois
+        #    o patch retroativo estava NO FIM, DEPOIS do loop, e a reativacao
+        #    no loop acontecia PRIMEIRO!).
+        #    AQUI: Roda ANTES DO LOOP, idempotente, marcando TODAS impressoras
+        #    deste cliente com ignored=True mas sem deleted_at → EXCLUIDAS
+        #    OFICIAIS retroativamente. NENHUMA impressora destas vai ser
+        #    reativada mais abaixo no loop. Elas NUNCA MAIS voltam!
+        # =================================================================
+        try:
+            if agent and getattr(agent, "client_id", None):
+                _cid_retro_antes_loop = int(agent.client_id)
+                _agora_retro_antes_loop = _now()
+                try:
+                    _who_retro_antes_loop = str(getattr(agent, "name", "") or "sistema")[:40]
+                except Exception:
+                    _who_retro_antes_loop = "sistema"
+                try:
+                    from sqlalchemy import and_ as _and_retro_antes_loop
+                    _retro_q_loop = db.query(Printer).filter(
+                        _and_retro_antes_loop(
+                            Printer.client_id == _cid_retro_antes_loop,
+                            Printer.ignored == True,
+                            Printer.deleted_at.is_(None),
+                        )
+                    ).limit(500)
+                    _retro_rows_loop = _retro_q_loop.all()
+                    _retro_count_loop = 0
+                    for _p_r_loop in _retro_rows_loop:
+                        try:
+                            if getattr(_p_r_loop, "deleted_at", None) is None:
+                                _p_r_loop.deleted_at = _agora_retro_antes_loop
+                                try:
+                                    _p_r_loop.deleted_by_user_id = int(0)
+                                except Exception:
+                                    pass
+                                try:
+                                    _p_r_loop.delete_reason = (
+                                        f"Excluida (retroativo 07/09 ANTES DO LOOP!) ignored=True mas sem delete_reason. "
+                                        f"Marcada via patch retroativo agent_report ({_who_retro_antes_loop}). "
+                                        f"NAO reativar automaticamente."
+                                    )
+                                except Exception:
+                                    pass
+                                try:
+                                    _p_r_loop.active = False
+                                except Exception:
+                                    pass
+                                _retro_count_loop += 1
+                        except Exception:
+                            continue
+                    if _retro_count_loop > 0:
+                        try:
+                            warnings.append(
+                                f"[PATCH RETROATIVO ANTES LOOP EXCLUIDAS OK] Marcadas {_retro_count_loop} impressora(s) deste cliente "
+                                + "como EXCLUIDAS OFICIAIS (deleted_at/deleted_by/delete_reason) retroativamente ANTES de processar readings. "
+                                + "Elas NAO voltam mais automaticamente!"
+                            )
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         for reading in readings_list:
             # -----------------------------------------------------------------
             # TRY POR READING INDIVIDUAL (DEUS EX MACHINA 2!)
@@ -4626,6 +4695,58 @@ async def agent_report(
                             printer.ignored = False
                             printer.active = True
                     if not printer:  # continua igual: nem match nem ignored_found não excluida.
+                        # ==============================================================
+                        # 🔥🔥🔥 CAMADA NINJA DEFENSIVA 07/09 JULIO: ANTES DE CRIAR
+                        #     IMPRESSORA NOVA, CHECA SE JA EXISTIU ALGUMA EXCLUIDA
+                        #     OFICIAL (deleted_at/deleted_by/delete_reason) NESTE
+                        #     CLIENTE com o MESMO IP. Se SIM: NAO CRIA LINHA NOVA,
+                        #     PULA COMPLETAMENTE (continue), mantem a impressora
+                        #     excluida la quietinha. NAO tem como voltar nunca mais!
+                        # ==============================================================
+                        _block_recreate_excluida = False
+                        if r_ip and r_ip != "0.0.0.0":
+                            try:
+                                from sqlalchemy import and_ as _and_ninja
+                                _q_block = (
+                                    db.query(Printer.id, Printer.deleted_at, Printer.delete_reason)
+                                    .filter(
+                                        _and_ninja(
+                                            Printer.client_id == agent.client_id,
+                                            Printer.ip_address.ilike(r_ip),
+                                        )
+                                    )
+                                    .limit(100)
+                                    .all()
+                                )
+                                for (_pbid, _pbdel, _pbreason) in _q_block:
+                                    try:
+                                        _dummy = Printer()
+                                        _dummy.id = int(_pbid)
+                                        _dummy.deleted_at = _pbdel
+                                        _dummy.delete_reason = _pbreason
+                                        if _printer_soft_deleted_oficial(_dummy):
+                                            _block_recreate_excluida = True
+                                            warnings.append(
+                                                f"[BLOCK RECRIA EXCLUIDA] IP={r_ip} tem impressora historica #{int(_pbid)} "
+                                                + "EXCLUIDA OFICIALMENTE pelo usuario. NAO sera criada nova linha automaticamente."
+                                            )
+                                            break
+                                    except Exception:
+                                        continue
+                            except Exception:
+                                pass
+                        if _block_recreate_excluida:
+                            # Sair deste reading, nao criar nada, nao gravar Reading.
+                            try:
+                                db.rollback()
+                            except Exception:
+                                pass
+                            try:
+                                agent = _get_agent(x_agent_token, db)
+                                agent.last_heartbeat = _now()
+                            except Exception:
+                                pass
+                            continue
                         printer = Printer(
                             client_id=agent.client_id,
                             ip_address=r_ip,
