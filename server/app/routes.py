@@ -2320,27 +2320,63 @@ def toggle_ignore_printer(
     - Quando ignorada (ignored=True): some das listagens, NÃO é atualizada pelo
       agente em próximas coletas, e NÃO é recriada se for encontrada na rede.
       Também fecha TODOS os alertas abertos automaticamente.
+      🔥 FIX 07/09 JULIO: Quando clicada EXCLUIR / Ignorar de proposito, GRAVA
+         deleted_at / deleted_by_user_id / delete_reason → impressora NUNCA MAIS
+         retorna automaticamente nas proximas coletas do agente! (Só retorna se
+         usuario clicar NOVAMENTE em Reativar no painel manualmente!)
     - Quando reativada (ignored=False): volta a aparecer no painel e o agente
       volta a atualizar seus dados normalmente nas próximas leituras.
+      🔥 FIX 07/09 JULIO: Reativar manual LIMPA os campos de delete oficial,
+         para ela voltar a participar de match normal no agente_report.
     """
     # Busca INCLUINDO as impressoras ignoradas (precisamos achá-la para toggle!)
     printer = _get_scoped_printer(db, current_user, printer_id, include_ignored=True)
     _require_manage_scope(current_user, printer.client_id)
 
     now = _now()
-    printer.ignored = not printer.ignored
+    _vai_ser_ignorada = not printer.ignored
+    printer.ignored = _vai_ser_ignorada
     printer.updated_at = now
 
+    # 🔥 FIX 07/09 JULIO: Grava / Limpa campos de exclusao OFICIAL
+    if _vai_ser_ignorada:
+        # EXCLUINDO / IGNORANDO de proposito: marca 3 campos delete oficial →
+        # impressora NUNCA MAIS reativa automatica no agent_report!
+        try:
+            printer.deleted_at = now
+            printer.deleted_by_user_id = int(getattr(current_user, "id", 0) or 0)
+            _who = str(getattr(current_user, "username", "") or "admin")[:40]
+            printer.delete_reason = (
+                f"Excluida pelo admin '{_who}' via painel botao Excluir/Ignorar. "
+                "NAO reativar automaticamente."
+            )
+        except Exception:
+            pass
+        printer.active = False
+    else:
+        # REATIVANDO manualmente pelo usuario no painel: LIMPA os 3 campos delete oficial
+        # → agora ela PODE voltar a ser atualizada normalmente pelo agente!
+        try:
+            printer.deleted_at = None
+            printer.deleted_by_user_id = None
+            printer.delete_reason = None
+        except Exception:
+            pass
+        printer.active = True
+
     # Se está SENDO IGNORADA AGORA: fecha todos os alertas abertos dela!
-    if printer.ignored:
-        open_alerts = (
-            db.query(Alert)
-            .filter(Alert.printer_id == printer.id, Alert.resolved == False)
-            .all()
-        )
-        for a in open_alerts:
-            a.resolved = True
-            a.resolved_at = now
+    if _vai_ser_ignorada:
+        try:
+            open_alerts = (
+                db.query(Alert)
+                .filter(Alert.printer_id == printer.id, Alert.resolved == False)
+                .all()
+            )
+            for a in open_alerts:
+                a.resolved = True
+                a.resolved_at = now
+        except Exception:
+            pass
 
     db.commit()
     db.refresh(printer)
@@ -5844,6 +5880,132 @@ async def agent_report(
                     }
                 except Exception:
                     pass
+
+        # =================================================================
+        # 🔥🔥🔥 FIX 07/09 JULIO (BLOCO ADITIVO! NÃO ALTERA NADA ANTERIOR!)
+        #    PATCH RETROATIVO: imp_excluidas IGNORADAS HOJE SEM deleted_at
+        #    Julio ja tinha excluido impressoras ANTES deste fix (elas so
+        #    receberam ignored=True/active=False sem os 3 campos delete
+        #    oficial!). Isso fazia elas VOLTAREM na proxima coleta (bug que
+        #    ele relatou!). AQUI atualizamos retroativamente (idempotente,
+        #    rodar sempre nao faz mal nenhum, nao mexe em nada se ja tiver
+        #    preenchido!), marcando EXCLUSÃO OFICIAL em impressoras que
+        #    JA ESTAO ignored=True MAS AINDA NAO TEM deleted_at preenchido.
+        #    Elas NUNCA MAIS voltam automaticamente!
+        # =================================================================
+        try:
+            if agent and getattr(agent, "client_id", None):
+                _cid_retro = int(agent.client_id)
+                _agora_retro = _now()
+                try:
+                    _who_retro = str(getattr(agent, "name", "") or "sistema")[:40]
+                except Exception:
+                    _who_retro = "sistema"
+                try:
+                    from sqlalchemy import and_ as _and_retro
+                    _retro_q = db.query(Printer).filter(
+                        _and_retro(
+                            Printer.client_id == _cid_retro,
+                            Printer.ignored == True,
+                            Printer.deleted_at.is_(None),
+                        )
+                    ).limit(500)
+                    _retro_rows = _retro_q.all()
+                    _retro_count = 0
+                    for _p_r in _retro_rows:
+                        try:
+                            if getattr(_p_r, "deleted_at", None) is None:
+                                _p_r.deleted_at = _agora_retro
+                                try:
+                                    _p_r.deleted_by_user_id = int(0)
+                                except Exception:
+                                    pass
+                                try:
+                                    _p_r.delete_reason = (
+                                        f"Excluida (retroativo 07/09) ignored=True mas sem delete_reason. "
+                                        f"Marcada via patch retroativo agent_report ({_who_retro}). "
+                                        f"NAO reativar automaticamente."
+                                    )
+                                except Exception:
+                                    pass
+                                try:
+                                    _p_r.active = False
+                                except Exception:
+                                    pass
+                                _retro_count += 1
+                        except Exception:
+                            continue
+                    if _retro_count > 0:
+                        try:
+                            warnings.append(
+                                f"[PATCH RETROATIVO EXCLUIDAS OK] Marcadas {_retro_count} impressora(s) deste cliente "
+                                + "como EXCLUIDAS OFICIAIS (deleted_at/deleted_by/delete_reason) retroativamente. "
+                                + "Elas NAO voltam mais automaticamente!"
+                            )
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # =================================================================
+        # 🔥🔥🔥 FIX 07/09 JULIO (BLOCO ADITIVO! NÃO ALTERA NADA!)
+        #    WARNINGS CLAROS: impressoras do CLIENTE com last_seen IS NULL
+        #    (status "Nunca" no painel, cadastrada manualmente!) que TEM
+        #    ip_address preenchido mas AINDA NAO FORAM COLETADAS NESTE /
+        #    NENHUM report. Mostra IP + id da impressora no warnings array
+        #    e INSTRUCAO para Julio do que fazer (setup 6.9.1 extra-targets
+        #    OU colocar IP no config.yaml do agente!).
+        # =================================================================
+        try:
+            if agent and getattr(agent, "client_id", None):
+                _cid_manual = int(agent.client_id)
+                _manuais_nunca = (
+                    db.query(Printer.id, Printer.ip_address, Printer.name, Printer.model)
+                    .filter(
+                        Printer.client_id == _cid_manual,
+                        Printer.ignored == False,
+                        Printer.active == True,
+                        Printer.last_seen.is_(None),
+                        Printer.deleted_at.is_(None),
+                        Printer.ip_address.isnot(None),
+                    )
+                    .order_by(Printer.id.desc())
+                    .limit(100)
+                    .all()
+                )
+                _ips_nunca = []
+                _ids_nunca = []
+                for (_mid, _mip, _mname, _mmodel) in _manuais_nunca:
+                    _ips_nunca.append(str(_mip or "").strip())
+                    _ids_nunca.append(int(_mid))
+                if len(_manuais_nunca) > 0:
+                    try:
+                        warnings.append(
+                            f"[AVISO IMPRESSORA MANUAL NUNCA COLETADA] Existe(m) {len(_manuais_nunca)} "
+                            + f"impressora(s) MANUAL(is) deste cliente com IP cadastrado mas 'Ultima Coleta = Nunca' (last_seen NULL)."
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        warnings.append(
+                            f"   Impressoras IDs: {sorted(_ids_nunca)}. IPs: {sorted(set(x for x in _ips_nunca if x))}."
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        warnings.append(
+                            "   Motivo provavel (IP PRIVADO LAN): o agente Windows NAO descobriu essas IPs na varredura automatica /24 "
+                            + "(ex: Canon WiFi bloqueia scan em massa!). SOLUCOES: (1) Buildar SETUP.EXE NOVA VERSAO 6.9.1+ que tem "
+                            + "endpoint /api/agent/extra-targets (agente baixa lista IPs manual do servidor e coleta SNMP na LAN do cliente). "
+                            + "(2) COLOQUE o IP manual no config.yaml do agente em snmp.ips (ex: ips: ['192.168.15.50']) e "
+                            + "rode PrintCollectAgent.exe once."
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
         return {
             "status": "ok" if processed_errors == 0 else "partial",
