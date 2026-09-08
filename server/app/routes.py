@@ -4559,9 +4559,14 @@ async def agent_report(
                 # deleted_by=1 e motivo "pelo admin", mas MANTEM active=True, ignored=False
                 # → PROVA 100% que NAO foi excluida REALMENTE! (Excluida real tem:
                 #    active=False E ignored=True!)
-                # Regra LIMPEZA: impressoras com deleted_at mas
-                #   (active = TRUE  OR  ignored = FALSE)
+                # Regra LIMPEZA (CONDICAO SIMPLES, SEM AMBIGUIDADES):
+                #   client_id = cliente_do_agente
+                #   AND deleted_at NAO NULO
+                #   AND ( active = TRUE  OR  ignored = FALSE )
                 # → FALSO POSITIVO! Limpa tudo AGORA.
+                # Nao importa mais deleted_by_user_id ou delete_reason: se a impressora
+                # esta marcada como ativa/nao-ignorada, mas deleted_at esta preenchido,
+                # a unica explicacao e BUG DO PATCH RETROATIVO → LIMPA!
                 # =================================================================
                 _sql_update_forte = _sql_debug_text(
                     "UPDATE printers SET "
@@ -4573,13 +4578,6 @@ async def agent_report(
                     + "updated_at = :now "
                     + "WHERE client_id = :cid AND deleted_at IS NOT NULL "
                     + "AND (active = TRUE OR ignored = FALSE) "
-                    + "AND ( "
-                    + "  (deleted_by_user_id IS NULL OR deleted_by_user_id <= 0) "
-                    + "  OR (LOWER(delete_reason) NOT LIKE '%pelo admin%') "
-                    + "  OR (LOWER(delete_reason) NOT LIKE '%via painel botao excluir%') "
-                    + "  OR (active = TRUE) "
-                    + "  OR (ignored = FALSE) "
-                    + ")"
                 )
                 _res_update = db.execute(
                     _sql_update_forte, {"cid": _debug_cid, "now": _now()}
