@@ -4949,6 +4949,57 @@ async def agent_report(
                 #      - NAO grava Reading de historico nela!
                 #      - Controle: flag _is_deleted_oficial pulando bloco abaixo + Reading.
                 _is_deleted_oficial = _printer_soft_deleted_oficial(printer)
+                # 🔥🔥🔥 CORRECAO AUTOMATICA: Regra de Ouro diz que NAO e excluida oficial,
+                #   MAS os campos fisicos deleted_at / deleted_by / delete_reason AINDA
+                #   estao preenchidos por algum patch antigo / bug anterior (RICOH #6!).
+                #
+                #   Solucao 100% automatica e segura: LIMPA ESTES CAMPOS FISICOS agora,
+                #   na proxima coleta, sem o Julio precisar de NENHUM CLIQUE.
+                #   Depois disso:
+                #     → A query de listagem (deleted_at IS NULL) VAI ENCONTRAR a impressora
+                #       normalmente na lista do painel.
+                #     → Last Seen / ultima coleta vai ATUALIZAR normalmente.
+                #     → Nenhum efeito colateral. Impressoras REALMENTE excluidas (Regra de Ouro
+                #       retorna True) NAO caem aqui, entao continuam excluidas para sempre!
+                # =======================================================================
+                if not _is_deleted_oficial:
+                    try:
+                        _tem_deleted_at = getattr(printer, "deleted_at", None) is not None
+                    except Exception:
+                        _tem_deleted_at = False
+                    try:
+                        _tem_del_by = int(getattr(printer, "deleted_by_user_id", None) or 0) > 0
+                    except Exception:
+                        _tem_del_by = False
+                    try:
+                        _del_reason_raw = getattr(printer, "delete_reason", None)
+                        _tem_del_reason = bool(_del_reason_raw and str(_del_reason_raw).strip() != "")
+                    except Exception:
+                        _tem_del_reason = False
+                    if _tem_deleted_at or _tem_del_by or _tem_del_reason:
+                        try:
+                            printer.deleted_at = None
+                        except Exception:
+                            pass
+                        try:
+                            printer.deleted_by_user_id = None
+                        except Exception:
+                            pass
+                        try:
+                            printer.delete_reason = None
+                        except Exception:
+                            pass
+                        # Aviso no log para Julio confirmar que deu certo!
+                        try:
+                            warnings.append(
+                                f"[LIMPEZA AUTOMATICA EXCLUSAO FALSA-POSITIVA] printer#{printer.id} ip={r_ip} "
+                                + "tinha campos de exclusao marcados por patch/bug antigo, mas Regra de Ouro "
+                                + "diz que NAO foi excluida pelo usuario. Campos limpos AUTOMATICAMENTE! "
+                                + "Na proxima atualizacao: last_seen, contadores e listagem voltam ao normal. 🙌"
+                            )
+                        except Exception:
+                            pass
+                # =======================================================================
                 if not _is_deleted_oficial:
                     printer.ip_address = r_ip
                     # 🔥 CRITICO: Garante que NENHUMA impressora reportada pelo agente fique
