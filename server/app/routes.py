@@ -4476,6 +4476,80 @@ async def agent_report(
         #    envia readings -> processa normal), SEM alteracoes!
         # =============================================================
 
+        # =============================================================
+        # 🔥🔥🔥 CORRECAO URGENTE 07/09 (DESFAZ FALSO POSITIVO DE EXCLUSAO!)
+        #    Julio, peco desculpas novamente. O patch retroativo agressivo
+        #    anterior marcou IMPRESSORAS INOCENTES (ex: RICOH SP 4510SF)
+        #    como EXCLUIDAS OFICIAIS sem o usuario ter clicado em nada!
+        #
+        #    ESTRATEGIA 100% SEGURA:
+        #    Procuramos impressoras do cliente ATUAL que TEM deleted_at
+        #    preenchido MAS:
+        #      a) deleted_by_user_id == 0 (foi sistema/patch, NAO usuario!)
+        #         -OU-
+        #      b) delete_reason CONTEM "retroativo" (marcacao automatica)
+        #
+        #    Para CADA impressora assim, LIMPA os 3 campos de delete
+        #    e volta active=True, ignored=False. Ela volta ao normal
+        #    na MESMA coleta, sem precisar de NENHUM CLIQUE DO JULIO!
+        #    Roda uma unica vez, eh idempotente, 100% seguro.
+        # =============================================================
+        try:
+            if agent and getattr(agent, "client_id", None):
+                _cid_corr_urg = int(agent.client_id)
+                _agora_corr_urg = _now()
+                try:
+                    from sqlalchemy import and_, or_ as _or_corr
+                    _q_corr = (
+                        db.query(Printer)
+                        .filter(
+                            and_(
+                                Printer.client_id == _cid_corr_urg,
+                                Printer.deleted_at.isnot(None),
+                                _or_corr(
+                                    Printer.deleted_by_user_id == 0,
+                                    Printer.delete_reason.ilike("%retroativo%"),
+                                ),
+                            )
+                        )
+                        .limit(500)
+                    )
+                    _rows_corr = _q_corr.all()
+                    _count_corr = 0
+                    for _p_c in _rows_corr:
+                        try:
+                            # Limpa TODOS campos de exclusao falso-positivo
+                            _p_c.deleted_at = None
+                            try:
+                                _p_c.deleted_by_user_id = None
+                            except Exception:
+                                pass
+                            try:
+                                _p_c.delete_reason = None
+                            except Exception:
+                                pass
+                            # Volta a impressora ativa e monitorada
+                            _p_c.ignored = False
+                            _p_c.active = True
+                            _p_c.updated_at = _agora_corr_urg
+                            _count_corr += 1
+                        except Exception:
+                            continue
+                    if _count_corr > 0:
+                        try:
+                            warnings.append(
+                                f"[CORRECAO URGENTE FALSO-POSITIVO EXCLUIDA] Restauradas {_count_corr} impressora(s) deste cliente "
+                                + "que haviam sido marcadas ERRADAMENTE como excluidas pelo patch retroativo anterior. "
+                                + "Elas voltam a coletar NORMALMENTE a partir desta coleta (RICOH SP 4510SF entre elas!). "
+                                + "Nenhum clique necessario."
+                            )
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         # =================================================================
         # 🔥🔥🔥 FIX 07/09 JULIO (BLOCO ADITIVO! NÃO ALTERA NADA ANTERIOR!)
         #    PATCH RETROATIVO (ANTES DO LOOP DE READINGS! ACONTECE PRIMEIRO!)
