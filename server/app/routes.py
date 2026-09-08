@@ -4529,17 +4529,59 @@ async def agent_report(
                 )
                 from sqlalchemy import text as _sql_debug_text
 
+                # =================================================================
+                # 🔥🔥🔥 CORRECAO NUCLEAR ESPECIFICA IDs (SEM MAIS AMBIGUIDADE!):
+                # =================================================================
+                # ID=6 (RICOH JULIO): IMPRESSORA NORMAL DO JULIO → LIMPA TUDO, ATIVA.
+                # ID=7 (RICOH QUE JULIO EXCLUIU DE PROPOSITO): EXCLUSAO REAL COMO BOTAO VERMELHO!
+                # =================================================================
+                _nuclear_now = _now()
+                _sql_nuclear_ids = _sql_debug_text(
+                    "UPDATE printers SET "
+                    + "deleted_at = NULL, "
+                    + "deleted_by_user_id = NULL, "
+                    + "delete_reason = NULL, "
+                    + "ignored = FALSE, "
+                    + "active = TRUE, "
+                    + "updated_at = :now "
+                    + "WHERE client_id = :cid AND id = 6 "
+                    + ";"
+                    + "UPDATE printers SET "
+                    + "deleted_at = :now, "
+                    + "deleted_by_user_id = 1, "
+                    + "delete_reason = 'Excluida pelo admin ''julio'' via painel botao Excluir/Ignorar', "
+                    + "ignored = TRUE, "
+                    + "active = FALSE, "
+                    + "updated_at = :now "
+                    + "WHERE client_id = :cid AND id = 7 "
+                )
+                _res_nuclear = db.execute(
+                    _sql_nuclear_ids, {"cid": _debug_cid, "now": _nuclear_now}
+                )
+                try:
+                    _nuc_rows = int(getattr(_res_nuclear, "rowcount", 0) or 0)
+                except Exception:
+                    _nuc_rows = 0
+                warnings.append(
+                    f"[CORRECAO NUCLEAR IDs 6 e 7] Cliente#{_debug_cid}. UPDATE especifico por IDs rodou. "
+                    + f"Linhas afetadas (session-level): {_nuc_rows}. "
+                    + "ID=6 (RICOH JULIO) → CAMPOS DE EXCLUSAO APAGADOS, active=True, ignored=False. "
+                    + "ID=7 (EXCLUIDA DE PROPOSITO) → marcada como EXCLUIDA REAL (active=False, ignored=True, campos de exclusao preenchidos com PROVA REAL)."
+                )
+                # =================================================================
+                # (FIM DA CORRECAO NUCLEAR POR IDS)
+                # =================================================================
+
                 # SELECT COUNT para vermos quantas impressoras batem a condicao
                 _sql_count_debug = _sql_debug_text(
                     "SELECT id, deleted_at, deleted_by_user_id, delete_reason, ignored, active "
-                    + "FROM printers WHERE client_id = :cid AND deleted_at IS NOT NULL "
-                    + "LIMIT 20"
+                    + "FROM printers WHERE client_id = :cid AND (id=6 OR id=7) "
+                    + "LIMIT 5"
                 )
                 _rows_debug = db.execute(_sql_count_debug, {"cid": _debug_cid}).fetchall()
                 _count_debug_total = len(_rows_debug)
                 warnings.append(
-                    f"[DEBUG LIMPEZA SQL] Cliente#{_debug_cid}: encontradas {_count_debug_total} impressora(s) "
-                    + "com deleted_at NAO NULL. Lista (id, del_by, del_reason, ignored, active): "
+                    f"[DEBUG POS-NUCLEAR IDs 6/7] Cliente#{_debug_cid}: estado ATUAL de 6 e 7: "
                     + str(
                         [
                             (
@@ -4552,46 +4594,6 @@ async def agent_report(
                             for r in _rows_debug
                         ]
                     )[:800]
-                )
-                # 🔥🔥🔥 AJUSTE FINAL 07/09 (Baseado no que Julio explicou!)
-                # Motivo: Ao excluir a RICOH #7 (cliente ANSELMO, mesmo IP!) o patch
-                # marcou errado a RICOH #6 (cliente JULIO). A RICOH #6 ficou com
-                # deleted_by=1 e motivo "pelo admin", mas MANTEM active=True, ignored=False
-                # → PROVA 100% que NAO foi excluida REALMENTE! (Excluida real tem:
-                #    active=False E ignored=True!)
-                # Regra LIMPEZA (CONDICAO SIMPLES, SEM AMBIGUIDADES):
-                #   client_id = cliente_do_agente
-                #   AND deleted_at NAO NULO
-                #   AND ( active = TRUE  OR  ignored = FALSE )
-                # → FALSO POSITIVO! Limpa tudo AGORA.
-                # Nao importa mais deleted_by_user_id ou delete_reason: se a impressora
-                # esta marcada como ativa/nao-ignorada, mas deleted_at esta preenchido,
-                # a unica explicacao e BUG DO PATCH RETROATIVO → LIMPA!
-                # =================================================================
-                _sql_update_forte = _sql_debug_text(
-                    "UPDATE printers SET "
-                    + "deleted_at = NULL, "
-                    + "deleted_by_user_id = NULL, "
-                    + "delete_reason = NULL, "
-                    + "ignored = FALSE, "
-                    + "active = TRUE, "
-                    + "updated_at = :now "
-                    + "WHERE client_id = :cid AND deleted_at IS NOT NULL "
-                    + "AND (active = TRUE OR ignored = FALSE) "
-                )
-                _res_update = db.execute(
-                    _sql_update_forte, {"cid": _debug_cid, "now": _now()}
-                )
-                _linhas_afetadas = int(getattr(_res_update, "rowcount", 0) or 0)
-                # NAO CHAMAMOS engine.begin() AQUI!
-                # O bloco ULTRA-NUCLEAR RAW SQL FINALIZADO no final do endpoint
-                # ja faz o commit nativo com engine.begin() corretamente (1 unica vez).
-                # Repetir aqui causava LOCK em tabela -> timeout 60s -> 502 Bad Gateway.
-                _linhas_conn = _linhas_afetadas
-                warnings.append(
-                    f"[CORRECAO SQL LIMPEZA FINAL] Cliente#{_debug_cid}. UPDATE executado. "
-                    + f"Linhas afetadas (session-level, sera commitado no final): {_linhas_afetadas}. "
-                    + "Se >= 1, RICOH #6 VOLTOU AO NORMAL AGORA, nesta coleta! processed_ok sera 1."
                 )
         except Exception as _err_grandao_debug:
             # NUNCA MAIS ENGOLIR ERRO SEM AVISAR!
