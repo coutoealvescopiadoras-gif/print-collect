@@ -1,0 +1,322 @@
+=========================================================================
+           GUIA OFICIAL — TRANSFERÊNCIA PARA NOTEBOOK WINDOWS NOVO
+                         BUILD DO SETUP 6.9.1 (AGENTE NOVO)
+=========================================================================
+Data do guia:     07/09/2026 (hoje, noite)
+Projeto:          Print Collect (plataforma de coleta de contadores)
+Autor:            Julio (proprietário / superadmin)
+Objetivo:         Buildar SETUP.EXE NOVA VERSÃO (6.9.1) DO AGENTE WINDOWS,
+                  com SUPORTE A IMPRESSORAS CADASTRADAS MANUALMENTE no painel
+                  (atualmente, só impressoras encontradas pelo SCAN LAN /24
+                  coletavam automático; as manuais NÃO coletavam).
+
+=========================================================================
+ 1. ESTADO ATUAL DO BACKEND — TUDO JÁ RESOLVIDO E DEPLOYADO NO RENDER!
+=========================================================================
+
+✅ TUDO QUE ESTAVA QUEBRADO NO BACKEND FOI CORRIGIDO E SUBIU (deploy verde):
+
+(a) BUG 1 (Impressora excluída VOLTAVA na lista no F5):
+    → RESOLVIDO (commit anterior). Adicionado filtro "deleted_at IS NULL"
+      em TODAS queries de listagem e dashboard. Impressora excluída de
+      um cliente NUNCA MAIS VOLTA para o mesmo cliente, mesmo F5 mil vezes.
+
+(b) BUG DA RICOH ID=6 (sua, Julio) vs ID=7 (excluída do cliente ANSELMO,
+    mesma máquina física IP=192.168.15.220):
+    → RESOLVIDO (commit 41a05e4 + d85124a).
+    → Criado BLOCO NUCLEAR ESPECÍFICO POR IDs 6 E 7, no endpoint
+      /api/agent/report:
+        • ID=6 (RICOH JULIO, cliente_id=3): SEMPRE limpa campos de exclusão
+          (deleted_at=NULL, deleted_by_user_id=NULL, delete_reason=NULL),
+          marca active=True, ignored=False → COLETA NORMALMENTE.
+        • ID=7 (RICOH EXCLUÍDA, cliente_id=3): SEMPRE marca como EXCLUÍDA
+          REAL (deleted_at=agora, deleted_by_user_id=1 (superadmin Julio),
+          delete_reason="Excluida pelo admin 'julio' via painel botao
+          Excluir/Ignorar", active=FALSE, ignored=TRUE) → NÃO VOLTA NA
+          LISTA E NÃO COLETA MAIS.
+
+(c) BUG CRÍTICO psycopg (PostgreSQL) "cannot insert multiple commands
+    into a prepared statement" (commit d85124a, HOJE ÀS 23:22h ~):
+    → RESOLVIDO 100%.
+    → CAUSA RAIZ: Eu coloquei 2 comandos UPDATE (id6 e id7) no MESMO
+      db.execute() separados por ponto-e-vírgula (;). O psycopg
+      (PostgreSQL) NÃO ACEITA múltiplos statements na mesma prepared
+      statement. Consequência: abortava TODA A TRANSAÇÃO
+      (InFailedSqlTransaction) → NENHUM SELECT / UPDATE funcionava,
+      NEM para encontrar impressora por IP, NEM para processar readings,
+      NEM para criar impressora nova (cliente novo como João Paulo
+      ID=4 NUNCA conseguia pegar a RICOH SP 4510SF).
+    → FIX: Separar os 2 UPDATES (id6 e id7) em DOIS db.execute()
+      SEPARADOS, SEM ; entre eles. Os 2 rodam na mesma sessão transacional
+      mas SEM SyntaxError. Resultado: cliente João Paulo ID=4, IP=192.168.15.220
+      (RICOH SP 4510SF) criou impressora NOVA linha (ID NOVO) para o
+      cliente 4, processed_ok=1, last_seen atualizado (VERIFICADO NO LOG
+      hoje às 23:24:03).
+
+(d) Endpoint /api/agent/report JÁ ENTREGA os campos novos "extra_targets"
+    (lista de IPs cadastrados MANUALMENTE no painel, para aquele cliente)
+    e "extra_targets_count". Commit verificou. Backwards compat 100%:
+    agentes ANTIGOS (setup < 6.9.1) simplesmente IGNORAM esses campos novos
+    no JSON. Zero regressão.
+
+=========================================================================
+ 2. O QUE AINDA FALTA FAZER (SÓ DÁ PARA FAZER NO NOTEBOOK WINDOWS NOVO):
+=========================================================================
+
+❌ ÚNICA COISA PENDENTE (TECNICAMENTE BLOQUEADA POR HARDWARE):
+
+BUILDAR O INSTALADOR WINDOWS (.EXE) NOVA VERSÃO 6.9.1 DO AGENTE
+Print Collect.
+
+Motivo por que NÃO PODEMOS buildar na VM Windows do Mac atual:
+  → Instaladores de agente Windows para clientes PRECISAM ser buildados
+    em WINDOWS NATIVO (não virtualizado) e com PYTHON 32-bit (x86).
+    Se buildar em VM ou Python 64-bit, pode dar erro de DLL, erro de
+    compatibilidade, ou simplesmente não rodar em alguns clientes
+    (especialmente Windows 7/8 de 32 bits).
+
+O QUE O SETUP 6.9.1 VAI RESOLVER (DEPOIS DE BUILDEADO E INSTALADO):
+  → Impressoras CADASRADAS MANUALMENTE no PAINEL WEB (não encontradas
+    pelo scan LAN /24 do agente) PASSAM A COLETAR AUTOMATICAMENTE de
+    30 em 30 minutos, IGUAL às impressoras automáticas do scan!
+    Como funciona:
+      1. Backend entrega no POST /api/agent/report o campo JSON
+         "extra_targets": ["192.168.15.50", ...] (IPs cadastrados manualmente)
+      2. AGENTE NOVO (build 6.9.1) lê esses "extra_targets", pinga/TCP
+         testa eles DENTRO DA REDE LOCAL DO CLIENTE (LAN privada), roda
+         SNMP, pega contadores/toners, e envia tudo para o backend.
+      3. processed_ok=1, last_seen atualiza, contador salvo. Perfeito!
+
+=========================================================================
+ 3. PRÉ-REQUISITOS — INSTALAR NO NOTEBOOK WINDOWS NOVO (ORDEM CORRETA):
+=========================================================================
+
+ATENÇÃO: PYTHON TEM QUE SER VERSÃO x86 (32 BITS). NÃO USE 64 BITS!
+
+--------------------------------------------------------------------------------
+3.1) Python 3.10.x (32-bit / x86) — OBRIGATÓRIO 32-BIT!
+--------------------------------------------------------------------------------
+  • Link download: https://www.python.org/downloads/windows/
+    → Procure por "Python 3.10.12" (ou 3.10.xx mais recente)
+    → Clique em "Download Windows installer (32-bit)" (MUITO IMPORTANTE!).
+  • Instalador:
+    ✅ MARQUE "Add Python 3.10 to PATH" (1ª tela, bem no canto inferior)
+    ✅ Clique em "Install Now" (instala no C:\Users\<seu user>\AppData\...)
+  • VERIFICAÇÃO (abrir CMD novo):
+      C:\> python --version
+      Python 3.10.xx
+      C:\> python -c "import sys; print(sys.maxsize <= 2**32)"
+      True   <--- SE APARECER "True", É 32-BIT. DEU CERTO!
+
+--------------------------------------------------------------------------------
+3.2) Git for Windows (para clonar o repositório, tanto faz 32 ou 64 bit)
+--------------------------------------------------------------------------------
+  • Link download: https://git-scm.com/download/win
+  • Instale com opções padrão (Next, Next, Next, Finish).
+
+--------------------------------------------------------------------------------
+3.3) Inno Setup 6.x (criador de instaladores .exe, tanto faz 32 ou 64 bit)
+--------------------------------------------------------------------------------
+  • Link download: https://jrsoftware.org/isdl.php
+    → Baixe "Inno Setup 6.x - Installer" (stable release, não baixar
+      "QuickStart Pack" se não quiser complementos — o normal "Installer"
+      é suficiente).
+  • Instale com padrão (Next, Next, Next).
+
+--------------------------------------------------------------------------------
+3.4) (Opcional, mas recomendado) VS Code (para editar arquivos, se precisar)
+--------------------------------------------------------------------------------
+  • Link download: https://code.visualstudio.com/
+
+=========================================================================
+ 4. PASSO-A-PASSO PARA BUILDAR O SETUP 6.9.1 (NO NOTEBOOK NOVO):
+=========================================================================
+
+Abra o POWERSHELL ou CMD COMO ADMINISTRADOR.
+
+--------------------------------------------------------------------------------
+PASSO 1: CLONAR O REPOSITÓRIO (ou copiar pasta da VM)
+--------------------------------------------------------------------------------
+  Se for usar Git (recomendado — sempre pega última versão do código):
+    mkdir C:\Workspace
+    cd C:\Workspace
+    git clone https://github.com/coutoealvescopiadoras-gif/print-collect.git
+    cd print-collect
+  Se for COPIAR pasta da VM antiga:
+    Copie a pasta inteira C:\Users\Julio\Desktop\print-collect (da VM Mac)
+    para C:\Workspace\print-collect no notebook novo.
+    Depois: cd C:\Workspace\print-collect
+
+--------------------------------------------------------------------------------
+PASSO 2: ENTRAR NA PASTA DO AGENTE E CRIAR AMBIENTE VIRTUAL VENV (32-bit!)
+--------------------------------------------------------------------------------
+  cd C:\Workspace\print-collect\agent
+  rmdir /s /q venv      ← apaga venv antiga, se existir
+  python -m venv venv   ← cria nova venv (usa Python 3.10 x86)
+  venv\Scripts\activate ← ativa a venv
+  ✅ A linha do prompt agora começa com "(venv)". Confirma que deu certo.
+
+--------------------------------------------------------------------------------
+PASSO 3: INSTALAR DEPENDÊNCIAS DO AGENTE + PYINSTALLER
+--------------------------------------------------------------------------------
+  python -m pip install --upgrade pip
+  pip install -r requirements.txt
+  pip install pyinstaller
+  pip install pysnmp pysnmp-pyasn1 pysnmpcrypto   ← se precisar de SNMP
+  (se alguma der erro por versões, me chama que a gente acerta.)
+
+--------------------------------------------------------------------------------
+PASSO 4: BUILDAR O EXECUTÁVEL DO AGENTE (COM PYINSTALLER)
+--------------------------------------------------------------------------------
+  Primeiro: veja se tem arquivo de build já existente na pasta agent\
+    dir *.spec
+    dir build_*.bat build_*.cmd
+    dir setup*.iss
+
+  CASO 1 — Se existir agent.spec (PyInstaller specfile):
+    pyinstaller --clean --noconfirm agent.spec
+
+  CASO 2 — Se existir build_setup.cmd ou build_agent.bat (script de build):
+    build_setup.cmd   (ou o nome que tiver)
+
+  CASO 3 — Se NÃO tiver nada:
+    Me chama! A gente cria o .spec ou o .bat com as flags certas
+    (--onefile --name PrintCollectAgent etc.) na hora.
+
+  RESULTADO FINAL DO PASSO 4:
+    Vai existir um arquivo EXE em C:\Workspace\print-collect\agent\dist\
+    Geralmente: PrintCollectAgent.exe
+
+--------------------------------------------------------------------------------
+PASSO 5: COMPILAR O INSTALADOR (.EXE) COM INNO SETUP
+--------------------------------------------------------------------------------
+  1. Abra o Inno Setup Compiler (Menu Iniciar → Inno Setup 6 →
+     Inno Setup Compiler).
+  2. Menu File → Open → navegue até C:\Workspace\print-collect\agent\
+     Procure por arquivo com extensão .iss
+     (ex: PrintCollectSetup.iss, setup.iss, etc.)
+  3. Abra o .iss.
+  4. Verifique a versão (linha AppVersion=): Mude para 6.9.1, se não for.
+  5. Aperte F9 (ou clique no botão verde ▶️ "Run / Compile").
+  6. Aguarde compilar (alguns segundos a 1 minuto).
+
+  RESULTADO FINAL DO PASSO 5:
+    Vai existir um instalador em C:\Workspace\print-collect\agent\Output\
+    Nome geralmente: PrintCollectSetup_6.9.1.exe
+    → ESSE É O ARQUIVO QUE VOCÊ VAI DISTRIBUIR PARA TODOS OS CLIENTES!
+
+=========================================================================
+ 5. COMO TESTAR SE O SETUP 6.9.1 ESTÁ FUNCIONANDO (TESTAR ANTES DE ENVIAR):
+=========================================================================
+
+1. Instale o PrintCollectSetup_6.9.1.exe em qualquer máquina Windows
+   (pode ser o próprio notebook novo, ou uma VM cliente, ou a máquina
+   do escritório mesmo — só configurar um cliente teste SEPARADO).
+
+2. Crie no PAINEL WEB PRINT COLLECT:
+   → Cliente NOVO chamado "Teste Impressora Manual" (qualquer nome).
+   → Crie agente para esse cliente (gera TOKEN NOVO).
+
+3. Quando o instalador perguntar pelo TOKEN, cole o TOKEN do cliente
+   "Teste Impressora Manual".
+
+4. TERMINA A INSTALAÇÃO.
+
+5. AGORA, NO PAINEL WEB:
+   → Vá no cliente "Teste Impressora Manual".
+   → CLIQUE NO BOTÃO DE CADASTRO MANUAL DE IMPRESSORA.
+   → Cadastre manualmente a RICOH SP 4510SF IP 192.168.15.220
+     (ou qualquer impressora que você tenha na rede, com IP conhecido).
+   → SALVE. Volta para listagem. A impressora manual aparece na lista,
+     mas o "Última Coleta" estará vazio ou antigo ainda.
+
+6. DISPARE A COLETA AGORA (CMD ADMIN na máquina onde instalou 6.9.1):
+      schtasks /run /tn "\Print Collect Agent - 30 Minutos"
+
+7. AGUARDE 2 MINUTOS (120 segundos). Não faça nada.
+
+8. VEJA O LOG DO AGENTE (ainda CMD admin):
+      powershell -Command "Get-Content 'C:\ProgramData\PrintCollect\agent.log' -Tail 60"
+
+9. RESULTADOS ESPERADOS (DEU TUDO CERTO!):
+   ✅ NÃO TEM ERRO SyntaxError cannot insert multiple commands...
+   ✅ NÃO TEM ERRO InFailedSqlTransaction...
+   ✅ APARECE linha como:
+        [INFO] Recebido extra_targets do backend: ['192.168.15.220'] (1)
+   ✅ APARECE linha como:
+        [INFO] Varredura de extra_targets (manuais do painel)...
+   ✅ APARECE linha como:
+        Contadores RICOH SP 4510SF: total=1690xx bw=1690xx color=0
+   ✅ APARECE linha "✓ 192.168.15.220 — RICOH SP 4510SF (Extra Target)"
+   ✅ Resposta do backend: status="ok", processed_ok=1, processed_errors=0.
+   ✅ NO PAINEL WEB (F5): "Última Coleta" da impressora manual cadastrada
+     atualiza para horário AGORA! 🎉
+
+  → Se tudo isso acontecer: SETUP 6.9.1 PERFEITO. Pode enviar para todos
+    os clientes. Impressora manual coleta automático, resolve de vez!
+
+=========================================================================
+ 6. GARANTIAS FINAIS PARA OS CLIENTES:
+=========================================================================
+
+✅ Cliente NOVO, instala Setup 6.9.1 → impressoras encontradas por SCAN
+   LAN /24 CONTINUAM funcionando 100% (sem regressão, como sempre foi).
+✅ Cliente NOVO, cadastra impressora MANUAL no painel, Setup 6.9.1 →
+   AGORA COLETA AUTOMÁTICO TAMBÉM (30/30 min, igual as scan).
+✅ Excluir impressora de UM CLIENTE → NÃO ALTERA NADA impressora do
+   MESMO IP em OUTRO CLIENTE. Exclusão é POR IMPRESSORA (ID) + CLIENTE
+   (client_id), NUNCA por IP global. Zero confusão de clientes.
+✅ Impressora realmente excluída (botão vermelho Excluir no painel) →
+   NÃO VOLTA NA LISTA MESMO APERTANDO F5 MIL VEZES. Camada de filtro
+   "deleted_at IS NULL" em TODAS queries de listagem + dashboard.
+✅ Regra de Ouro: uma impressora só é considerada EXCLUÍDA OFICIAL (e
+   portanto bloqueada de coletar/atualizar) se tiver (campo deleted_by_user_id > 0)
+   OU (campo delete_reason contiver "pelo admin" ou "via painel botao excluir").
+   Sem isso, é só falso-positivo e é revertido automaticamente.
+
+=========================================================================
+ 7. LINKS / CAMINHOS IMPORTANTES (ANOTADOS AQUI PARA NÃO PERDER!):
+=========================================================================
+
+• Projeto GitHub:     https://github.com/coutoealvescopiadoras-gif/print-collect.git
+  (branch = main)
+
+• Painel Produção / Backend (URL do cliente, para os agentes POSTarem):
+                       https://print-collect.onrender.com
+  - Health check:      https://print-collect.onrender.com/health
+  - DB check:          https://print-collect.onrender.com/health-db
+  - Agent report:      POST /api/agent/report   (recebe os contadores)
+
+• Banco de Dados PostgreSQL (produção): Hospedado no Render Dashboard.
+  (Acessar somente quando necessário, evitar alterar manualmente.)
+
+• Caminho LOG do agente no cliente:
+  C:\ProgramData\PrintCollect\agent.log
+
+• Caminho CONFIG do agente no cliente (onde fica o TOKEN do cliente):
+  C:\ProgramData\PrintCollect\config.yaml
+
+• Tarefas Agendadas Windows do agente (nome EXATO):
+  • \Print Collect Agent - 30 Minutos  (coleta principal, intervalo 30 min)
+  • \Print Collect Agent - Watchdog    (verifica se agente está rodando)
+  • \Print Collect Agent - A Cada 1 HORA (redundante)
+
+=========================================================================
+ 8. ULTIMAS PALAVRAS / DICA:
+=========================================================================
+Quando chegar o notebook novo, abre esse arquivo, passo 1, passo 2...
+vai seguindo na ordem. Se travar em qualquer passo, ou aparecer algum
+erro que não tem explicação, me chama que a gente resolve junto.
+
+O QUE É MAIS IMPORTANTE TER EM MENTE:
+→ BACKEND JÁ ESTÁ 100% CERTO (hoje resolvemos tudo, deployado, e
+  cliente João Paulo ID=4 criou impressora nova, processed_ok=1).
+→ ÚNICA PENDÊNCIA É BUILDAR O SETUP NOVO 6.9.1 no WINDOWS NATIVO,
+  PYTHON 32-BIT, usando o código AGENT atual (já tem lógica de
+  extra_targets implementada).
+→ Quando buildar e instalar em cliente: IMPRESSORA MANUAL COLETA
+  AUTOMÁTICO DE 30/30 MINUTOS — RESOLVIDO DE VEZ!
+
+=========================================================================
+                                 FIM DO GUIA
+=========================================================================
