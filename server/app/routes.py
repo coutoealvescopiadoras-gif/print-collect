@@ -4553,10 +4553,16 @@ async def agent_report(
                         ]
                     )[:800]
                 )
-                # Agora, RODA O UPDATE DE LIMPEZA SEM OBUG NA CLAUSULA WHERE!
-                # A condicao e MAIS AMPLA (pega QUALQUER deleted_at nao NULL):
-                #   - Se deleted_by_user_id NAO e > 0 (NAO usuario real)
-                #   - E delete_reason NAO CONTEM "pelo admin" (nao clicou botao!)
+                # 🔥🔥🔥 AJUSTE FINAL 07/09 (Baseado no que Julio explicou!)
+                # Motivo: Ao excluir a RICOH #7 (cliente ANSELMO, mesmo IP!) o patch
+                # marcou errado a RICOH #6 (cliente JULIO). A RICOH #6 ficou com
+                # deleted_by=1 e motivo "pelo admin", mas MANTEM active=True, ignored=False
+                # → PROVA 100% que NAO foi excluida REALMENTE! (Excluida real tem:
+                #    active=False E ignored=True!)
+                # Regra LIMPEZA: impressoras com deleted_at mas
+                #   (active = TRUE  OR  ignored = FALSE)
+                # → FALSO POSITIVO! Limpa tudo AGORA.
+                # =================================================================
                 _sql_update_forte = _sql_debug_text(
                     "UPDATE printers SET "
                     + "deleted_at = NULL, "
@@ -4566,9 +4572,14 @@ async def agent_report(
                     + "active = TRUE, "
                     + "updated_at = :now "
                     + "WHERE client_id = :cid AND deleted_at IS NOT NULL "
-                    + "AND (deleted_by_user_id IS NULL OR deleted_by_user_id <= 0) "
-                    + "AND (delete_reason IS NULL OR LOWER(delete_reason) NOT LIKE '%pelo admin%') "
-                    + "AND (delete_reason IS NULL OR LOWER(delete_reason) NOT LIKE '%via painel botao excluir%') "
+                    + "AND (active = TRUE OR ignored = FALSE) "
+                    + "AND ( "
+                    + "  (deleted_by_user_id IS NULL OR deleted_by_user_id <= 0) "
+                    + "  OR (LOWER(delete_reason) NOT LIKE '%pelo admin%') "
+                    + "  OR (LOWER(delete_reason) NOT LIKE '%via painel botao excluir%') "
+                    + "  OR (active = TRUE) "
+                    + "  OR (ignored = FALSE) "
+                    + ")"
                 )
                 _res_update = db.execute(
                     _sql_update_forte, {"cid": _debug_cid, "now": _now()}
