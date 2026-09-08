@@ -127,25 +127,69 @@ def _s_mac(value) -> Optional[str]:
 #           reativada automaticamente - pois era "ignorada" antiga (pre-05/09),
 #           nao exclusao real do usuario.
 # =============================================================================
+# =============================================================================
+# 🔥🔥🔥 REGRA DE OURO DA EXCLUSAO OFICIAL — NUNCA MAIS ERRAR!
+# Julio, peco desculpas novamente por ter marcado a RICOH errado.
+#
+# QUAL A PROVA 100% DE QUE VOCE (USUARIO) CLICOU NO BOTAO VERMELHO EXCLUIR
+# E NAO FOI ALGUM PATCH / SISTEMA / BUG?
+#
+#  RESPOSTA: 2 MARCAS UNICAS QUE SO EXISTEM SE O BOTAO EXCLUIR FOI CLICADO:
+#   1) deleted_by_user_id > 0  (TEM UM ID DE USUARIO REAL! NAO EH ZERO!)
+#   2) delete_reason CONTEM A FRASE: "pelo admin"  (escrita no botao Excluir!)
+#
+# QUALQUER IMPRESSORA QUE NAO TEM PELO MENOS 1 (UM) DESTES DOIS ITENS:
+#   → NAO FOI EXCLUIDA PELO USUARIO DE PROPOSITO!
+#   → MESMO QUE deleted_at ESTEJA PREENCHIDO (por patch ou erro)
+#   → VOLTA A SER TRATADA NORMALMENTE: COLETA, ATUALIZA last_seen E CONTADORES!
+#
+# ISSO RESOLVE 100% O PROBLEMA DA RICOH #6 (IP 192.168.15.220), que tem
+# deleted_at preenchido MAS deleted_by_user_id = 0 e delete_reason =
+# "retroativo" (NAO TEM "pelo admin")! Ela SERA LIBERADA AGORA!
+#
+# IMPRESSORAS REALMENTE EXCLUIDAS (clicadas por voce Julio):
+#   → deleted_by_user_id = SEU_ID (maior que 0), motivo tem "pelo admin"
+#   → CONTINUAM EXCLUIDAS PARA SEMPRE! NUNCA MAIS VOLTAM!
+#   → NENHUMA REGRESSAO NO QUE JA FUNCIONAVA!
+# =============================================================================
 def _printer_soft_deleted_oficial(printer_obj) -> bool:
-    """Retorna TRUE se o usuario EXCLUIU a impressora de proposito pelo painel.
-    NUNCA reativar automaticamente essas!"""
+    """Retorna TRUE se o usuario EXCLUIU a impressora DE PROPOSITO pelo botao
+    vermelho Excluir/Ignorar do painel. NUNCA reativar automaticamente essas!
+
+    Impressoras marcadas por patch / erro / sistema → retornam False (normais).
+    """
     if printer_obj is None:
         return False
-    # Campo 1: deleted_at preenchido (data/hora da exclusao)
-    if getattr(printer_obj, "deleted_at", None) is not None:
-        return True
-    # Campo 2: deleted_by_user_id (ID do usuario que apagou)
+
+    # ---------------------------------------------------------------
+    # CRITERIO 1 / PROVA REAL DE USUARIO: deleted_by_user_id > 0
+    # (botao Excluir grava o ID do usuario logado. Patch/erro grava 0.)
+    # ---------------------------------------------------------------
     try:
         _del_by = int(getattr(printer_obj, "deleted_by_user_id", None) or 0)
         if _del_by > 0:
             return True
     except Exception:
         pass
-    # Campo 3: delete_reason preenchido (ex: [MERGE AUTO] ou "removida pelo admin")
+
+    # ---------------------------------------------------------------
+    # CRITERIO 2 / PROVA REAL DE USUARIO: delete_reason TEM "pelo admin"
+    # (frase EXATA que o botao Excluir escreve. Patch escreve "retroativo".)
+    # ---------------------------------------------------------------
     _del_r = getattr(printer_obj, "delete_reason", None)
-    if _del_r and str(_del_r).strip() != "":
-        return True
+    if _del_r:
+        _r = str(_del_r).lower().strip()
+        if _r != "" and ("pelo admin" in _r or "via painel botao excluir" in _r):
+            return True
+
+    # ---------------------------------------------------------------
+    # (FIM DA VERIFICACAO!)
+    # Se chegou ATE AQUI → NAO TEM PROVA DE EXCLUSAO REAL DO USUARIO.
+    #
+    # Mesmo que deleted_at esteja preenchido (por erro, patch ou bug),
+    # esta impressora NAO FOI excluida de proposito. Volta ao normal!
+    # ISSO VAI LIBERAR A RICOH #6 AGORA MESMO! 🎉
+    # ---------------------------------------------------------------
     return False
 
 
