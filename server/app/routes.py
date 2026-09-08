@@ -129,23 +129,49 @@ def _s_mac(value) -> Optional[str]:
 # =============================================================================
 def _printer_soft_deleted_oficial(printer_obj) -> bool:
     """Retorna TRUE se o usuario EXCLUIU a impressora de proposito pelo painel.
-    NUNCA reativar automaticamente essas!"""
+    NUNCA reativar automaticamente essas!
+
+    ⚠️ CORRECAO 07/09 (seguranca maxima - NAO marcar inocentes):
+       - Patch retroativo ANTERIOR marcava inocentes com deleted_at != None MAS
+         deleted_by_user_id == 0 e delete_reason = "retroativo".
+       - LOGO: só contamos como EXCLUSAO REAL se tivermos PROVA DE USUARIO REAL:
+         a) deleted_by_user_id > 0 (ID de usuario autenticado no banco, 0 = sistema!)
+         b) delete_reason contem "pelo admin" (gravado pelo endpoint toggle quando
+            usuario clica no botao Excluir/Iginorar do painel).
+       - Se tivermos deleted_at mas sem nenhuma das 2 provas acima → FALSO POSITIVO
+         (patch retroativo inocente), retorna False = PODE reativar normal!
+    """
     if printer_obj is None:
         return False
-    # Campo 1: deleted_at preenchido (data/hora da exclusao)
-    if getattr(printer_obj, "deleted_at", None) is not None:
-        return True
-    # Campo 2: deleted_by_user_id (ID do usuario que apagou)
+
+    # Prova 1: ID do usuario real (0 = sistema / patch retroativo, NAO conta!)
     try:
         _del_by = int(getattr(printer_obj, "deleted_by_user_id", None) or 0)
         if _del_by > 0:
             return True
     except Exception:
         pass
-    # Campo 3: delete_reason preenchido (ex: [MERGE AUTO] ou "removida pelo admin")
+
+    # Prova 2: delete_reason gravado pelo endpoint toggle (usuario clicou de verdade)
     _del_r = getattr(printer_obj, "delete_reason", None)
-    if _del_r and str(_del_r).strip() != "":
-        return True
+    if _del_r:
+        _del_r_str = str(_del_r).strip().lower()
+        if _del_r_str != "":
+            # Endpoint /printers/{id}/ignore grava sempre "Excluida pelo admin 'usuario' via ..."
+            if "pelo admin" in _del_r_str:
+                return True
+            # Outras causas de exclusao REAL conhecidas
+            if "removida pelo admin" in _del_r_str:
+                return True
+            # FALSO POSITIVO: se motivo contem "retroativo" ou "patch" → NAO e exclusao real
+            if "retroativo" in _del_r_str or "patch" in _del_r_str:
+                return False
+
+    # --- (Checagem segura restante) ---
+    # Deleted_at preenchido SEM prova de usuario REAL:
+    #   Muito provavelmente FALSO POSITIVO do patch antigo.
+    #   Retornamos False para NAO prejudicar impressora inocente (RICOH etc).
+    # Obs: exclusao REAL do usuario sempre prova (a) ou (b) acima.
     return False
 
 
@@ -4479,20 +4505,21 @@ async def agent_report(
         # =================================================================
         # 🔥🔥🔥 FIX 07/09 JULIO (BLOCO ADITIVO! NÃO ALTERA NADA ANTERIOR!)
         #    PATCH RETROATIVO (ANTES DO LOOP DE READINGS! ACONTECE PRIMEIRO!)
-        #    Julio tinha excluido impressoras ANTES deste fix (elas so
-        #    receberam ignored=True/active=False sem os 3 campos delete
-        #    oficial!). Isso fazia elas VOLTAREM na PRIMEIRA coleta (pois
-        #    o patch retroativo estava NO FIM, DEPOIS do loop, e a reativacao
-        #    no loop acontecia PRIMEIRO!).
-        #    AQUI: Roda ANTES DO LOOP, idempotente, marcando TODAS impressoras
-        #    deste cliente com ignored=True mas sem deleted_at → EXCLUIDAS
-        #    OFICIAIS retroativamente. NENHUMA impressora destas vai ser
-        #    reativada mais abaixo no loop. Elas NUNCA MAIS voltam!
+        #
+        #    ⚠️ CORRECAO 07/09 (BLOQUEIO PATCH RETROATIVO AGRESSIVO!):
+        #       O patch anterior marcava TUDO com ignored=True como excluida
+        #       OFICIAL → ISSO MARCOU IMPRESSORAS INOCENTES (ex: RICOH do
+        #       cliente que JAMAIS foi excluida, apenas tinha ignored=True).
+        #       SOLUCAO MAIS SEGURA: O patch retroativo NAO marca mais NADA.
+        #       A UNICA FORMA de uma impressora ter deleted_at oficial:
+        #         -> USUARIO CLICAR EXPLICITAMENTE NO BOTAO EXCLUIR VERMELHO!
+        #         -> (endpoint /printers/{id}/ignore POST grava os campos)
+        #       Impressoras com ignored=True antigo (sem campos delete):
+        #         -> PODEM ser reativadas normalmente pelo agent_report.
         # =================================================================
         try:
             if agent and getattr(agent, "client_id", None):
                 _cid_retro_antes_loop = int(agent.client_id)
-                _agora_retro_antes_loop = _now()
                 try:
                     _who_retro_antes_loop = str(getattr(agent, "name", "") or "sistema")[:40]
                 except Exception:
@@ -4507,36 +4534,13 @@ async def agent_report(
                         )
                     ).limit(500)
                     _retro_rows_loop = _retro_q_loop.all()
+                    # 🔥 CORRECAO 07/09: PATCH RETROATIVO DESATIVADO!
                     _retro_count_loop = 0
-                    for _p_r_loop in _retro_rows_loop:
-                        try:
-                            if getattr(_p_r_loop, "deleted_at", None) is None:
-                                _p_r_loop.deleted_at = _agora_retro_antes_loop
-                                try:
-                                    _p_r_loop.deleted_by_user_id = int(0)
-                                except Exception:
-                                    pass
-                                try:
-                                    _p_r_loop.delete_reason = (
-                                        f"Excluida (retroativo 07/09 ANTES DO LOOP!) ignored=True mas sem delete_reason. "
-                                        f"Marcada via patch retroativo agent_report ({_who_retro_antes_loop}). "
-                                        f"NAO reativar automaticamente."
-                                    )
-                                except Exception:
-                                    pass
-                                try:
-                                    _p_r_loop.active = False
-                                except Exception:
-                                    pass
-                                _retro_count_loop += 1
-                        except Exception:
-                            continue
-                    if _retro_count_loop > 0:
+                    if len(_retro_rows_loop) > 0:
                         try:
                             warnings.append(
-                                f"[PATCH RETROATIVO ANTES LOOP EXCLUIDAS OK] Marcadas {_retro_count_loop} impressora(s) deste cliente "
-                                + "como EXCLUIDAS OFICIAIS (deleted_at/deleted_by/delete_reason) retroativamente ANTES de processar readings. "
-                                + "Elas NAO voltam mais automaticamente!"
+                                f"[PATCH RETROATIVO ANTES LOOP DESATIVADO] Existem {len(_retro_rows_loop)} impressora(s) ignored=True sem deleted_at neste cliente. "
+                                + "PATCH NAO MARCOU NENHUMA (seguranca maxima!). Para excluir oficialmente: USUARIO DEVE clicar no botao Excluir vermelho no painel."
                             )
                         except Exception:
                             pass
@@ -6040,19 +6044,21 @@ async def agent_report(
         # =================================================================
         # 🔥🔥🔥 FIX 07/09 JULIO (BLOCO ADITIVO! NÃO ALTERA NADA ANTERIOR!)
         #    PATCH RETROATIVO: imp_excluidas IGNORADAS HOJE SEM deleted_at
-        #    Julio ja tinha excluido impressoras ANTES deste fix (elas so
-        #    receberam ignored=True/active=False sem os 3 campos delete
-        #    oficial!). Isso fazia elas VOLTAREM na proxima coleta (bug que
-        #    ele relatou!). AQUI atualizamos retroativamente (idempotente,
-        #    rodar sempre nao faz mal nenhum, nao mexe em nada se ja tiver
-        #    preenchido!), marcando EXCLUSÃO OFICIAL em impressoras que
-        #    JA ESTAO ignored=True MAS AINDA NAO TEM deleted_at preenchido.
-        #    Elas NUNCA MAIS voltam automaticamente!
+        #
+        #    ⚠️ CORRECAO 07/09 (BLOQUEIO PATCH RETROATIVO AGRESSIVO!):
+        #       O patch anterior marcava TUDO com ignored=True como excluida
+        #       OFICIAL → ISSO MARCOU IMPRESSORAS INOCENTES (ex: RICOH do
+        #       cliente que JAMAIS foi excluida, apenas tinha ignored=True).
+        #       SOLUCAO MAIS SEGURA: O patch retroativo NAO marca mais NADA.
+        #       A UNICA FORMA de uma impressora ter deleted_at oficial:
+        #         -> USUARIO CLICAR EXPLICITAMENTE NO BOTAO EXCLUIR VERMELHO!
+        #         -> (endpoint /printers/{id}/ignore POST grava os campos)
+        #       Impressoras com ignored=True antigo (sem campos delete):
+        #         -> PODEM ser reativadas normalmente pelo agent_report.
         # =================================================================
         try:
             if agent and getattr(agent, "client_id", None):
                 _cid_retro = int(agent.client_id)
-                _agora_retro = _now()
                 try:
                     _who_retro = str(getattr(agent, "name", "") or "sistema")[:40]
                 except Exception:
@@ -6067,36 +6073,13 @@ async def agent_report(
                         )
                     ).limit(500)
                     _retro_rows = _retro_q.all()
+                    # 🔥 CORRECAO 07/09: PATCH RETROATIVO DESATIVADO!
                     _retro_count = 0
-                    for _p_r in _retro_rows:
-                        try:
-                            if getattr(_p_r, "deleted_at", None) is None:
-                                _p_r.deleted_at = _agora_retro
-                                try:
-                                    _p_r.deleted_by_user_id = int(0)
-                                except Exception:
-                                    pass
-                                try:
-                                    _p_r.delete_reason = (
-                                        f"Excluida (retroativo 07/09) ignored=True mas sem delete_reason. "
-                                        f"Marcada via patch retroativo agent_report ({_who_retro}). "
-                                        f"NAO reativar automaticamente."
-                                    )
-                                except Exception:
-                                    pass
-                                try:
-                                    _p_r.active = False
-                                except Exception:
-                                    pass
-                                _retro_count += 1
-                        except Exception:
-                            continue
-                    if _retro_count > 0:
+                    if len(_retro_rows) > 0:
                         try:
                             warnings.append(
-                                f"[PATCH RETROATIVO EXCLUIDAS OK] Marcadas {_retro_count} impressora(s) deste cliente "
-                                + "como EXCLUIDAS OFICIAIS (deleted_at/deleted_by/delete_reason) retroativamente. "
-                                + "Elas NAO voltam mais automaticamente!"
+                                f"[PATCH RETROATIVO FIM DESATIVADO] Existem {len(_retro_rows)} impressora(s) ignored=True sem deleted_at neste cliente. "
+                                + "PATCH NAO MARCOU NENHUMA (seguranca maxima!). Para excluir oficialmente: USUARIO DEVE clicar no botao Excluir vermelho no painel."
                             )
                         except Exception:
                             pass
