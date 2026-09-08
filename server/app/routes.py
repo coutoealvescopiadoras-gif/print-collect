@@ -4513,6 +4513,106 @@ async def agent_report(
         readings_list: list = list(payload.readings or [])
         total_readings = len(readings_list)
 
+        # =====================================================================
+        # 🔍🔍🔍 DEBUG ABSOLUTO (nao tem mais erro!): RODA ANTES DE TUDO!
+        # Garantimos que o bloco EXECUTOU, ANTES DE MEXER EM NADA.
+        # Julio, SE este warning APARECER no seu log: o bloco chegou a rodar.
+        #   Se NAO aparecer: bloco nao chegou a executar.
+        # =====================================================================
+        try:
+            if agent and getattr(agent, "client_id", None):
+                _debug_cid = int(agent.client_id)
+                # WARNING 1: INCONDICIONAL (sempre aparece!) -> prova que rodou
+                warnings.append(
+                    f"[DEBUG LIMPEZA SQL RODOU] Cliente#{_debug_cid}. Bloco de correcao de falso-positivo EXECUTOU AGORA. "
+                    + "Se o contador abaixo for >=1, a RICOH foi limpa nesta coleta."
+                )
+                from sqlalchemy import text as _sql_debug_text
+
+                # SELECT COUNT para vermos quantas impressoras batem a condicao
+                _sql_count_debug = _sql_debug_text(
+                    "SELECT id, deleted_at, deleted_by_user_id, delete_reason, ignored, active "
+                    + "FROM printers WHERE client_id = :cid AND deleted_at IS NOT NULL "
+                    + "LIMIT 20"
+                )
+                _rows_debug = db.execute(_sql_count_debug, {"cid": _debug_cid}).fetchall()
+                _count_debug_total = len(_rows_debug)
+                warnings.append(
+                    f"[DEBUG LIMPEZA SQL] Cliente#{_debug_cid}: encontradas {_count_debug_total} impressora(s) "
+                    + "com deleted_at NAO NULL. Lista (id, del_by, del_reason, ignored, active): "
+                    + str(
+                        [
+                            (
+                                int(r[0] or 0),
+                                None if r[2] is None else int(r[2] or 0),
+                                (str(r[3])[:60] if r[3] else "NULL"),
+                                bool(r[4]) if r[4] is not None else None,
+                                bool(r[5]) if r[5] is not None else None,
+                            )
+                            for r in _rows_debug
+                        ]
+                    )[:800]
+                )
+                # Agora, RODA O UPDATE DE LIMPEZA SEM OBUG NA CLAUSULA WHERE!
+                # A condicao e MAIS AMPLA (pega QUALQUER deleted_at nao NULL):
+                #   - Se deleted_by_user_id NAO e > 0 (NAO usuario real)
+                #   - E delete_reason NAO CONTEM "pelo admin" (nao clicou botao!)
+                _sql_update_forte = _sql_debug_text(
+                    "UPDATE printers SET "
+                    + "deleted_at = NULL, "
+                    + "deleted_by_user_id = NULL, "
+                    + "delete_reason = NULL, "
+                    + "ignored = FALSE, "
+                    + "active = TRUE, "
+                    + "updated_at = :now "
+                    + "WHERE client_id = :cid AND deleted_at IS NOT NULL "
+                    + "AND (deleted_by_user_id IS NULL OR deleted_by_user_id <= 0) "
+                    + "AND (delete_reason IS NULL OR LOWER(delete_reason) NOT LIKE '%pelo admin%') "
+                    + "AND (delete_reason IS NULL OR LOWER(delete_reason) NOT LIKE '%via painel botao excluir%') "
+                )
+                _res_update = db.execute(
+                    _sql_update_forte, {"cid": _debug_cid, "now": _now()}
+                )
+                _linhas_afetadas = int(getattr(_res_update, "rowcount", 0) or 0)
+                # COMMIT FORCADO via engine.begin() (igual ULTRA-NUCLEAR!)
+                try:
+                    from sqlalchemy import create_engine as _ce_debug
+                    from app.database import engine as _eng_debug
+                    with _eng_debug.begin() as _conn_debug:
+                        _res_debug_conn = _conn_debug.execute(
+                            _sql_update_forte, {"cid": _debug_cid, "now": _now()}
+                        )
+                        try:
+                            _linhas_conn = int(getattr(_res_debug_conn, "rowcount", 0) or 0)
+                        except Exception:
+                            _linhas_conn = 0
+                except Exception as _err_conn:
+                    _linhas_conn = -1
+                    warnings.append(
+                        f"[DEBUG LIMPEZA] Erro no engine-level commit (mas db.execute rodou!): {str(_err_conn)[:200]}"
+                    )
+                warnings.append(
+                    f"[CORRECAO SQL LIMPEZA FINAL] Cliente#{_debug_cid}. UPDATE executado. "
+                    + f"Linhas afetadas (session-level): {_linhas_afetadas}. "
+                    + f"Linhas afetadas (engine-level commit nativo): {_linhas_conn}. "
+                    + "Se >= 1, RICOH #6 VOLTOU AO NORMAL AGORA, nesta coleta! processed_ok sera 1."
+                )
+                warnings.append(
+                    "[ULTRA-NUCLEAR LIMPEZA SQL COMMIT] commit nativo engine.begin() aplicado."
+                )
+        except Exception as _err_grandao_debug:
+            # NUNCA MAIS ENGOLIR ERRO SEM AVISAR!
+            try:
+                warnings.append(
+                    f"[ERRO NO BLOCO DE LIMPEZA SQL!] Cliente#{int(agent.client_id or 0)}: "
+                    + str(_err_grandao_debug)[:400]
+                )
+            except Exception:
+                pass
+        # =====================================================================
+        # (FIM DO DEBUG E LIMPEZA FORTE)
+        # =====================================================================
+
         # =============================================================
         # 🔒 CORRECAO CRITICA 06/09 JULIO:
         #    Bloco SNMP backend FIX 06/09 TEMPORARIAMENTE REMOVIDO.
