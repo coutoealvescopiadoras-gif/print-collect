@@ -4534,9 +4534,15 @@ async def agent_report(
                 # =================================================================
                 # ID=6 (RICOH JULIO): IMPRESSORA NORMAL DO JULIO → LIMPA TUDO, ATIVA.
                 # ID=7 (RICOH QUE JULIO EXCLUIU DE PROPOSITO): EXCLUSAO REAL COMO BOTAO VERMELHO!
+                #
+                #   ATENCAO: PostgreSQL (psycopg) NAO ACEITA multiplos comandos (separados por ;)
+                #   no MESMO prepared statement. ERRO: cannot insert multiple commands into
+                #   a prepared statement → aborta TODA a transacao.
+                #   POR ISSO, SEPARAMOS EM DOIS db.execute DIFERENTES.
                 # =================================================================
                 _nuclear_now = _now()
-                _sql_nuclear_ids = _sql_debug_text(
+                # UPDATE 1: Impressora ID=6 (RICOH JULIO → LIMPADA, ATIVA, NORMAL)
+                _sql_nuclear_id6 = _sql_debug_text(
                     "UPDATE printers SET "
                     + "deleted_at = NULL, "
                     + "deleted_by_user_id = NULL, "
@@ -4545,8 +4551,13 @@ async def agent_report(
                     + "active = TRUE, "
                     + "updated_at = :now "
                     + "WHERE client_id = :cid AND id = 6 "
-                    + ";"
-                    + "UPDATE printers SET "
+                )
+                _res_id6 = db.execute(
+                    _sql_nuclear_id6, {"cid": _debug_cid, "now": _nuclear_now}
+                )
+                # UPDATE 2: Impressora ID=7 (EXCLUIDA DE PROPOSITO → como botao vermelho)
+                _sql_nuclear_id7 = _sql_debug_text(
+                    "UPDATE printers SET "
                     + "deleted_at = :now, "
                     + "deleted_by_user_id = 1, "
                     + "delete_reason = 'Excluida pelo admin ''julio'' via painel botao Excluir/Ignorar', "
@@ -4555,16 +4566,21 @@ async def agent_report(
                     + "updated_at = :now "
                     + "WHERE client_id = :cid AND id = 7 "
                 )
-                _res_nuclear = db.execute(
-                    _sql_nuclear_ids, {"cid": _debug_cid, "now": _nuclear_now}
+                _res_id7 = db.execute(
+                    _sql_nuclear_id7, {"cid": _debug_cid, "now": _nuclear_now}
                 )
                 try:
-                    _nuc_rows = int(getattr(_res_nuclear, "rowcount", 0) or 0)
+                    _nuc_rows_6 = int(getattr(_res_id6, "rowcount", 0) or 0)
                 except Exception:
-                    _nuc_rows = 0
+                    _nuc_rows_6 = 0
+                try:
+                    _nuc_rows_7 = int(getattr(_res_id7, "rowcount", 0) or 0)
+                except Exception:
+                    _nuc_rows_7 = 0
+                _nuc_rows = _nuc_rows_6 + _nuc_rows_7
                 warnings.append(
-                    f"[CORRECAO NUCLEAR IDs 6 e 7] Cliente#{_debug_cid}. UPDATE especifico por IDs rodou. "
-                    + f"Linhas afetadas (session-level): {_nuc_rows}. "
+                    f"[CORRECAO NUCLEAR IDs 6 e 7] Cliente#{_debug_cid}. UPDATE separados (SEM ponto-e-virgula!) rodados. "
+                    + f"Linhas afetadas ID6: {_nuc_rows_6}, Linhas afetadas ID7: {_nuc_rows_7}. Total: {_nuc_rows}. "
                     + "ID=6 (RICOH JULIO) → CAMPOS DE EXCLUSAO APAGADOS, active=True, ignored=False. "
                     + "ID=7 (EXCLUIDA DE PROPOSITO) → marcada como EXCLUIDA REAL (active=False, ignored=True, campos de exclusao preenchidos com PROVA REAL)."
                 )
