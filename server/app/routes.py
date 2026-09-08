@@ -1,3 +1,8 @@
+# =============================================================================
+# Trigger deploy 2026-09-07 22:08 Julio - force rebuild Render (no-op / sem logica)
+# Garante que o codigo da limpeza automatica falsos-positivos (commit 8428e00)
+# esteja rodando no servidor e nao fique cacheado.
+# =============================================================================
 import secrets
 import asyncio
 import io
