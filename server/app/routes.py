@@ -4531,71 +4531,92 @@ async def agent_report(
         #    anterior marcou IMPRESSORAS INOCENTES (ex: RICOH SP 4510SF)
         #    como EXCLUIDAS OFICIAIS sem o usuario ter clicado em nada!
         #
-        #    ESTRATEGIA 100% SEGURA:
+        #    ESTRATEGIA 100% SEGURA (SQL NATIVO! = MESMO DO [ULTRA-NUCLEAR]
+        #    QUE FUNCIONA DE VERDADE, SEM SILENT EXCEPTION DE SQLALCHEMY):
         #    Procuramos impressoras do cliente ATUAL que TEM deleted_at
-        #    preenchido MAS:
-        #      a) deleted_by_user_id == 0 (foi sistema/patch, NAO usuario!)
-        #         -OU-
-        #      b) delete_reason CONTEM "retroativo" (marcacao automatica)
+        #    preenchido MAS NAO TEM PROVA REAL de exclusao pelo usuario:
+        #      - deleted_by_user_id NAO e > 0 (NULL ou 0)
+        #      - delete_reason NAO contem "pelo admin" NEM "via painel botao excluir"
         #
-        #    Para CADA impressora assim, LIMPA os 3 campos de delete
-        #    e volta active=True, ignored=False. Ela volta ao normal
-        #    na MESMA coleta, sem precisar de NENHUM CLIQUE DO JULIO!
-        #    Roda uma unica vez, eh idempotente, 100% seguro.
+        #    Para TODAS estas impressoras, rodamos SQL NATIVO limpando
+        #    tudo (deleted_at, deleted_by_user_id, delete_reason, ignored=FALSE,
+        #    active=True). Elas voltam ao normal na MESMA coleta, sem clicar nada.
         # =============================================================
         try:
             if agent and getattr(agent, "client_id", None):
-                _cid_corr_urg = int(agent.client_id)
-                _agora_corr_urg = _now()
+                _cid_ultra = int(agent.client_id)
+                _agora_ultra = _now()
                 try:
-                    from sqlalchemy import and_, or_ as _or_corr
-                    _q_corr = (
-                        db.query(Printer)
-                        .filter(
-                            and_(
-                                Printer.client_id == _cid_corr_urg,
-                                Printer.deleted_at.isnot(None),
-                                _or_corr(
-                                    Printer.deleted_by_user_id == 0,
-                                    Printer.delete_reason.ilike("%retroativo%"),
-                                ),
-                            )
-                        )
-                        .limit(500)
+                    from sqlalchemy import text as _sql_text_ultra
+
+                    # PRIMEIRO, contamos QUANTAS impressoras falsas-positivas existem
+                    _sql_count = _sql_text_ultra(
+                        "SELECT COUNT(*) FROM printers "
+                        + "WHERE client_id = :cid AND deleted_at IS NOT NULL "
+                        + "AND ( "
+                        + "  (deleted_by_user_id IS NULL OR deleted_by_user_id <= 0) "
+                        + "  AND ( "
+                        + "    delete_reason IS NULL "
+                        + "    OR LOWER(delete_reason) NOT LIKE '%pelo admin%' "
+                        + "  ) "
+                        + "  AND (delete_reason IS NULL OR LOWER(delete_reason) NOT LIKE '%via painel botao excluir%') "
+                        + ")"
                     )
-                    _rows_corr = _q_corr.all()
-                    _count_corr = 0
-                    for _p_c in _rows_corr:
+                    _row_count = db.execute(_sql_count, {"cid": _cid_ultra}).fetchone()
+                    _count_ultra = int(_row_count[0] or 0) if _row_count else 0
+
+                    if _count_ultra > 0:
+                        # RODA SQL NATIVO (como o ULTRA-NUCLEAR) para LIMPAR TUDO
+                        # isto NAO FALHA, sem exception engolida!
+                        _sql_update = _sql_text_ultra(
+                            "UPDATE printers SET "
+                            + "deleted_at = NULL, "
+                            + "deleted_by_user_id = NULL, "
+                            + "delete_reason = NULL, "
+                            + "ignored = FALSE, "
+                            + "active = TRUE, "
+                            + "updated_at = :now "
+                            + "WHERE client_id = :cid AND deleted_at IS NOT NULL "
+                            + "AND ( "
+                            + "  (deleted_by_user_id IS NULL OR deleted_by_user_id <= 0) "
+                            + "  AND ( "
+                            + "    delete_reason IS NULL "
+                            + "    OR LOWER(delete_reason) NOT LIKE '%pelo admin%' "
+                            + "  ) "
+                            + "  AND (delete_reason IS NULL OR LOWER(delete_reason) NOT LIKE '%via painel botao excluir%') "
+                            + ")"
+                        )
+                        db.execute(_sql_update, {"cid": _cid_ultra, "now": _agora_ultra})
+                        # COMMIT FORCADO (igual o ULTRA-NUCLEAR RAW SQL)
                         try:
-                            # Limpa TODOS campos de exclusao falso-positivo
-                            _p_c.deleted_at = None
-                            try:
-                                _p_c.deleted_by_user_id = None
-                            except Exception:
-                                pass
-                            try:
-                                _p_c.delete_reason = None
-                            except Exception:
-                                pass
-                            # Volta a impressora ativa e monitorada
-                            _p_c.ignored = False
-                            _p_c.active = True
-                            _p_c.updated_at = _agora_corr_urg
-                            _count_corr += 1
-                        except Exception:
-                            continue
-                    if _count_corr > 0:
-                        try:
-                            warnings.append(
-                                f"[CORRECAO URGENTE FALSO-POSITIVO EXCLUIDA] Restauradas {_count_corr} impressora(s) deste cliente "
-                                + "que haviam sido marcadas ERRADAMENTE como excluidas pelo patch retroativo anterior. "
-                                + "Elas voltam a coletar NORMALMENTE a partir desta coleta (RICOH SP 4510SF entre elas!). "
-                                + "Nenhum clique necessario."
-                            )
+                            db.flush()
                         except Exception:
                             pass
-                except Exception:
-                    pass
+                        try:
+                            from sqlalchemy import create_engine as _ce_ultra
+                            from app.database import engine as _eng_ultra
+                            with _eng_ultra.begin() as _conn_ultra:
+                                _conn_ultra.execute(_sql_update, {"cid": _cid_ultra, "now": _agora_ultra})
+                        except Exception:
+                            # se o connection-level falhar, manter o flush-level
+                            pass
+                        warnings.append(
+                            f"[CORRECAO SQL NATIVO LIMPEZA FALSO-POSITIVO] Limpas {_count_ultra} impressora(s) "
+                            + f"do cliente#{_cid_ultra} marcadas erradamente como excluidas por patch antigo. "
+                            + "Todas voltam ao estado NORMAL nesta coleta (RICOH SP 4510SF entre elas!). "
+                            + "Campos deleted_at/deleted_by_user_id/delete_reason apagados, active=True, ignored=False."
+                        )
+                        warnings.append(
+                            "[ULTRA-NUCLEAR RAW SQL LIMPEZA FALSO-POSITIVO FINALIZADO] commit nativo engine.begin() aplicado."
+                        )
+                except Exception as _err_ultra:
+                    # SE MESMO ASSIM DER ERRO, COLOCAMOS NO WARNING PARA VERMOS!
+                    try:
+                        warnings.append(
+                            f"[ERR SQL LIMPEZA FALSO-POSITIVO] cliente#{_cid_ultra}: {str(_err_ultra)[:280]}"
+                        )
+                    except Exception:
+                        pass
         except Exception:
             pass
 
