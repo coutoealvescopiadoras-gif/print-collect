@@ -4583,31 +4583,15 @@ async def agent_report(
                     _sql_update_forte, {"cid": _debug_cid, "now": _now()}
                 )
                 _linhas_afetadas = int(getattr(_res_update, "rowcount", 0) or 0)
-                # COMMIT FORCADO via engine.begin() (igual ULTRA-NUCLEAR!)
-                try:
-                    from sqlalchemy import create_engine as _ce_debug
-                    from app.database import engine as _eng_debug
-                    with _eng_debug.begin() as _conn_debug:
-                        _res_debug_conn = _conn_debug.execute(
-                            _sql_update_forte, {"cid": _debug_cid, "now": _now()}
-                        )
-                        try:
-                            _linhas_conn = int(getattr(_res_debug_conn, "rowcount", 0) or 0)
-                        except Exception:
-                            _linhas_conn = 0
-                except Exception as _err_conn:
-                    _linhas_conn = -1
-                    warnings.append(
-                        f"[DEBUG LIMPEZA] Erro no engine-level commit (mas db.execute rodou!): {str(_err_conn)[:200]}"
-                    )
+                # NAO CHAMAMOS engine.begin() AQUI!
+                # O bloco ULTRA-NUCLEAR RAW SQL FINALIZADO no final do endpoint
+                # ja faz o commit nativo com engine.begin() corretamente (1 unica vez).
+                # Repetir aqui causava LOCK em tabela -> timeout 60s -> 502 Bad Gateway.
+                _linhas_conn = _linhas_afetadas
                 warnings.append(
                     f"[CORRECAO SQL LIMPEZA FINAL] Cliente#{_debug_cid}. UPDATE executado. "
-                    + f"Linhas afetadas (session-level): {_linhas_afetadas}. "
-                    + f"Linhas afetadas (engine-level commit nativo): {_linhas_conn}. "
+                    + f"Linhas afetadas (session-level, sera commitado no final): {_linhas_afetadas}. "
                     + "Se >= 1, RICOH #6 VOLTOU AO NORMAL AGORA, nesta coleta! processed_ok sera 1."
-                )
-                warnings.append(
-                    "[ULTRA-NUCLEAR LIMPEZA SQL COMMIT] commit nativo engine.begin() aplicado."
                 )
         except Exception as _err_grandao_debug:
             # NUNCA MAIS ENGOLIR ERRO SEM AVISAR!
