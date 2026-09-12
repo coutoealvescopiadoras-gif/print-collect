@@ -31,7 +31,7 @@ class SnmpConfig:
 class AgentConfig:
     server_url: str
     agent_token: str
-    agent_version: str = "6.9.5"
+    agent_version: str = "6.9.6"
     interval_minutes: int = 30
     log_file: str | None = None
     snmp: SnmpConfig = field(default_factory=SnmpConfig)
@@ -79,7 +79,7 @@ class AgentConfig:
         return cls(
             server_url=server_url,
             agent_token=agent_token,
-            agent_version=data.get("agent_version", "6.9.5"),
+            agent_version=data.get("agent_version", "6.9.6"),
             interval_minutes=int(data.get("interval_minutes", 30)),
             log_file=log_file_raw,
             snmp=snmp,

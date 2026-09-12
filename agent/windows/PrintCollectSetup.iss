@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "6.9.5"
+  #define MyAppVersion "6.9.6"
 #endif
 
 #define MyAppName "Print Collect Agent"

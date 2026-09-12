@@ -135,9 +135,9 @@ powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ^
 set RC=%ERRORLEVEL%
 echo [%date% %time%]   Tentativa 1 (PowerShell) RC=%RC% >> "%LOG%"
 if %RC% NEQ 0 (
-  schtasks /Create /F /TN "%TASK_NAME%" /SC HOURLY /MO 1 /ST %_ST% /SD %_SD% /TR "%TR_ESCAPED%" >nul 2>> "%LOG%"
+  schtasks /Create /F /TN "%TASK_NAME%" /SC HOURLY /MO 1 /TR "%TR_ESCAPED%" >nul 2>> "%LOG%"
   set RC=%ERRORLEVEL%
-  echo [%date% %time%]   Tentativa 2 schtasks HOURLY RC=%RC% /ST=%_ST% >> "%LOG%"
+  echo [%date% %time%]   Tentativa 2 schtasks HOURLY RC=%RC% (v6.9.6: sem /SD/ST para evitar pt-BR 0x80041318) >> "%LOG%"
   if %RC% EQU 0 schtasks /Run /TN "%TASK_NAME%" >nul 2>> "%LOG%"
 )
 if %RC% NEQ 0 set RC_ALL=%RC%

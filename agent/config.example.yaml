@@ -7,8 +7,8 @@ server_url: "https://print-collect.onrender.com"
 # Token do agente — crie em: Painel > Agentes > Novo agente
 agent_token: "agent-dev-key"
 
-# Versão (informativo) — v6.9.5: MELHORIAS CRITICAS: USB Powershell retornava vazio (retry 2x + fallback WMIC), SNMP timeout 2s→5s retries 1→3, quick_read public+private
-agent_version: "6.9.5"
+# Versão (informativo) — v6.9.6: FIX CRITICO CLIENTE JOAQUIM: PowerShell Base64 EncodedCommand (resolver MissingCatchOrFinally sintaxe pt-BR OEM), is_physical_port_candidate inclui IPs com sufixo _N (ex: 192.168.15.50_1), WMIC agora retorna PORTAS REAIS (antes USB: 0 portas!) + encoding OEM CP850 primeiro, schtasks fallback HOURLY removeu /SD /ST em Python + 6 arquivos bat.
+agent_version: "6.9.6"
 
 # Intervalo entre coletas automáticas (minutos)
 # 30 minutos = atualiza contadores de 30 em 30 min

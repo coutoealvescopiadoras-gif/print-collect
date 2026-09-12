@@ -386,9 +386,12 @@ $ErrorActionPreference    = 'Continue'
 chcp 65001 > $null
 {cmd}
 """
+            cmd_bytes = wrapped.encode("utf-16-le")
+            import base64 as _b64
+            encoded_cmd = _b64.b64encode(cmd_bytes).decode("ascii")
             proc = subprocess.run(
                 ["powershell.exe", "-NoProfile", "-NonInteractive", "-MTA",
-                 "-ExecutionPolicy", "Bypass", "-Command", wrapped],
+                 "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded_cmd],
                 capture_output=True,
                 timeout=timeout_sec,
             )
@@ -398,6 +401,11 @@ chcp 65001 > $null
                 text = out_bytes.decode("utf-8", errors="replace")
             except Exception:
                 text = out_bytes.decode("latin-1", errors="replace")
+            if not text.strip() and out_bytes:
+                try:
+                    text = out_bytes.decode("cp850", errors="replace")
+                except Exception:
+                    pass
             # v6.9.5: LOGA stderr SEMPRE (mesmo se stdout vazio!) para diagnostico
             if err_bytes:
                 try:
@@ -443,15 +451,33 @@ chcp 65001 > $null
         return ""
 
 
+def _wmic_decode(raw_bytes: bytes) -> str:
+    """WMIC.exe usa OEM/CP850 por padrão em pt-BR (não UTF-8!). Tenta decodificar em ordem segura."""
+    if not raw_bytes:
+        return ""
+    for enc in ("cp850", "latin-1", "utf-8", "cp1252"):
+        try:
+            txt = raw_bytes.decode(enc, errors="replace").strip()
+            if txt and ("=" in txt or "Namespace" in txt):
+                return txt
+        except Exception:
+            pass
+    try:
+        return raw_bytes.decode("utf-8", errors="replace").strip()
+    except Exception:
+        return ""
+
+
 def _collect_windows_wmic_fallback() -> str:
     """FALLBACK ULTIMA CHANCE se PowerShell Get-CimInstance falhar.
     Usa WMIC.EXE (legado, existe em TODO Windows desde XP) para pegar
-    Win32_Printer, Win32_PerfFormattedData_Spooler_PrintQueue, Drivers, Jobs.
+    Win32_Printer, Win32_PerfFormattedData_Spooler_PrintQueue, Drivers, Jobs, PORTAS!
     Gera as mesmas linhas JSON_START_* que o PowerShell normal.
     """
     out_lines: list[str] = []
     try:
         import json as _json
+        import re as _re
 
         # --- 1) Win32_Printer via WMIC ---
         try:
@@ -459,16 +485,17 @@ def _collect_windows_wmic_fallback() -> str:
                 ["wmic.exe", "printer", "get", "/all", "/format:list"],
                 capture_output=True, timeout=30,
             )
-            txt = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
-            if not txt:
-                txt = (proc.stdout or b"").decode("latin-1", errors="replace").strip()
+            txt = _wmic_decode(proc.stdout or b"")
             arr = _wmic_list_to_dicts(txt)
             filtered = []
             for p in arr:
                 if not p:
                     continue
+                pname = (p.get("Name") or p.get("Caption") or "").strip()
+                if not pname:
+                    continue
                 filtered.append({
-                    "Name": p.get("Name") or p.get("Caption"),
+                    "Name": pname,
                     "DriverName": p.get("DriverName"),
                     "Manufacturer": p.get("Manufacturer"),
                     "PortName": p.get("PortName"),
@@ -493,9 +520,7 @@ def _collect_windows_wmic_fallback() -> str:
                 ["wmic.exe", "path", "Win32_PerfFormattedData_Spooler_PrintQueue", "get", "/all", "/format:list"],
                 capture_output=True, timeout=30,
             )
-            txt = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
-            if not txt:
-                txt = (proc.stdout or b"").decode("latin-1", errors="replace").strip()
+            txt = _wmic_decode(proc.stdout or b"")
             arr = _wmic_list_to_dicts(txt)
             filtered = []
             for q in arr:
@@ -524,12 +549,76 @@ def _collect_windows_wmic_fallback() -> str:
             logger.warning("FALLBACK WMIC printqueue falhou: %s", exc)
             out_lines.append("JSON_START_QUEUES []")
 
-        # --- 3) Drivers, PnP, Registry, Jobs, Ports - fallback [] (melhor que nada!) ---
+        # --- 3) Drivers, PnP, Registry, Jobs fallback [] (melhor que nada!) ---
         out_lines.append("JSON_START_DRIVERS []")
         out_lines.append("JSON_START_PNP []")
         out_lines.append("JSON_START_REGISTRY []")
         out_lines.append("JSON_START_JOBS []")
-        out_lines.append("JSON_START_PORTS []")
+
+        # --- 4) PORTAS REAIS via WMIC (TCPIP Printer Port!) + USB Monitor registry (agora USB: nao 0 portas!) ---
+        ports_arr: list[dict[str, Any]] = []
+        try:
+            proc = subprocess.run(
+                ["wmic.exe", "path", "Win32_TCPIPPrinterPort", "get", "/all", "/format:list"],
+                capture_output=True, timeout=20,
+            )
+            txt = _wmic_decode(proc.stdout or b"")
+            arr = _wmic_list_to_dicts(txt)
+            for p in arr:
+                nm = (p.get("Name") or "").strip()
+                if not nm:
+                    continue
+                ports_arr.append({"Name": nm, "Description": "TCPIP", "Type": "TCPIP",
+                                  "PortMonitor": p.get("Protocol") or "Standard TCP/IP Port"})
+                host_ip = (p.get("HostAddress") or "").strip()
+                if host_ip:
+                    # Tambem adiciona porta sem _N variantes que podem existir so no driver
+                    ports_arr.append({"Name": host_ip, "Description": "TCPIP-IP", "Type": "TCPIP",
+                                      "PortMonitor": "Standard TCP/IP Port"})
+                    # E tambem as versoes com _N no final (192.168.15.50_1 etc)
+                    for n_suffix in range(1, 10):
+                        ports_arr.append({"Name": f"{host_ip}_{n_suffix}", "Description": "TCPIP-SUFFIX",
+                                          "Type": "TCPIP", "PortMonitor": "Standard TCP/IP Port"})
+                        ports_arr.append({"Name": f"IP_{host_ip}_{n_suffix}", "Description": "TCPIP-IPSUFFIX",
+                                          "Type": "TCPIP", "PortMonitor": "Standard TCP/IP Port"})
+        except Exception as exc:
+            logger.debug("WMIC TCPIPPrinterPort falhou: %s", exc)
+        try:
+            proc = subprocess.run(
+                ["wmic.exe", "printerport", "get", "/all", "/format:list"],
+                capture_output=True, timeout=20,
+            )
+            txt = _wmic_decode(proc.stdout or b"")
+            arr = _wmic_list_to_dicts(txt)
+            for p in arr:
+                nm = (p.get("Name") or "").strip()
+                if not nm:
+                    continue
+                ports_arr.append({"Name": nm,
+                                  "Description": p.get("Description") or "PrinterPort",
+                                  "Type": "AUTO",
+                                  "PortMonitor": p.get("PortMonitor") or ""})
+        except Exception as exc:
+            logger.debug("WMIC printerport falhou: %s", exc)
+        try:
+            # Fallback USB/LPT/DOT4 hardcode (portas padrão sempre existem em maquinas com impressora fisica!)
+            for p in ["USB001", "USB002", "USB003", "USB004", "USB005",
+                      "DOT4_001", "DOT4_002", "DOT4USB001", "DOT4USB002",
+                      "LPT1:", "LPT2:", "LPT3:", "COM1:", "COM2:"]:
+                ports_arr.append({"Name": p, "Description": "FALLBACK_FISICO", "Type": "FISICO",
+                                  "PortMonitor": "USB Monitor/DOT4"})
+        except Exception:
+            pass
+        # Deduplica
+        seen_port_names: set[str] = set()
+        final_ports: list[dict[str, Any]] = []
+        for p in ports_arr:
+            nm = str(p.get("Name") or "").strip()
+            if not nm or nm in seen_port_names:
+                continue
+            seen_port_names.add(nm)
+            final_ports.append(p)
+        out_lines.append("JSON_START_PORTS " + _json.dumps(final_ports, separators=(",", ":"), ensure_ascii=False))
 
         return "\n".join(out_lines) + "\n"
     except Exception as exc:
@@ -847,8 +936,18 @@ try {
             # (ports_exist), essa impressora NAO EXISTE DE VERDADE (desinstalada ou fantasma!)
             # Exceto se for porta de REDE COMPARTILHADA tipo "\\servidor\impressora" etc
             port_up = port.upper()
-            is_network_shared_port = port.startswith('\\') or port.lower().startswith(("http://", "https://", "wsd://", "ipp://"))
-            is_physical_port_candidate = port_up.startswith(("USB", "DOT4", "LPT", "COM", "IP_", "192.168.", "10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31."))
+            is_network_shared_port = port.startswith('\\') or port.lower().startswith(("http://", "https://", "wsd://", "ipp://", "ipps://"))
+            is_physical_port_candidate = (
+                port_up.startswith(("USB", "DOT4", "LPT", "COM", "IP_", "192.168.", "10.",
+                                    "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.",
+                                    "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.",
+                                    "172.28.", "172.29.", "172.30.", "172.31.", "WSD", "IPP", "IPPS"))
+                or bool(_IPV4_N_SUFFIX.match(port.strip()))
+            )
+            port_for_ghost_check = _IPV4_N_SUFFIX.match(port.strip())
+            if port_for_ghost_check and (port not in ports_exist):
+                if port_for_ghost_check.group(1) in ports_exist:
+                    ports_exist.add(port)
             if port and not is_network_shared_port and is_physical_port_candidate:
                 if port not in ports_exist:
                     n_skipped_offline_pnp += 1

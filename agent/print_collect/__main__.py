@@ -668,19 +668,14 @@ Write-Output 'NATIVE_FALLBACK_OK'
             except Exception as e:
                 print(f"  [PowerShell ScheduledTasks v6.4] Exception: {e}")
 
-            # CAMADA 3: schtasks HOURLY fallback — v6.4 com BAT + /RU SYSTEM
+            # CAMADA 3: schtasks HOURLY fallback — v6.9.6 SEM /SD /ST para evitar 0x80041318 pt-BR!
             if not horary_ok:
                 try:
-                    from datetime import datetime, timedelta
-                    t = datetime.now() + timedelta(minutes=3)
-                    sd = t.strftime("%m/%d/%Y")
-                    st = t.strftime("%H:%M")
                     rc2 = _exe_cmd([
                         "schtasks","/Create","/F",
                         "/TN","Print Collect Agent - A Cada 1 HORA",
                         "/SC","HOURLY","/MO","1",
                         "/RL","HIGHEST","/RU","SYSTEM",
-                        "/SD",sd,"/ST",st,
                         "/TR",_tr("once"),
                     ], check=False)
                     if rc2 == 0:
