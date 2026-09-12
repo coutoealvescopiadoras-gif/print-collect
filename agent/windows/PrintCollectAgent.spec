@@ -28,19 +28,117 @@ _target_arch = os.environ.get("TARGET_ARCH", "").strip().lower()
 if not _target_arch:
     _target_arch = None  # None = mesma arquitetura do Python que esta rodando
 
+# =============================================================================
+# HIDDEN IMPORTS OBRIGATORIOS v6.9.3 — ERRO no cliente: ModuleNotFound yaml!
+#   (collect_submodules("requests") nao puxa seus deps internos, yaml tem que ser
+#    explicito pois eh import dinamicamente em print_collect.config.load_config())
+# =============================================================================
 hiddenimports = sorted(
     set(
         [
             "print_collect",
+            "print_collect.__main__",
             "print_collect.collector",
             "print_collect.config",
             "print_collect.sender",
             "print_collect.snmp",
+            "print_collect.usb",
+            # --- PyYAML (NAO FALTAR MAIS! yaml = modulo importado por yaml.safe_load())
+            "yaml",
+            "_yaml",
+            # --- requests + TODOS seus deps (pra nao dar ModuleNotFound de urllib3 charset-normalizer etc):
+            "requests",
+            "requests.adapters",
+            "requests.api",
+            "requests.auth",
+            "requests.cookies",
+            "requests.exceptions",
+            "requests.hooks",
+            "requests.models",
+            "requests.sessions",
+            "requests.status_codes",
+            "requests.structures",
+            "requests.utils",
+            "urllib3",
+            "urllib3.util",
+            "urllib3.util.retry",
+            "urllib3.util.ssl_",
+            "urllib3.poolmanager",
+            "urllib3.connectionpool",
+            "urllib3.response",
+            "urllib3.exceptions",
+            "urllib3.contrib",
+            "charset_normalizer",
+            "charset_normalizer.api",
+            "idna",
+            "certifi",
+            # --- colorlog / psutil / pystray / PIL (tray icon):
+            "colorlog",
+            "psutil",
+            "psutil._pswindows",
+            "psutil._common",
+            "psutil._psposix",
+            "pystray",
+            "pystray._base",
+            "pystray._win32",
+            "PIL",
+            "PIL.Image",
+            "PIL._imaging",
+            "PIL.ImageDraw",
+            "PIL.ImageFont",
+            # --- Outros usados no agente (marcadores toner, contadores etc):
+            "dateutil",
+            "dateutil.parser",
+            "dateutil.relativedelta",
+            "six",
+            "pyasn1",
+            "pyasn1.type",
+            "pyasn1.codec",
+            "pyasn1.compat",
+            "pysnmp",
+            "pysnmp.carrier",
+            "pysnmp.carrier.asyncio",
+            "pysnmp.proto",
+            "pysnmp.proto.rfc1902",
+            "pysnmp.smi",
+            "pysnmp.smi.builder",
+            "pysnmp.entity",
+            "pysnmp.hlapi",
+            "pysnmp.hlapi.asyncio",
+            "pysnmp.lexer",
+            "ply",
+            "ply.lex",
+            "ply.yacc",
+            # --- pywin32: usamos no register-startup-task (tarefa agendada):
+            "win32com",
+            "win32com.client",
+            "win32com.shell",
+            "pywintypes",
+            "pythoncom",
+            "win32api",
+            "win32con",
+            "win32evtlog",
+            "win32net",
+            "win32security",
+            "win32service",
+            "win32ts",
+            "win32wnet",
+            "pywin32_bootstrap",
+            # --- Pacotes de infra PyInstaller (pre-safe-import):
+            "packaging",
+            "packaging.version",
+            "packaging.specifiers",
         ]
         + collect_submodules("print_collect")
         + collect_submodules("pysnmp")
         + collect_submodules("pyasn1")
         + collect_submodules("requests")
+        + collect_submodules("urllib3")
+        + collect_submodules("colorlog")
+        + collect_submodules("psutil")
+        + collect_submodules("pystray")
+        + collect_submodules("PIL")
+        + collect_submodules("ply")
     )
 )
 
