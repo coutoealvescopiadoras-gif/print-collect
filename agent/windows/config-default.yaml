@@ -5,8 +5,8 @@ server_url: "https://print-collect.onrender.com"
 # Token de agente - sera substituido pelo Wizard de Pareamento
 agent_token: "agent-dev-key"
 
-# Versao do agente (v6.9.6 = FIX CRITICO CLIENTE JOAQUIM: PowerShell Base64 EncodedCommand (resolver MissingCatchOrFinally sintaxe pt-BR OEM), is_physical_port_candidate IPs com sufixo _N, WMIC agora retorna PORTAS REAIS (USB: 0 → muitas portas!) + encoding OEM CP850 primeiro, schtasks fallback HOURLY Python + 6 BATs retiraram /SD /ST para evitar 0x80041318 pt-BR)
-agent_version: "6.9.6"
+# Versao do agente (v6.9.7 = FIX NUCLEAR JOAQUIM pt-BR: _run_ps agora grava temp .ps1 UTF-8 BOM + powershell -File (nunca MissingCatchOrFinally em OEM CP850!). Fallback WMIC agora usa CSV (cabeçalhos inglês sempre!) + _get_any_key com traduções pt-BR para nomes localizados: PortName→NomeDaPorta, DriverName→NomeDoDriver etc. Resolve TODAS impressoras com port=? antes! REMOVIDA CAMADA 2 PS ScheduledTasks (redudante + 0x80041318). Mantida CAMADA 1 schtasks (RC=0) + CAMADA 3 HOURLY (RC=0).)
+agent_version: "6.9.7"
 
 # Intervalo de coleta em minutos (30 min = padrao do cliente Julio)
 interval_minutes: 30

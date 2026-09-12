@@ -603,72 +603,14 @@ def cmd_install(args: argparse.Namespace) -> int:
                     rc_all = rc1
             print(f"  [schtasks simples] RC final = {rc_all} (0 = tudo ok)")
 
-            # CAMADA 2: PowerShell ScheduledTasks (HORARIA, e para as que falharam acima)
-            # v6.4: Usa BATs + Principal SYSTEM para tarefas periodicas
-            horary_ok = False
-            try:
-                ps_code = r"""
-$ErrorActionPreference = 'Stop'
-$batOnce = '__BAT_ONCE__'
-$batWd   = '__BAT_WD__'
-$cmdExe  = 'C:\Windows\System32\cmd.exe'
-function New-TaskWrap($taskName, $useWatchdog, $trigger, $runNow, $useSystem) {
-  $bat = if ($useWatchdog) { $batWd } else { $batOnce }
-  $act = New-ScheduledTaskAction -Execute $cmdExe -Argument ('/c ""{0}""' -f $bat)
-  $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 1)
-  if ($useSystem) {
-    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-    Register-ScheduledTask -TaskName $taskName -Action $act -Trigger $trigger -Settings $set -Principal $principal -Force -ErrorAction Stop | Out-Null
-  } else {
-    Register-ScheduledTask -TaskName $taskName -Action $act -Trigger $trigger -Settings $set -Force -ErrorAction Stop | Out-Null
-  }
-  if ($runNow) { Start-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue }
-}
-# 1) HORARIA (proxima hora cheia + repeticao 1h INFINITO) — SYSTEM invisivel
-$startHorario = (Get-Date -Minute 0 -Second 0).AddHours(1)
-$trgH = New-ScheduledTaskTrigger -Once -At $startHorario -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration ([TimeSpan]::MaxValue)
-New-TaskWrap 'Print Collect Agent - A Cada 1 HORA' $false $trgH $true $true
-# 2) 30 Minutos (fallback) — SYSTEM
-$start30 = (Get-Date).AddMinutes(2)
-$trg30 = New-ScheduledTaskTrigger -Once -At $start30 -RepetitionInterval (New-TimeSpan -Minutes 30) -RepetitionDuration ([TimeSpan]::MaxValue)
-New-TaskWrap 'Print Collect Agent - 30 Minutos' $false $trg30 $true $true
-# 3) Watchdog fallback — SYSTEM
-$startWD = (Get-Date).AddMinutes(1)
-$trgWD = New-ScheduledTaskTrigger -Once -At $startWD -RepetitionInterval (New-TimeSpan -Minutes 10) -RepetitionDuration ([TimeSpan]::MaxValue)
-New-TaskWrap 'Print Collect Agent - Watchdog' $true $trgWD $true $true
-# 4) Diario repeticao fallback — SYSTEM
-$startDaily = (Get-Date -Minute 0 -Second 0).AddHours(1)
-$trgDaily = New-ScheduledTaskTrigger -Daily -At $startDaily -DaysInterval 1
-$trgDaily.Repetition.Interval = (New-TimeSpan -Minutes 60)
-$trgDaily.Repetition.Duration = ([TimeSpan]::MaxValue)
-New-TaskWrap 'Print Collect Agent - Diario Repeticao' $false $trgDaily $true $true
-# 5) Boot (fallback) — interativo (sem SYSTEM, p/ ter rede disponivel)
-$trgBoot = New-ScheduledTaskTrigger -AtStartup
-New-TaskWrap 'Print Collect Agent - Ao Iniciar' $false $trgBoot $false $false
-# 6) Logon (fallback) — interativo
-$uid = $env:USERNAME
-$trgLogon = New-ScheduledTaskTrigger -AtLogOn -User $uid
-New-TaskWrap 'Print Collect Agent - Ao Logar' $false $trgLogon $false $false
-Write-Output 'NATIVE_FALLBACK_OK'
-"""
-                ps_code = (ps_code
-                           .replace("__BAT_ONCE__", bat_once_str.replace("'","''"))
-                           .replace("__BAT_WD__",   bat_wd_str.replace("'","''")))
-                r = subprocess.run(
-                    ["powershell","-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command",ps_code],
-                    capture_output=True, text=True, check=False
-                )
-                if r.returncode == 0 and "NATIVE_FALLBACK_OK" in (r.stdout or ""):
-                    horary_ok = True
-                    print("  [PowerShell ScheduledTasks v6.4] ✅ SUCESSO! Tarefa HORARIA e fallbacks criados.")
-                else:
-                    print(f"  [PowerShell ScheduledTasks v6.4] rc={r.returncode}")
-                    if r.stdout: print("  stdout (ultimas):", "\n  ".join((r.stdout.splitlines() or [])[-4:]))
-                    if r.stderr: print("  stderr (ultimas):", "\n  ".join((r.stderr.splitlines() or [])[-4:]))
-            except Exception as e:
-                print(f"  [PowerShell ScheduledTasks v6.4] Exception: {e}")
+            # v6.9.7: REMOVIDA CAMADA 2 PowerShell ScheduledTasks v6.4 (era 100% REDUNDANTE e sempre
+            # dava HRESULT 0x80041318 em Windows pt-BR porque New-ScheduledTaskTrigger -At
+            # transformava objeto DateTime em string formatada regionalmente (dd/mm/aaaa vs mm/dd/aaaa).
+            # CAMADA 1 (schtasks acima) + CAMADA 3 (schtasks HOURLY abaixo) cobrem TODAS as tarefas
+            # necessarias sem nenhuma chance de erro de data/hora invalida!
 
             # CAMADA 3: schtasks HOURLY fallback — v6.9.6 SEM /SD /ST para evitar 0x80041318 pt-BR!
+            horary_ok = (rc_all == 0)
             if not horary_ok:
                 try:
                     rc2 = _exe_cmd([

@@ -365,33 +365,36 @@ def _extract_all_plausible_page_counts(reg_dict: dict[str, Any]) -> list[int]:
 
 
 def _run_ps(cmd: str, timeout_sec: int = 90) -> str:
-    """Executa comando PowerShell retornando stdout como UTF-8 seguro (v6.9.5).
-    MELHORAS:
-      * Timeout reduzido 90s (nao 120s!)
-      * Loga stderr SEMPRE em WARNING (nao so DEBUG!) para diagnosticar
-        por que a coleta USB esta retornando vazio.
-      * Retry 2x se primeira chamada der vazio (PowerShell as vezes falha silenciosamente).
-      * Força [System.Text.Encoding]::UTF8 em TUDO (Input + Output) + chcp 65001.
-      * Usa -MTA para evitar STA deadlock.
+    """Executa comando PowerShell retornando stdout.
+    v6.9.7: FORMA NUCLEAR INFALÍVEL de rodar scripts longos SEM problemas de encoding OEM
+    (MissingCatchOrFinally, chaves } quebradas etc em Windows pt-BR CP850):
+      1) Escreve o script num ARQUIVO TEMPORÁRIO .ps1 (UTF-8 com BOM, PowerShell padrão!)
+      2) Executa powershell.exe -File temp.ps1
+      3) -File NÃO passa nada pela linha de comando → 0 chance de encoding quebrar.
+      4) Apaga o arquivo temporário no finally (nunca deixa lixo).
     """
     last_err = ""
+    tmp_path = None
     for attempt in (1, 2):
         try:
-            wrapped = f"""
-[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$OutputEncoding           = [System.Text.Encoding]::UTF8
-$PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
-$ErrorActionPreference    = 'Continue'
-chcp 65001 > $null
-{cmd}
-"""
-            cmd_bytes = wrapped.encode("utf-16-le")
-            import base64 as _b64
-            encoded_cmd = _b64.b64encode(cmd_bytes).decode("ascii")
+            # 1) Escreve o script num arquivo temporário .ps1 (UTF-8 BOM = PowerShell entende nativamente)
+            #    Usa pasta temp do Windows + PID + attempt para nunca colidir
+            suffix = f"_pc_{os.getpid()}_{attempt}.ps1"
+            tmp_dir = tempfile.gettempdir()
+            tmp_path = os.path.join(tmp_dir, f"pc_usb{suffix}")
+            with open(tmp_path, "w", encoding="utf-8-sig", errors="replace") as f:
+                f.write("# Print Collect - USB collect (temp file, auto-deleted)\n")
+                f.write("[Console]::InputEncoding  = [System.Text.Encoding]::UTF8\n")
+                f.write("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n")
+                f.write("$OutputEncoding           = [System.Text.Encoding]::UTF8\n")
+                f.write("$PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'\n")
+                f.write("$ErrorActionPreference    = 'Continue'\n")
+                f.write("chcp 65001 > $null\n")
+                f.write(cmd + "\n")
+            # 2) Executa powershell.exe -File temp.ps1 (NÃO -Command, NÃO -EncodedCommand!)
             proc = subprocess.run(
                 ["powershell.exe", "-NoProfile", "-NonInteractive", "-MTA",
-                 "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded_cmd],
+                 "-ExecutionPolicy", "Bypass", "-File", tmp_path],
                 capture_output=True,
                 timeout=timeout_sec,
             )
@@ -406,12 +409,20 @@ chcp 65001 > $null
                     text = out_bytes.decode("cp850", errors="replace")
                 except Exception:
                     pass
-            # v6.9.5: LOGA stderr SEMPRE (mesmo se stdout vazio!) para diagnostico
+            # v6.9.7: trata stderr inclusive com envelope CLIXML (remove #< CLIXML wrapper se existir)
             if err_bytes:
                 try:
                     err_txt = err_bytes.decode("utf-8", errors="replace").strip()
                 except Exception:
                     err_txt = err_bytes.decode("latin-1", errors="replace").strip()
+                # Remove envelope CLIXML se vier (erros parse PS via subprocess às vezes vem como XML)
+                if err_txt.startswith("#< CLIXML") or err_txt.startswith("<Objs "):
+                    import re as _re
+                    clean = _re.sub(r"<S S=\"Error\">([^<]*)</S>", r"\1", err_txt, flags=_re.MULTILINE)
+                    clean = clean.replace("_x000D_x000A_", "\n").replace("_x000D_", "")
+                    clean = _re.sub(r"</?Objs[^>]*>|</?S[^>]*>|#< CLIXML", "", clean).strip()
+                    if clean:
+                        err_txt = clean
                 if err_txt:
                     last_err = err_txt
                     if not text.strip():
@@ -420,8 +431,11 @@ chcp 65001 > $null
                     else:
                         logger.debug("USB/powershell attempt=%d stderr: %.800s", attempt, err_txt[:800])
             if text.strip():
+                # Limpa arquivo temporário
+                if tmp_path and os.path.exists(tmp_path):
+                    try: os.remove(tmp_path)
+                    except Exception: pass
                 return text
-            # Stdout vazio -> tenta novamente (retry)
             logger.warning("USB/powershell attempt=%d retornou ZERO bytes de stdout. Vamos tentar novamente (retry=%d)...",
                            attempt, 2 if attempt == 1 else 0)
             if attempt == 1:
@@ -439,8 +453,12 @@ chcp 65001 > $null
             if attempt == 1:
                 import time as _time
                 _time.sleep(0.8)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try: os.remove(tmp_path)
+                except Exception: pass
 
-    # Se chegamos aqui, as 2 tentativas falharam -> tenta FALLBACK WMIC (ultima chance!)
+    # 2 tentativas falharam → FALLBACK WMIC.EXE
     logger.warning("USB/powershell 2 tentativas falharam (ultimo erro: %.200s). TENTANDO FALLBACK WMIC.EXE (Get-WMIObject legacy)...",
                    last_err[:200])
     try:
@@ -458,7 +476,7 @@ def _wmic_decode(raw_bytes: bytes) -> str:
     for enc in ("cp850", "latin-1", "utf-8", "cp1252"):
         try:
             txt = raw_bytes.decode(enc, errors="replace").strip()
-            if txt and ("=" in txt or "Namespace" in txt):
+            if txt and ("=" in txt or "Namespace" in txt or "," in txt):
                 return txt
         except Exception:
             pass
@@ -466,6 +484,59 @@ def _wmic_decode(raw_bytes: bytes) -> str:
         return raw_bytes.decode("utf-8", errors="replace").strip()
     except Exception:
         return ""
+
+
+def _get_any_key(d: dict, *keys, default=None):
+    """Busca valor em um dicionário tentando VÁRIAS chaves possíveis (inglês + pt-BR localizado).
+    Usado porque wmic.exe em Windows pt-BR TRADUZ nomes de campos no /format:list.
+    Ex: PortName → NomeDaPorta, DriverName → NomeDoDriver, Name → Nome etc.
+    """
+    if not d:
+        return default
+    d_low = {str(k).strip().lower(): v for k, v in d.items()}
+    for k in keys:
+        kl = str(k).strip().lower()
+        if kl in d_low:
+            return d_low[kl]
+    # Fallback por substring
+    for k in keys:
+        kl = str(k).strip().lower()
+        for dk, dv in d_low.items():
+            if (kl in dk) or (dk in kl):
+                return dv
+    return default
+
+
+def _wmic_csv_to_dicts(txt: str) -> list[dict[str, Any]]:
+    """Converte saída wmic ... /format:csv (cabeçalhos SEMPRE em inglês, NÃO localizado!)
+    em lista de dicionários. Muito mais seguro que /format:list em Windows OEM localizado."""
+    if not txt:
+        return []
+    import csv as _csv
+    from io import StringIO as _SIO
+    results: list[dict[str, Any]] = []
+    lines_clean = [ln for ln in txt.splitlines() if ln.strip() and not ln.strip().startswith("\ufeff")]
+    if not lines_clean:
+        return results
+    try:
+        reader = _csv.reader(lines_clean, delimiter=",", quotechar='"', skipinitialspace=True)
+        rows = list(reader)
+        if len(rows) < 2:
+            return results
+        headers = [str(h).strip() for h in rows[0]]
+        for row in rows[1:]:
+            if not row or len(row) < 2:
+                continue
+            d: dict[str, Any] = {}
+            for i, h in enumerate(headers):
+                if i < len(row):
+                    d[h] = str(row[i]).strip()
+                else:
+                    d[h] = ""
+            results.append(d)
+    except Exception as exc:
+        logger.debug("wmic CSV parse falhou: %s", exc)
+    return results
 
 
 def _collect_windows_wmic_fallback() -> str:
@@ -479,67 +550,88 @@ def _collect_windows_wmic_fallback() -> str:
         import json as _json
         import re as _re
 
-        # --- 1) Win32_Printer via WMIC ---
+        # --- 1) Win32_Printer via WMIC (CSV! Cabeçalhos sempre inglês, NÃO localizado!) ---
         try:
+            _PRN_COLS = ("Name,DriverName,Manufacturer,PortName,DeviceID,Status,"
+                         "ExtendedPrinterStatus,Default,WorkOffline,PrinterState,"
+                         "PrinterStatus,Shared,Local,Caption")
             proc = subprocess.run(
-                ["wmic.exe", "printer", "get", "/all", "/format:list"],
+                ["wmic.exe", "printer", "get", _PRN_COLS, "/format:csv"],
                 capture_output=True, timeout=30,
             )
             txt = _wmic_decode(proc.stdout or b"")
-            arr = _wmic_list_to_dicts(txt)
+            arr = _wmic_csv_to_dicts(txt)
+            if not arr:
+                # Fallback pro /format:list com helper _get_any_key (se CSV não existir no Win 7)
+                proc2 = subprocess.run(
+                    ["wmic.exe", "printer", "get", "/all", "/format:list"],
+                    capture_output=True, timeout=30,
+                )
+                txt2 = _wmic_decode(proc2.stdout or b"")
+                arr = _wmic_list_to_dicts(txt2)
             filtered = []
             for p in arr:
                 if not p:
                     continue
-                pname = (p.get("Name") or p.get("Caption") or "").strip()
+                pname = str(_get_any_key(p, "Name", "Nome", "Caption", "Legenda") or "").strip()
                 if not pname:
                     continue
                 filtered.append({
                     "Name": pname,
-                    "DriverName": p.get("DriverName"),
-                    "Manufacturer": p.get("Manufacturer"),
-                    "PortName": p.get("PortName"),
-                    "DeviceID": p.get("DeviceID"),
-                    "Status": p.get("Status"),
-                    "ExtendedPrinterStatus": p.get("ExtendedPrinterStatus"),
-                    "Default": p.get("Default"),
-                    "WorkOffline": p.get("WorkOffline"),
-                    "PrinterState": p.get("PrinterState"),
-                    "PrinterStatus": p.get("PrinterStatus"),
-                    "Shared": p.get("Shared"),
-                    "Local": p.get("Local"),
+                    "DriverName": str(_get_any_key(p, "DriverName", "NomeDoDriver", "Driver") or ""),
+                    "Manufacturer": str(_get_any_key(p, "Manufacturer", "Fabricante") or ""),
+                    "PortName": str(_get_any_key(p, "PortName", "NomeDaPorta", "Porta") or ""),
+                    "DeviceID": str(_get_any_key(p, "DeviceID", "IdDispositivo") or ""),
+                    "Status": str(_get_any_key(p, "Status", "Estado") or ""),
+                    "ExtendedPrinterStatus": str(_get_any_key(p, "ExtendedPrinterStatus", "StatusEstendido") or ""),
+                    "Default": str(_get_any_key(p, "Default", "Padrao", "Padrão") or ""),
+                    "WorkOffline": str(_get_any_key(p, "WorkOffline", "TrabalhoOffline") or ""),
+                    "PrinterState": str(_get_any_key(p, "PrinterState", "EstadoImpressora") or ""),
+                    "PrinterStatus": str(_get_any_key(p, "PrinterStatus", "StatusImpressora") or ""),
+                    "Shared": str(_get_any_key(p, "Shared", "Compartilhado") or ""),
+                    "Local": str(_get_any_key(p, "Local", "Localidade") or ""),
                 })
             out_lines.append("JSON_START_PRINTERS " + _json.dumps(filtered, separators=(",", ":"), ensure_ascii=False))
         except Exception as exc:
             logger.warning("FALLBACK WMIC printer falhou: %s", exc)
             out_lines.append("JSON_START_PRINTERS []")
 
-        # --- 2) Print Queue via WMIC ---
+        # --- 2) Print Queue via WMIC (CSV!) ---
         try:
+            _Q_COLS = "Name,TotalPagesPrinted,TotalJobsPrinted,JobsSpooling"
             proc = subprocess.run(
-                ["wmic.exe", "path", "Win32_PerfFormattedData_Spooler_PrintQueue", "get", "/all", "/format:list"],
+                ["wmic.exe", "path", "Win32_PerfFormattedData_Spooler_PrintQueue",
+                 "get", _Q_COLS, "/format:csv"],
                 capture_output=True, timeout=30,
             )
             txt = _wmic_decode(proc.stdout or b"")
-            arr = _wmic_list_to_dicts(txt)
+            arr = _wmic_csv_to_dicts(txt)
+            if not arr:
+                proc2 = subprocess.run(
+                    ["wmic.exe", "path", "Win32_PerfFormattedData_Spooler_PrintQueue",
+                     "get", "/all", "/format:list"],
+                    capture_output=True, timeout=30,
+                )
+                txt2 = _wmic_decode(proc2.stdout or b"")
+                arr = _wmic_list_to_dicts(txt2)
             filtered = []
             for q in arr:
                 if not q:
                     continue
                 try:
-                    tp = int(q.get("TotalPagesPrinted") or 0)
+                    tp = int(_get_any_key(q, "TotalPagesPrinted", "PaginasTotaisImpressas") or 0)
                 except Exception:
                     tp = 0
                 try:
-                    tj = int(q.get("TotalJobsPrinted") or 0)
+                    tj = int(_get_any_key(q, "TotalJobsPrinted", "TrabalhosTotaisImpressos") or 0)
                 except Exception:
                     tj = 0
                 try:
-                    js = int(q.get("JobsSpooling") or 0)
+                    js = int(_get_any_key(q, "JobsSpooling", "TrabalhosSpool") or 0)
                 except Exception:
                     js = 0
                 filtered.append({
-                    "Name": q.get("Name"),
+                    "Name": str(_get_any_key(q, "Name", "Nome") or ""),
                     "TotalPagesPrinted": tp,
                     "TotalJobsPrinted": tj,
                     "JobsSpooling": js,
@@ -555,27 +647,33 @@ def _collect_windows_wmic_fallback() -> str:
         out_lines.append("JSON_START_REGISTRY []")
         out_lines.append("JSON_START_JOBS []")
 
-        # --- 4) PORTAS REAIS via WMIC (TCPIP Printer Port!) + USB Monitor registry (agora USB: nao 0 portas!) ---
+        # --- 4) PORTAS REAIS via WMIC (CSV! TCPIP Printer Port + printerport ALL) ---
         ports_arr: list[dict[str, Any]] = []
         try:
+            _TCP_COLS = "Name,HostAddress,Protocol,Description"
             proc = subprocess.run(
-                ["wmic.exe", "path", "Win32_TCPIPPrinterPort", "get", "/all", "/format:list"],
+                ["wmic.exe", "path", "Win32_TCPIPPrinterPort", "get", _TCP_COLS, "/format:csv"],
                 capture_output=True, timeout=20,
             )
             txt = _wmic_decode(proc.stdout or b"")
-            arr = _wmic_list_to_dicts(txt)
+            arr = _wmic_csv_to_dicts(txt)
+            if not arr:
+                proc2 = subprocess.run(
+                    ["wmic.exe", "path", "Win32_TCPIPPrinterPort", "get", "/all", "/format:list"],
+                    capture_output=True, timeout=20,
+                )
+                txt2 = _wmic_decode(proc2.stdout or b"")
+                arr = _wmic_list_to_dicts(txt2)
             for p in arr:
-                nm = (p.get("Name") or "").strip()
+                nm = str(_get_any_key(p, "Name", "Nome") or "").strip()
                 if not nm:
                     continue
                 ports_arr.append({"Name": nm, "Description": "TCPIP", "Type": "TCPIP",
-                                  "PortMonitor": p.get("Protocol") or "Standard TCP/IP Port"})
-                host_ip = (p.get("HostAddress") or "").strip()
+                                  "PortMonitor": str(_get_any_key(p, "Protocol", "Protocolo") or "Standard TCP/IP Port")})
+                host_ip = str(_get_any_key(p, "HostAddress", "EnderecoHost", "EndereçoHost", "IPAddress") or "").strip()
                 if host_ip:
-                    # Tambem adiciona porta sem _N variantes que podem existir so no driver
                     ports_arr.append({"Name": host_ip, "Description": "TCPIP-IP", "Type": "TCPIP",
                                       "PortMonitor": "Standard TCP/IP Port"})
-                    # E tambem as versoes com _N no final (192.168.15.50_1 etc)
                     for n_suffix in range(1, 10):
                         ports_arr.append({"Name": f"{host_ip}_{n_suffix}", "Description": "TCPIP-SUFFIX",
                                           "Type": "TCPIP", "PortMonitor": "Standard TCP/IP Port"})
@@ -585,19 +683,26 @@ def _collect_windows_wmic_fallback() -> str:
             logger.debug("WMIC TCPIPPrinterPort falhou: %s", exc)
         try:
             proc = subprocess.run(
-                ["wmic.exe", "printerport", "get", "/all", "/format:list"],
+                ["wmic.exe", "printerport", "get", "Name,Description,Type,PortMonitor", "/format:csv"],
                 capture_output=True, timeout=20,
             )
             txt = _wmic_decode(proc.stdout or b"")
-            arr = _wmic_list_to_dicts(txt)
+            arr = _wmic_csv_to_dicts(txt)
+            if not arr:
+                proc2 = subprocess.run(
+                    ["wmic.exe", "printerport", "get", "/all", "/format:list"],
+                    capture_output=True, timeout=20,
+                )
+                txt2 = _wmic_decode(proc2.stdout or b"")
+                arr = _wmic_list_to_dicts(txt2)
             for p in arr:
-                nm = (p.get("Name") or "").strip()
+                nm = str(_get_any_key(p, "Name", "Nome") or "").strip()
                 if not nm:
                     continue
                 ports_arr.append({"Name": nm,
-                                  "Description": p.get("Description") or "PrinterPort",
-                                  "Type": "AUTO",
-                                  "PortMonitor": p.get("PortMonitor") or ""})
+                                  "Description": str(_get_any_key(p, "Description", "Descricao", "Descrição") or "PrinterPort"),
+                                  "Type": str(_get_any_key(p, "Type", "Tipo") or "AUTO"),
+                                  "PortMonitor": str(_get_any_key(p, "PortMonitor", "MonitorPorta") or "")})
         except Exception as exc:
             logger.debug("WMIC printerport falhou: %s", exc)
         try:
