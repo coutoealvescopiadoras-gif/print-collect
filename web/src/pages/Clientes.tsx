@@ -671,10 +671,8 @@ export default function Clientes() {
             <thead>
               <tr>
                 <th>Cliente</th>
-                <th style={{ width: 240 }}>CNPJ</th>
-                <th style={{ minWidth: 260 }}>Contato</th>
-                <th style={{ width: 96, textAlign: "center" }}>Status</th>
-                <th style={{ width: 260, textAlign: "right" }}>Ações</th>
+                <th style={{ width: 120, textAlign: "center" }}>Status</th>
+                <th style={{ width: 220, textAlign: "right" }}>Ações</th>
               </tr>
             </thead>
             <tbody>
@@ -711,42 +709,6 @@ export default function Clientes() {
                             </div>
                           </div>
                         </button>
-                      </div>
-                    </td>
-                    <td style={{ whiteSpace: "nowrap" }}>
-                      <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "0.3rem 0.65rem", borderRadius: 8, background: c.cnpj ? "rgba(16,185,129,0.08)" : "transparent", border: c.cnpj ? "1px solid rgba(16,185,129,0.2)" : "1px solid transparent", color: c.cnpj ? "var(--text)" : "var(--text-muted)", fontSize: 14, fontFamily: c.cnpj ? "'JetBrains Mono', 'Courier New', ui-monospace, monospace" : "inherit", letterSpacing: c.cnpj ? 0.3 : 0, whiteSpace: "nowrap" }}>
-                        {c.cnpj ? <><strong>{formatCNPJ(c.cnpj)}</strong></> : <>—</>}
-                      </div>
-                    </td>
-                    <td>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        {c.contact_name && (
-                          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 14 }}>
-                            <span style={{ color: "var(--text-muted)" }}>👤</span>
-                            <strong style={{ color: "var(--text)" }}>{c.contact_name}</strong>
-                          </div>
-                        )}
-                        {c.contact_phone && (
-                          <a
-                            href={`tel:${_onlyDigits(c.contact_phone)}`}
-                            style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13.5, color: "var(--primary)", textDecoration: "none", fontWeight: 500 }}
-                            title="Clique para ligar"
-                          >
-                            📞 {formatPhone(c.contact_phone)}
-                          </a>
-                        )}
-                        {c.contact_email && (
-                          <a
-                            href={`mailto:${c.contact_email.trim()}`}
-                            style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-muted)", textDecoration: "none", wordBreak: "break-all" }}
-                            title="Clique para enviar e-mail"
-                          >
-                            ✉️ <span style={{ textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 2 }}>{c.contact_email.trim()}</span>
-                          </a>
-                        )}
-                        {!c.contact_name && !c.contact_phone && !c.contact_email && (
-                          <span style={{ color: "var(--text-muted)", fontSize: 13 }}>Nenhum contato cadastrado</span>
-                        )}
                       </div>
                     </td>
                     <td style={{ textAlign: "center" }}>
