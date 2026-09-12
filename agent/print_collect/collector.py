@@ -82,22 +82,34 @@ def run_cycle(config: AgentConfig, sender: ApiSender) -> int:
     # ==============================================================
     # COLETA USB (Windows spooler/WMI) - 100% ADITIVA, NUNCA QUEBRA NADA!
     #
-    # 🔒 FEATURE FLAG (POR SEGURANCA, DESLIGADA POR PADRAO!):
-    #    A coleta USB SÓ ira rodar se existir a VARIAVEL DE AMBIENTE:
-    #         PRINTCOLLECT_ENABLE_USB = 1 (ou "true"/"yes"/"sim")
-    #    Se a variavel NAO EXISTIR (padrao) ou for 0/off = PULA TUDO!
-    #    Assim, 100% IGUAL ao que ja estava rodando certinho sem USB.
+    # 🔄 ATUALIZACAO v6.9.1 (Julio 11/09): LIGADO POR PADRAO AGORA!
+    #    COLETA IMPRESSORAS INSTALADAS MANUALMENTE NO WINDOWS!
+    #    (USB, TCP/IP manual, compartilhadas, WSD, IPP, qualquer instalada via
+    #     "Adicionar Impressora" do Windows - pega contadores do Registro,
+    #     spooler, historico de jobs, etc.)
     #
-    # Para ativar depois (na maquina do cliente):
+    # 🔒 FEATURE FLAG (POR SEGURANCA, LIGADA POR PADRAO!):
+    #    A coleta USB SÓ ira DESLIGAR se existir a VARIAVEL DE AMBIENTE:
+    #         PRINTCOLLECT_DISABLE_USB = 1 (ou "true"/"yes"/"sim"/"off"/"n")
+    #    Se a variavel NAO EXISTIR (padrao NOVO) = RODA TUDO!
+    #    (antes v6.9.1 era o oposto: precisava de PRINTCOLLECT_ENABLE_USB=1)
+    #
+    # Para DESATIVAR emergencialmente na maquina do cliente:
     #   - Painel de Controle > Sistema > Variaveis de Ambiente > Sistema > Nova
-    #   - Ou: CMD > setx PRINTCOLLECT_ENABLE_USB 1 /M (rebootar depois)
+    #   - Ou: CMD Admin > setx PRINTCOLLECT_DISABLE_USB 1 /M (rebootar depois)
     # ==============================================================
-    _usb_env = str(os.environ.get("PRINTCOLLECT_ENABLE_USB") or "").strip().lower()
-    _usb_enabled = _usb_env in ("1", "true", "yes", "sim", "on", "s")
-    if not _usb_enabled:
-        logger.debug("Coleta USB: DESLIGADA (default, 100% modo SNMP original). Para ligar: variavel PRINTCOLLECT_ENABLE_USB=1.")
+    _usb_disable_env = str(os.environ.get("PRINTCOLLECT_DISABLE_USB") or "").strip().lower()
+    _usb_disabled = _usb_disable_env in ("1", "true", "yes", "sim", "on", "s", "off", "n", "nao", "não", "0")
+    # Tambem mantemos compatibilidade com a flag ANTIGA (PRINTCOLLECT_ENABLE_USB).
+    # Se o usuario antigo tem PRINTCOLLECT_ENABLE_USB=0 => desliga tambem.
+    _old_enable_env = str(os.environ.get("PRINTCOLLECT_ENABLE_USB") or "").strip().lower()
+    if _old_enable_env in ("0", "false", "no", "nao", "não", "off", "n"):
+        _usb_disabled = True
+
+    if _usb_disabled:
+        logger.debug("Coleta USB: DESLIGADA por variavel PRINTCOLLECT_DISABLE_USB=%s (modo apenas SNMP).", _usb_disable_env)
     else:
-        logger.info("Coleta USB: LIGADA (PRINTCOLLECT_ENABLE_USB=%s). Rodando agora...", _usb_env)
+        logger.info("Coleta USB: LIGADA (v6.9.1+ padrão!). Rodando agora — impressoras instaladas manualmente serão coletadas...")
         try:
             usb_list = collect_all_usb()
             if usb_list:
@@ -109,12 +121,12 @@ def run_cycle(config: AgentConfig, sender: ApiSender) -> int:
                 for u in usb_list:
                     usn = (u.serial_number or "").strip().lower()
                     if usn and usn in seen_serial:
-                        logger.info("USB: impressora serial=%s ja coletada via SNMP, ignorada.", usn)
+                        logger.info("USB: impressora serial=%s ja coletada via SNMP, ignorada para não duplicar.", usn)
                         continue
                     readings.append(u)
-                    logger.info("USB OK: %s %s pag=%s", u.ip_address, u.model or "", u.pages_total)
+                    logger.info("USB OK (manualmente instalada): %s %s pag=%s", u.ip_address, u.model or "", u.pages_total)
             else:
-                logger.info("Coleta USB: Nenhuma impressora USB fisica encontrada neste ciclo (normal).")
+                logger.info("Coleta USB: Nenhuma impressora física instalada manualmente encontrada neste ciclo (normal).")
         except Exception as usb_err:
             logger.warning("Coleta USB falhou neste ciclo (ignorado, SNMP continua 100% ok): %s", usb_err)
 

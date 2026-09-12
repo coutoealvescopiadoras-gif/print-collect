@@ -7,8 +7,8 @@ server_url: "https://print-collect.onrender.com"
 # Token do agente — crie em: Painel > Agentes > Novo agente
 agent_token: "agent-dev-key"
 
-# Versão (informativo)
-agent_version: "6.9.0"
+# Versão (informativo) — v6.9.1: coleta impressoras instaladas manualmente por PADRÃO!
+agent_version: "6.9.1"
 
 # Intervalo entre coletas automáticas (minutos)
 # 30 minutos = atualiza contadores de 30 em 30 min

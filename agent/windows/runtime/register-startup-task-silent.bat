@@ -47,6 +47,17 @@ if not exist "%CFG%" (
 )
 
 REM =============================================================================
+REM PASSO 0.1: GARANTE VARS DE AMBIENTE DO SISTEMA (CAMADA EXTRA!)
+REM   - PRINTCOLLECT_ENABLE_USB=1 (v6.9.1: coleta impressoras instaladas manualmente LIGADA por padrao!)
+REM =============================================================================
+echo [%date% %time%] PASSO 0.1: Garantindo variaveis de ambiente do sistema (ENABLE_USB etc) ... >> "%LOG%"
+setx PRINTCOLLECT_ENABLE_USB 1 /M >nul 2>> "%LOG%"
+echo [%date% %time%]   setx PRINTCOLLECT_ENABLE_USB=1 /M  RC=%ERRORLEVEL% >> "%LOG%"
+REM Limpa flag antiga de DESATIVAR se por acaso existia:
+setx PRINTCOLLECT_DISABLE_USB "" /M >nul 2>&1
+echo [%date% %time%]   (limpa PRINTCOLLECT_DISABLE_USB se existia - garantia total)  >> "%LOG%"
+
+REM =============================================================================
 REM PASSO 0: GARANTE QUE run-once.bat E run-watchdog.bat EXISTEM (escritos corretamente!)
 REM =============================================================================
 echo [%date% %time%] PASSO 0: Garantindo wrappers run-once.bat / run-watchdog.bat ... >> "%LOG%"
