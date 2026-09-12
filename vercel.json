@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
-  "installCommand": "cd web && npm install --include=dev && cd .. && python -m pip install --break-system-packages -r requirements.txt",
+  "installCommand": "cd web && npm config set allow-scripts true && npm install --include=dev --foreground-scripts && cd .. && python -m pip install --break-system-packages -r requirements.txt",
   "buildCommand": "cd web && npm run build",
   "outputDirectory": "web/dist",
   "functions": {
