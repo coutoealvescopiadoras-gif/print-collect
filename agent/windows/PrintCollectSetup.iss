@@ -28,6 +28,13 @@ WizardStyle=modern
 OutputDir=..\dist\windows
 OutputBaseFilename=PrintCollectSetup
 UninstallDisplayIcon={app}\{#MyAppExeName}
+; --- FIX v6.9.3-3 UNINSTALL TRAVANDO ---
+;   CloseApplications=yes tenta fechar processos nossos via Restart Manager (nativo Inno 6.3)
+;   RestartIfNeededByRun=no / UninstallRestartComputer=no = nao pede reboot no final
+;   AllowCancelDuringUninstall NAO EXISTE no Inno 6.3 - foi removido! (nao aceito pelo ISCC)
+CloseApplications=yes
+RestartIfNeededByRun=no
+UninstallRestartComputer=no
 
 [Files]
 Source: "..\dist\PrintCollectAgent.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -83,8 +90,37 @@ Filename: "{app}\open-config.bat"; Description: "Editar config.yaml manualmente"
 [Tasks]
 Name: "desktopicon"; Description: "Criar atalho Wizard na Area de Trabalho"; GroupDescription: "Atalhos adicionais:"; Flags: unchecked
 
+; =============================================================================
+; [UNINSTALL FIX v6.9.3-3] — ORDEM CORRETA PRA NAO TRAVAR (Mata processos ANTES!)
+;   O bug original: desinstalador travava pois tentava apagar .exe enquanto ele
+;   rodava em background (tray icon / daemon coleta sleep). NUNCA MAIS!
+;
+;   Ordem que SEMPRE FUNCIONA (aguarda cada passo terminar com waituntilterminated):
+;     1. schtasks.exe /Change /Disable → Impede Tarefa Agendada disparar NO MEIO!
+;     2. taskkill.exe /F (matar) TODOS os nossos EXEs abertos (mesmo tray / bg)
+;     3. unregister-startup-task.bat → Remove a tarefa agendada permanentemente.
+; =============================================================================
 [UninstallRun]
-Filename: "{app}\unregister-startup-task.bat"; Flags: runhidden skipifdoesntexist
+Filename: "schtasks.exe"; \
+  Parameters: "/Change /TN ""{#MyAppTaskName}"" /DISABLE"; \
+  Flags: runhidden waituntilterminated skipifdoesntexist; \
+  StatusMsg: "Desativando inicializacao automatica...";
+Filename: "taskkill.exe"; \
+  Parameters: "/F /IM {#MyAppExeName} /IM WizardPareamento.exe /IM SearchPrinters.exe /T"; \
+  Flags: runhidden waituntilterminated skipifdoesntexist; \
+  StatusMsg: "Fechando processos abertos do Print Collect...";
+Filename: "{app}\unregister-startup-task.bat"; \
+  Flags: runhidden waituntilterminated skipifdoesntexist; \
+  StatusMsg: "Removendo tarefa agendada...";
+
+; --- [UninstallDelete] Limpa lixo (logs, caches) em C:\ProgramData\PrintCollect
+;     Nota: Nao apagamos config.yaml manualmente, pois usuario pode querer backup.
+;     Se quiser FULL wipe (perde config), descomente a linha abaixo.
+[UninstallDelete]
+Type: filesandordirs; Name: "{commonappdata}\PrintCollect\logs"
+Type: files; Name: "{commonappdata}\PrintCollect\*.log"
+Type: files; Name: "{commonappdata}\PrintCollect\agent.log"
+Type: files; Name: "{commonappdata}\PrintCollect\agent.log.*"
 
 [Code]
 var
