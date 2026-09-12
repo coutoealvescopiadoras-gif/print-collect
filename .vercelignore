@@ -1,0 +1,47 @@
+# =============================================================================
+# VERCELIGNORE - NÃO INCLUIR ESTES ARQUIVOS/PASTAS NO PACOTE DE DEPLOY
+# Reduz tamanho total do bundle de 235MB+ para <50MB (abaixo limite 225MB)
+# IMPORTANTE: NÃO bloquear web/public/ - os arquivos estáticos (Setup.exe, BAT
+# de desinstalação) precisam ser servidos pelo CDN!
+# =============================================================================
+
+# PASTAS SOMENTE NA RAIZ - /agent/ tem .pydeps 300MB+, builds PyInstaller/Inno
+/agent/
+/dist/
+/build/
+/.pydeps/
+
+# ARQUIVOS BUILD LOCAL NA RAIZ (somente .spec / .bat / .ps1 da raiz)
+/*.spec
+/*.bat
+/*.ps1
+/*.log
+/*.txt
+/*.lnk
+/*.db
+/*.sqlite
+/*.sqlite3
+/database/
+
+# PYTHON CACHE / VENVS (qualquer nivel)
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+.venv*/
+venv/
+env/
+ENV/
+
+# NODE_MODULES (qualquer nivel, só web/node_modules precisa no build)
+node_modules/
+
+# ARQUIVOS SEGREDOS / AMBIENTE
+.env
+.env.*
+*.secret
