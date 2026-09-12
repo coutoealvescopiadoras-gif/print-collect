@@ -16,6 +16,38 @@ function copyText(text: string) {
   }
 }
 
+// ================================================================
+// HELPERS DE FORMATAÇÃO PROFISSIONAL (CNPJ, CPF, Telefone, E-mail)
+// Julio pediu para deixar a página de cliente MAIS LIMPA E PROFISSIONAL!
+// ================================================================
+function _onlyDigits(s: string | number | null | undefined): string {
+  return String(s || "").replace(/\D/g, "");
+}
+function formatCNPJ(v: string | number | null | undefined): string {
+  const d = _onlyDigits(v);
+  if (d.length === 14) {
+    return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`;
+  }
+  if (d.length === 11) {
+    // CPF fallback (ex: pessoa fisica)
+    return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+  }
+  return String(v || "").trim() || "—";
+}
+function formatPhone(v: string | number | null | undefined): string {
+  const d = _onlyDigits(v);
+  if (!d) return "—";
+  if (d.length === 11) {
+    // Celular (11) 99999-0000
+    return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  }
+  if (d.length === 10) {
+    // Fixo (11) 3333-0000
+    return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  }
+  return String(v || "").trim() || "—";
+}
+
 export default function Clientes() {
   const { user, loading: authLoading } = useAuth();
   const effectiveRole = user?.role || "superadmin";
@@ -638,12 +670,10 @@ export default function Clientes() {
           <table>
             <thead>
               <tr>
-                <th>Nome</th>
-                <th>CNPJ</th>
-                <th>Contato</th>
-                <th>Telefone</th>
-                <th>E-mail</th>
-                <th>Status</th>
+                <th>Cliente</th>
+                <th style={{ width: 200 }}>CNPJ</th>
+                <th style={{ minWidth: 260 }}>Contato</th>
+                <th style={{ width: 96, textAlign: "center" }}>Status</th>
                 <th style={{ width: 260, textAlign: "right" }}>Ações</th>
               </tr>
             </thead>
@@ -675,16 +705,69 @@ export default function Clientes() {
                             (e.currentTarget as HTMLButtonElement).style.background = "transparent";
                           }}
                         >
-                          <strong>{c.name}</strong>
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                            <div
+                              style={{
+                                width: 36, height: 36, borderRadius: 10,
+                                background: "linear-gradient(135deg, rgba(32,128,240,0.18), rgba(32,128,240,0.06))",
+                                border: "1px solid rgba(32,128,240,0.25)",
+                                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                                fontSize: 16, fontWeight: 800, color: "var(--primary)",
+                                letterSpacing: 0.3,
+                              }}
+                            >
+                              {(c.name || "  ").trim().charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <div style={{ fontSize: "1rem" }}><strong>{c.name}</strong></div>
+                              {c.partner_name && (
+                                <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 2 }}>
+                                  🤝 Parceiro: <strong>{c.partner_name}</strong>
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         </button>
                       </div>
                     </td>
-                    <td>{c.cnpj || "—"}</td>
-                    <td>{c.contact_name || "—"}</td>
-                    <td>{c.contact_phone || "—"}</td>
-                    <td>{c.contact_email || "—"}</td>
                     <td>
-                      <span className={`badge ${c.active ? "online" : "offline"}`}>
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "0.25rem 0.55rem", borderRadius: 8, background: c.cnpj ? "rgba(16,185,129,0.08)" : "transparent", border: c.cnpj ? "1px solid rgba(16,185,129,0.2)" : "1px solid transparent", color: c.cnpj ? "var(--text)" : "var(--text-muted)", fontSize: 14, fontFamily: c.cnpj ? "'JetBrains Mono', 'Courier New', ui-monospace, monospace" : "inherit", letterSpacing: c.cnpj ? 0.4 : 0 }}>
+                        {c.cnpj ? <>🏢 <strong>{formatCNPJ(c.cnpj)}</strong></> : <>🏢 —</>}
+                      </div>
+                    </td>
+                    <td>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        {c.contact_name && (
+                          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 14 }}>
+                            <span style={{ color: "var(--text-muted)" }}>👤</span>
+                            <strong style={{ color: "var(--text)" }}>{c.contact_name}</strong>
+                          </div>
+                        )}
+                        {c.contact_phone && (
+                          <a
+                            href={`tel:${_onlyDigits(c.contact_phone)}`}
+                            style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13.5, color: "var(--primary)", textDecoration: "none", fontWeight: 500 }}
+                            title="Clique para ligar"
+                          >
+                            📞 {formatPhone(c.contact_phone)}
+                          </a>
+                        )}
+                        {c.contact_email && (
+                          <a
+                            href={`mailto:${c.contact_email.trim()}`}
+                            style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-muted)", textDecoration: "none", wordBreak: "break-all" }}
+                            title="Clique para enviar e-mail"
+                          >
+                            ✉️ <span style={{ textDecoration: "underline", textDecorationStyle: "dotted", textUnderlineOffset: 2 }}>{c.contact_email.trim()}</span>
+                          </a>
+                        )}
+                        {!c.contact_name && !c.contact_phone && !c.contact_email && (
+                          <span style={{ color: "var(--text-muted)", fontSize: 13 }}>Nenhum contato cadastrado</span>
+                        )}
+                      </div>
+                    </td>
+                    <td style={{ textAlign: "center" }}>
+                      <span className={`badge ${c.active ? "online" : "offline"}`} style={{ fontSize: 12.5, padding: "0.25rem 0.7rem" }}>
                         {c.active ? "Ativo" : "Inativo"}
                       </span>
                     </td>
@@ -721,32 +804,81 @@ export default function Clientes() {
 
       {showModal && (canCreateClients || canEditClients) && (
         <div className="modal-overlay" onClick={handleCloseModal}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>{editingClientId !== null ? "Editar cliente" : "Novo cliente"}</h3>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 720 }}>
+            <h3 style={{ marginTop: 0, marginBottom: "0.25rem" }}>
+              {editingClientId !== null ? "✏️ Editar cliente" : "➕ Novo cliente"}
+            </h3>
+            <div style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: "1.1rem" }}>
+              {editingClientId !== null ? "Atualize os dados cadastrais do cliente abaixo." : "Preencha os dados abaixo para cadastrar um novo cliente no sistema."}
+            </div>
             <form onSubmit={handleSave}>
-              <div className="form-group">
-                <label>Nome *</label>
-                <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "1rem", marginBottom: "1rem" }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>🏢 Nome / Razão Social *</label>
+                  <input
+                    required
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    placeholder="Ex.: Loja de Suprimentos Centro Ltda"
+                  />
+                </div>
+
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label>📄 CNPJ (ou CPF para pessoa física)</label>
+                  <input
+                    value={form.cnpj}
+                    onChange={(e) => setForm({ ...form, cnpj: e.target.value })}
+                    placeholder="00.000.000/0000-00 (apenas numeros, sistema formata automatico)"
+                  />
+                </div>
               </div>
-              <div className="form-group">
-                <label>CNPJ</label>
-                <input value={form.cnpj} onChange={(e) => setForm({ ...form, cnpj: e.target.value })} />
+
+              <div
+                style={{
+                  background: "var(--surface-2)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 10,
+                  padding: "0.95rem 1rem 0.4rem",
+                  marginBottom: "1rem",
+                }}
+              >
+                <div style={{ fontSize: 12, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: "0.85rem" }}>
+                  👤 Dados para Contato
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.85rem 1rem", marginBottom: "0.35rem" }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>Nome do contato</label>
+                    <input
+                      value={form.contact_name}
+                      onChange={(e) => setForm({ ...form, contact_name: e.target.value })}
+                      placeholder="Ex.: Maria da Silva"
+                    />
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label>📞 Telefone / WhatsApp</label>
+                    <input
+                      placeholder="(11) 99999-0000"
+                      value={form.contact_phone}
+                      onChange={(e) => setForm({ ...form, contact_phone: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group" style={{ margin: 0, gridColumn: "1 / -1" }}>
+                    <label>✉️ E-mail</label>
+                    <input
+                      type="email"
+                      value={form.contact_email}
+                      onChange={(e) => setForm({ ...form, contact_email: e.target.value })}
+                      placeholder="contato@empresa.com.br"
+                    />
+                  </div>
+                </div>
               </div>
-              <div className="form-group">
-                <label>Contato</label>
-                <input value={form.contact_name} onChange={(e) => setForm({ ...form, contact_name: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label>Telefone</label>
-                <input placeholder="(11) 99999-0000" value={form.contact_phone} onChange={(e) => setForm({ ...form, contact_phone: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label>E-mail</label>
-                <input type="email" value={form.contact_email} onChange={(e) => setForm({ ...form, contact_email: e.target.value })} />
-              </div>
+
               <div className="modal-actions">
                 <button type="button" className="btn btn-ghost" onClick={handleCloseModal}>Cancelar</button>
-                <button type="submit" className="btn btn-primary">Salvar</button>
+                <button type="submit" className="btn btn-primary">
+                  {editingClientId !== null ? "💾 Salvar alterações" : "✅ Cadastrar cliente"}
+                </button>
               </div>
             </form>
           </div>
@@ -948,145 +1080,296 @@ Qualquer dúvida é só chamar a gente!`}
                 flex: "0 1 auto",
               }}
             >
-              {/* ===== HEADER MODAL CLIENTE ===== */}
+              {/* ===== HEADER MODAL CLIENTE (PROFISSIONAL v6.9.7) ===== */}
+              {/* Julio pediu para DEIXAR DE SER EMBOLADO! = Cards separados e organizados */}
               <div
                 style={{
-                  padding: "1.1rem 1.4rem",
+                  padding: "1.25rem 1.4rem 0.9rem",
                   borderBottom: "1px solid var(--border)",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  gap: "1rem",
-                  flexWrap: "wrap",
-                  background: "var(--surface)",
+                  background: "linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%)",
                   position: "sticky",
                   top: 0,
                   zIndex: 2,
                 }}
               >
-                <div>
-                  <h3 style={{ margin: 0, fontSize: "1.3rem", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    {canEditClients && (
-                      <button
-                        className="btn btn-secondary"
-                        style={{ fontSize: 13, padding: "0.3rem 0.6rem" }}
-                        onClick={() => { handleFecharModalCliente(); handleOpenEdit(clienteModal); }}
-                        title="Editar dados deste cliente (nome, CNPJ, contato, etc.)"
-                      >
-                        ✏️ Editar
-                      </button>
-                    )}
-                    🏢 {clienteModal.name}
-                    <span className={`badge ${clienteModal.active ? "online" : "offline"}`} style={{ marginLeft: 6 }}>
-                      {clienteModal.active ? "Ativo" : "Inativo"}
-                    </span>
-                  </h3>
-                  <div style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginTop: 4 }}>
-                    {clienteModal.partner_name && <span>Parceiro: <strong style={{ color: "var(--text)" }}>{clienteModal.partner_name}</strong> · </span>}
-                    ID #{clienteModal.id}
-                  </div>
-
-                  {/* ===== CODIGO DO CLIENTE EVIDENTISSIMO (Julio pediu para deixar AQUI no modal 1, nao mais na tabela!) ===== */}
-                  {clienteModal.client_code && (
-                    <div
-                      style={{
-                        marginTop: "0.9rem",
-                        padding: "0.8rem 0.9rem",
-                        borderRadius: 12,
-                        background: "linear-gradient(135deg, rgba(16,185,129,0.12), rgba(16,185,129,0.05))",
-                        border: "1.5px solid rgba(16,185,129,0.35)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: "0.75rem",
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontSize: "0.75rem", color: "rgb(16,185,129)", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 3 }}>
-                          🎫 Código do Cliente (usar para parear o agente!)
+                {/* Linha 1: AÇÕES PRINCIPAIS (botão editar, atualizar, fechar) */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem", marginBottom: "1rem" }}>
+                  <div style={{ minWidth: 0 }}>
+                    {/* ===== (NOVO) CARDS SUPERIORES: Avatar + Dados + Contato ===== */}
+                    <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr) minmax(0, 1fr)", gap: "1rem", alignItems: "stretch", flexWrap: "wrap" }}>
+                      {/* ========== CARD 1: AVATAR + NOME DA EMPRESA ========== */}
+                      <div style={{ display: "flex", alignItems: "center", gap: "1rem", padding: "0.65rem 0", minWidth: 0 }}>
+                        <div style={{
+                          width: 74, height: 74, borderRadius: 16, flexShrink: 0,
+                          background: "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)",
+                          boxShadow: "0 4px 16px rgba(59,130,246,0.3)",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          color: "white", fontSize: 30, fontWeight: 800, letterSpacing: 1,
+                          border: "2px solid rgba(255,255,255,0.18)",
+                        }}>
+                          {(clienteModal.name || "  ").trim().charAt(0).toUpperCase()}
                         </div>
-                        <div
-                          style={{
-                            fontFamily: "'Courier New', ui-monospace, monospace",
-                            fontWeight: 900,
-                            fontSize: "1.4rem",
-                            color: "rgb(5,150,105)",
-                            letterSpacing: 2.5,
-                            padding: "0.15rem 0.25rem",
-                            display: "inline-block",
-                          }}
-                        >
-                          {clienteModal.client_code}
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <h2 style={{
+                              margin: 0, fontSize: "1.5rem",
+                              whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden",
+                              maxWidth: 420,
+                              lineHeight: 1.2,
+                            }}>
+                              {clienteModal.name}
+                            </h2>
+                            <span className={`badge ${clienteModal.active ? "online" : "offline"}`} style={{ fontSize: 13, padding: "0.3rem 0.8rem", margin: 0 }}>
+                              {clienteModal.active ? "✅ Ativo" : "⏸️ Inativo"}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginTop: 6, display: "flex", alignItems: "center", gap: "0.85rem", flexWrap: "wrap" }}>
+                            <span>🆔 ID <strong style={{ color: "var(--text)", fontFamily: "'JetBrains Mono', monospace" }}>#{clienteModal.id}</strong></span>
+                            {clienteModal.partner_name && (
+                              <>
+                                <span style={{ color: "var(--border)" }}>·</span>
+                                <span>🤝 Parceiro: <strong style={{ color: "var(--text)" }}>{clienteModal.partner_name}</strong></span>
+                              </>
+                            )}
+                          </div>
+                          {canEditClients && (
+                            <button
+                              className="btn btn-secondary"
+                              style={{ fontSize: 12.5, padding: "0.3rem 0.7rem", marginTop: 10 }}
+                              onClick={() => { handleFecharModalCliente(); handleOpenEdit(clienteModal); }}
+                              title="Editar dados deste cliente (nome, CNPJ, contato, etc.)"
+                            >
+                              ✏️ Editar dados do cliente
+                            </button>
+                          )}
                         </div>
                       </div>
-                      <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
-                        <a
-                          href={INSTALLER_DOWNLOAD_URL}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="btn btn-primary"
-                          style={{
-                            fontSize: 14,
-                            padding: "0.5rem 0.9rem",
-                            fontWeight: 700,
-                            textDecoration: "none",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: "0.4rem",
-                            boxShadow: "0 3px 10px rgba(59,130,246,0.3)",
-                            background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
-                            border: "1px solid rgba(59,130,246,0.5)",
-                          }}
-                          title="Baixa o instalador do agente Windows para enviar para o cliente"
-                        >
-                          ⬇️ <span>Baixar Instalador</span>
-                        </a>
-                        <button
-                          type="button"
-                          className="btn btn-primary"
-                          style={{
-                            fontSize: 14,
-                            padding: "0.5rem 0.9rem",
-                            fontWeight: 700,
-                            boxShadow: "0 3px 10px rgba(16,185,129,0.25)",
-                          }}
-                          onClick={() => copyText(clienteModal.client_code!)}
-                        >
-                          📋 Copiar Código
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          style={{ fontSize: 12, padding: "0.35rem 0.75rem" }}
-                          onClick={() => { handleFecharModalCliente(); openPairing(clienteModal); }}
-                        >
-                          🔗 Gerar Pareamento (instalar agente)
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          style={{ fontSize: 12, padding: "0.35rem 0.75rem" }}
-                          onClick={() => copyText(buildPairingMessage(clienteModal))}
-                        >
-                          📩 Copiar mensagem
-                        </button>
+
+                      {/* ========== CARD 2: DADOS CADASTRITAIS (CNPJ) ========== */}
+                      <div style={{
+                        background: "var(--surface)",
+                        border: "1px solid var(--border)",
+                        borderRadius: 12,
+                        padding: "0.9rem 1rem",
+                        minWidth: 240,
+                        boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
+                      }}>
+                        <div style={{ fontSize: 11.5, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 6 }}>
+                          🏢 Dados Cadastrais
+                        </div>
+                        {clienteModal.cnpj ? (
+                          <div
+                            onClick={() => copyText(String(clienteModal.cnpj || ""))}
+                            title="Clique para copiar CNPJ"
+                            style={{
+                              display: "inline-flex", alignItems: "center", gap: 8,
+                              fontFamily: "'JetBrains Mono', 'Courier New', ui-monospace, monospace",
+                              fontSize: 18, fontWeight: 800, color: "var(--primary)",
+                              padding: "0.3rem 0.55rem", marginLeft: "-0.55rem",
+                              borderRadius: 8, cursor: "pointer",
+                              transition: "background .15s",
+                              userSelect: "all",
+                            }}
+                            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--surface-hover)"; }}
+                            onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
+                          >
+                            {formatCNPJ(clienteModal.cnpj)}
+                            <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500, fontFamily: "ui-sans-serif, system-ui" }}>📋 copiar</span>
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: 13.5, color: "var(--text-muted)", padding: "0.25rem 0" }}>
+                            🚫 CNPJ não cadastrado
+                          </div>
+                        )}
+                        <div style={{ marginTop: 8, fontSize: 12.5, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 6 }}>
+                          <span>📄 Tipo:</span>
+                          <strong style={{ color: "var(--text)" }}>
+                            {clienteModal.cnpj && _onlyDigits(clienteModal.cnpj).length === 14 ? "Pessoa Jurídica (CNPJ)" : clienteModal.cnpj && _onlyDigits(clienteModal.cnpj).length === 11 ? "Pessoa Física (CPF)" : "Não informado"}
+                          </strong>
+                        </div>
+                      </div>
+
+                      {/* ========== CARD 3: CONTATO PRINCIPAL ========== */}
+                      <div style={{
+                        background: "var(--surface)",
+                        border: "1px solid var(--border)",
+                        borderRadius: 12,
+                        padding: "0.9rem 1rem",
+                        minWidth: 260,
+                        boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
+                      }}>
+                        <div style={{ fontSize: 11.5, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 6 }}>
+                          👤 Contato Principal
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 5.5, minWidth: 0 }}>
+                          {clienteModal.contact_name && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
+                              <span style={{ fontSize: 14.5 }}>👤</span>
+                              <strong style={{ color: "var(--text)", minWidth: 0, whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>
+                                {clienteModal.contact_name}
+                              </strong>
+                            </div>
+                          )}
+                          {clienteModal.contact_phone && (
+                            <a
+                              href={`tel:${_onlyDigits(clienteModal.contact_phone)}`}
+                              title="Clique para ligar para o contato do cliente"
+                              style={{
+                                display: "inline-flex", alignItems: "center", gap: 8,
+                                fontSize: 15, color: "var(--primary)", textDecoration: "none",
+                                fontWeight: 600,
+                                padding: "0.1rem 0.35rem", margin: "-0.1rem -0.35rem",
+                                borderRadius: 6, transition: "background .15s",
+                                minWidth: 0, width: "fit-content",
+                              }}
+                              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "var(--surface-hover)"; }}
+                              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "transparent"; }}
+                            >
+                              <span style={{ fontSize: 14.5 }}>📞</span>
+                              {formatPhone(clienteModal.contact_phone)}
+                            </a>
+                          )}
+                          {clienteModal.contact_email && (
+                            <a
+                              href={`mailto:${clienteModal.contact_email.trim()}`}
+                              title="Clique para enviar e-mail para o contato do cliente"
+                              style={{
+                                display: "inline-flex", alignItems: "center", gap: 8,
+                                fontSize: 13.5, color: "var(--text-muted)",
+                                textDecoration: "none", fontWeight: 500,
+                                padding: "0.1rem 0.35rem", margin: "-0.1rem -0.35rem",
+                                borderRadius: 6, transition: "background .15s",
+                                minWidth: 0, width: "fit-content",
+                                wordBreak: "break-all",
+                              }}
+                              onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "var(--surface-hover)"; (e.currentTarget as HTMLAnchorElement).style.color = "var(--text)"; }}
+                              onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.background = "transparent"; (e.currentTarget as HTMLAnchorElement).style.color = "var(--text-muted)"; }}
+                            >
+                              <span style={{ fontSize: 14.5 }}>✉️</span>
+                              <span style={{
+                                textDecoration: "underline", textDecorationStyle: "dotted",
+                                textUnderlineOffset: 2, whiteSpace: "nowrap",
+                                textOverflow: "ellipsis", overflow: "hidden", maxWidth: 360,
+                              }}>
+                                {clienteModal.contact_email.trim()}
+                              </span>
+                            </a>
+                          )}
+                          {!clienteModal.contact_name && !clienteModal.contact_phone && !clienteModal.contact_email && (
+                            <div style={{ fontSize: 13, color: "var(--text-muted)", padding: "0.25rem 0" }}>
+                              🚫 Nenhum contato cadastrado
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  )}
+                  </div>
+
+                  {/* Botões de ação do canto superior direito (Atualizar / Fechar) */}
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexShrink: 0 }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ fontSize: 12.5, padding: "0.3rem 0.7rem" }}
+                      onClick={() => handleAbrirModalCliente(clienteModal.id)}
+                      disabled={loadingClienteModal}
+                    >
+                      {loadingClienteModal ? "Carregando…" : "🔄 Atualizar"}
+                    </button>
+                    <button className="btn btn-ghost" onClick={handleFecharModalCliente} title="Fechar" aria-label="Fechar janela de cliente">
+                      ✕
+                    </button>
+                  </div>
                 </div>
-                <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "flex-end", gap: "0.5rem", flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    style={{ fontSize: 12, padding: "0.3rem 0.7rem" }}
-                    onClick={() => handleAbrirModalCliente(clienteModal.id)}
-                    disabled={loadingClienteModal}
+
+                {/* ===== CODIGO DO CLIENTE EVIDENTISSIMO (abaixo dos cards, Julio pediu AQUI!) ===== */}
+                {clienteModal.client_code && (
+                  <div
+                    style={{
+                      marginTop: "0.4rem",
+                      padding: "0.8rem 0.9rem",
+                      borderRadius: 12,
+                      background: "linear-gradient(135deg, rgba(16,185,129,0.12), rgba(16,185,129,0.05))",
+                      border: "1.5px solid rgba(16,185,129,0.35)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "0.75rem",
+                      flexWrap: "wrap",
+                    }}
                   >
-                    {loadingClienteModal ? "Carregando…" : "🔄 Atualizar"}
-                  </button>
-                  <button className="btn btn-ghost" onClick={handleFecharModalCliente} title="Fechar">✕</button>
-                </div>
+                    <div>
+                      <div style={{ fontSize: "0.75rem", color: "rgb(16,185,129)", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 3 }}>
+                        🎫 Código do Cliente (usar para parear o agente!)
+                      </div>
+                      <div
+                        style={{
+                          fontFamily: "'Courier New', ui-monospace, monospace",
+                          fontWeight: 900,
+                          fontSize: "1.4rem",
+                          color: "rgb(5,150,105)",
+                          letterSpacing: 2.5,
+                          padding: "0.15rem 0.25rem",
+                          display: "inline-block",
+                        }}
+                      >
+                        {clienteModal.client_code}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                      <a
+                        href={INSTALLER_DOWNLOAD_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn btn-primary"
+                        style={{
+                          fontSize: 14,
+                          padding: "0.5rem 0.9rem",
+                          fontWeight: 700,
+                          textDecoration: "none",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "0.4rem",
+                          boxShadow: "0 3px 10px rgba(59,130,246,0.3)",
+                          background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                          border: "1px solid rgba(59,130,246,0.5)",
+                        }}
+                        title="Baixa o instalador do agente Windows para enviar para o cliente"
+                      >
+                        ⬇️ <span>Baixar Instalador</span>
+                      </a>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        style={{
+                          fontSize: 14,
+                          padding: "0.5rem 0.9rem",
+                          fontWeight: 700,
+                          boxShadow: "0 3px 10px rgba(16,185,129,0.25)",
+                        }}
+                        onClick={() => copyText(clienteModal.client_code!)}
+                      >
+                        📋 Copiar Código
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ fontSize: 12, padding: "0.35rem 0.75rem" }}
+                        onClick={() => { handleFecharModalCliente(); openPairing(clienteModal); }}
+                      >
+                        🔗 Gerar Pareamento (instalar agente)
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ fontSize: 12, padding: "0.35rem 0.75rem" }}
+                        onClick={() => copyText(buildPairingMessage(clienteModal))}
+                      >
+                        📩 Copiar mensagem
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* ===== CORPO: TABELA IMPRESSORAS (Sem titulo, Julio pediu para apagar!) ===== */}
