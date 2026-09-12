@@ -671,7 +671,7 @@ export default function Clientes() {
             <thead>
               <tr>
                 <th>Cliente</th>
-                <th style={{ width: 200 }}>CNPJ</th>
+                <th style={{ width: 240 }}>CNPJ</th>
                 <th style={{ minWidth: 260 }}>Contato</th>
                 <th style={{ width: 96, textAlign: "center" }}>Status</th>
                 <th style={{ width: 260, textAlign: "right" }}>Ações</th>
@@ -725,8 +725,8 @@ export default function Clientes() {
                         </button>
                       </div>
                     </td>
-                    <td>
-                      <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "0.25rem 0.55rem", borderRadius: 8, background: c.cnpj ? "rgba(16,185,129,0.08)" : "transparent", border: c.cnpj ? "1px solid rgba(16,185,129,0.2)" : "1px solid transparent", color: c.cnpj ? "var(--text)" : "var(--text-muted)", fontSize: 14, fontFamily: c.cnpj ? "'JetBrains Mono', 'Courier New', ui-monospace, monospace" : "inherit", letterSpacing: c.cnpj ? 0.4 : 0 }}>
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "0.3rem 0.65rem", borderRadius: 8, background: c.cnpj ? "rgba(16,185,129,0.08)" : "transparent", border: c.cnpj ? "1px solid rgba(16,185,129,0.2)" : "1px solid transparent", color: c.cnpj ? "var(--text)" : "var(--text-muted)", fontSize: 14, fontFamily: c.cnpj ? "'JetBrains Mono', 'Courier New', ui-monospace, monospace" : "inherit", letterSpacing: c.cnpj ? 0.3 : 0, whiteSpace: "nowrap" }}>
                         {c.cnpj ? <><strong>{formatCNPJ(c.cnpj)}</strong></> : <>—</>}
                       </div>
                     </td>
