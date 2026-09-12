@@ -30,9 +30,6 @@ agent/__pycache__/
 agent/*.egg-info/
 agent/windows/*.exe
 agent/windows/Output/
-# Pasta deps PyInstaller --target (nao commitar!)
-agent/.pydeps/
-.vercel/agent/.pydeps/
 # (Se quiser disponibilizar .exe no GitHub Release, é melhor do que commitá-los)
 
 # NÃO subir arquivos temporarios agente de teste
