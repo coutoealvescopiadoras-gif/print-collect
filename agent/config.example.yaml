@@ -7,8 +7,8 @@ server_url: "https://print-collect.onrender.com"
 # Token do agente — crie em: Painel > Agentes > Novo agente
 agent_token: "agent-dev-key"
 
-# Versão (informativo) — v6.9.2: CORRIGE contadores coloridos EPSON L3250 e outras coloridas sem split de páginas por cor
-agent_version: "6.9.2"
+# Versão (informativo) — v6.9.4: FIX CANON G3111 WIFI (limpa porta _N + SNMP quick read 1.5s + pages_color real!)
+agent_version: "6.9.4"
 
 # Intervalo entre coletas automáticas (minutos)
 # 30 minutos = atualiza contadores de 30 em 30 min

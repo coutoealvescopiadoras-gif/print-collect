@@ -5,8 +5,8 @@ server_url: "https://print-collect.onrender.com"
 # Token de agente - sera substituido pelo Wizard de Pareamento
 agent_token: "agent-dev-key"
 
-# Versao do agente (v6.9.2 = CORRIGE contadores coloridos EPSON L3250 e outras coloridas sem roles SNMP)
-agent_version: "6.9.2"
+# Versao do agente (v6.9.4 = FIX CANON G3111 WIFI (porta _N + SNMP quick read! + pages_color real + desinstalacao forcada bat corrigido))
+agent_version: "6.9.4"
 
 # Intervalo de coleta em minutos (30 min = padrao do cliente Julio)
 interval_minutes: 30

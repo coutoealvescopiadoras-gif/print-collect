@@ -26,6 +26,79 @@ from print_collect.snmp import PrinterData
 
 logger = logging.getLogger("print-collect-agent")
 
+# ================================================================
+# FIX v6.9.4 (CANON G3111 WIFI: porta _1 nao limpava e nao fazia snmp!)
+# ================================================================
+# 1) Extrair IP/host LIMPO de qualquer porta TCP/IP instalada no Windows
+#    Formas conhecidas de porta de REDE:
+#      - 192.168.15.50          -> 192.168.15.50
+#      - 192.168.15.50_1        -> 192.168.15.50  (Canon G WiFi suf. N!)
+#      - IP_192.168.15.50       -> 192.168.15.50
+#      - IP_192.168.15.50_3     -> 192.168.15.50
+#      - 10.0.0.2               -> 10.0.0.2
+#      - 172.16.0.5_1           -> 172.16.0.5
+#      - ipp://192.168.15.50:631/ipp/print -> 192.168.15.50
+#      - http://print.local:631 -> print.local
+# ================================================================
+_IPV4_N_SUFFIX = re.compile(r"^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?:_\d+)?$")
+
+def _extract_host_from_port(port: str) -> Optional[str]:
+    """Tenta extrair hostname/ipv4 LIMPO de nome de porta de impressora Windows.
+    Retorna None se for porta USB/LPT/Fisico compartilhado (nao tem host).
+    """
+    if not port:
+        return None
+    p = port.strip()
+    if not p:
+        return None
+
+    # 1) Descarta imediatamente USB/LPT/DOT4/COM (fisico!)
+    up = p.upper()
+    if up.startswith(("USB", "DOT4", "LPT", "COM")):
+        return None
+    # Descarta compartilhada Windows
+    if p.startswith("\\\\"):
+        return None
+
+    # 2) IPP/HTTP -> extrai host da URL
+    low = p.lower()
+    if low.startswith(("ipp://", "ipps://", "http://", "https://", "wsd://")):
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(p)
+            return parsed.hostname or None
+        except Exception:
+            return None
+
+    # 3) Prefixo IP_: remove
+    if up.startswith("IP_"):
+        p = p[3:]
+
+    # 4) IPv4 puro ou com _N no final? (Canon WiFi _1/_2!)
+    m = _IPV4_N_SUFFIX.match(p.strip())
+    if m:
+        return m.group(1)
+
+    # 5) Nao parece rede
+    return None
+
+
+def _snmp_quick_read(host: str, community: str = "public", timeout_sec: float = 1.5) -> Optional[PrinterData]:
+    """Tenta UMA coleta SNMP RAPIDA (timeout curto 1.5s, 1 retentativa!)
+    em uma impressora que sabemos o IP (extraido da porta TCP/IP).
+    **NAO TRAVA o loop principal de coleta USB!**
+    Retorna PrinterData (com pages_color REAL!) se sucesso.
+    Retorna None se falhar (o resto do loop continua com registro spooler normal!)
+    """
+    try:
+        from print_collect.snmp import collect_printer
+        timeout_ms = int(timeout_sec * 1000)
+        return collect_printer(host, community=community, timeout=timeout_ms)
+    except Exception as exc:
+        logger.debug("  USB->SNMP quick read falhou host=%s: %s (type=%s)",
+                     host, exc, type(exc).__name__)
+        return None
+
 # Impressoras VIRTUAIS do Windows - NAO COLETAMOS nada delas
 VIRTUAL_KEYWORDS = (
     "microsoft print to pdf",
@@ -703,17 +776,82 @@ try {
                 except Exception:
                     pass
 
-            slug_base = _slugify(model + " " + (serial or name))
-            slug = slug_base
-            i = 2
-            while slug in seen_slugs:
-                slug = f"{slug_base}_{i}"
-                i += 1
-            seen_slugs.add(slug)
-            ip_virtual = f"USB:{slug}"
+            # ================================================================
+            # FIX v6.9.4 CANON WIFI: TENTAR SNMP QUICK READ na porta de REDE!
+            # Se a impressora for TCP/IP instalada manualmente (Canon WiFi etc),
+            # extrai IP LIMPO da porta (remove IP_ prefixo + _N sufixo!) e tenta
+            # SNMP de 1.5s. Se responder, usa CONTADORES REAIS DA IMPRESSORA e
+            # seta ip_address com IP REAL para deduplicação não duplicar!
+            # ================================================================
+            host_from_port = _extract_host_from_port(port)
+            snmp_ok = False
+            toner_black_final: Optional[float] = None
+            toner_cyan_final: Optional[float] = None
+            toner_magenta_final: Optional[float] = None
+            toner_yellow_final: Optional[float] = None
+            alerts_final: list[str] = []
 
-            bw = int(pages_total or 0)
-            color = 0
+            if host_from_port:
+                logger.debug("  USB->SNMP: porta=%s extraiu host=%s → tentando quick read 1.5s...",
+                             port, host_from_port)
+                rd = _snmp_quick_read(host_from_port)
+                if rd is not None and (rd.pages_total > 0 or rd.model or rd.pages_color > 0):
+                    # ================= SNMP DEU CERTO! USA DADOS REAIS! =================
+                    snmp_ok = True
+                    logger.info("  USB->SNMP OK! host=%s model=%s pag_total=%s pag_color=%s [usar estes contadores OFICIAIS!]",
+                                host_from_port, rd.model or "(null)", rd.pages_total, rd.pages_color)
+                    # Sobrescreve campos que vieram do SNMP pois são MELHORES!
+                    if rd.pages_total >= int(pages_total or 0):
+                        pages_total = int(rd.pages_total)
+                    if rd.pages_bw is not None:
+                        pages_bw_snmp = int(rd.pages_bw)
+                    else:
+                        pages_bw_snmp = 0
+                    pages_color_snmp = int(rd.pages_color)
+                    # Se paginas SNMP forem >0, confia em bw/color do SNMP 100%!
+                    if rd.pages_total > 0 or pages_color_snmp > 0 or pages_bw_snmp > 0:
+                        pages_bw_final = pages_bw_snmp
+                        pages_color_final = pages_color_snmp
+                        pages_total_final = int(rd.pages_total)
+                    else:
+                        pages_bw_final = int(pages_total or 0)
+                        pages_color_final = 0
+                        pages_total_final = int(pages_total or 0)
+                    if rd.model:
+                        model = str(rd.model)
+                    if rd.manufacturer:
+                        manufacturer = str(rd.manufacturer)
+                    if rd.serial_number and len(str(rd.serial_number)) >= 4:
+                        serial = str(rd.serial_number)
+                        reg_serial_used = False
+                    if rd.toner_black is not None:   toner_black_final   = rd.toner_black
+                    if rd.toner_cyan is not None:    toner_cyan_final    = rd.toner_cyan
+                    if rd.toner_magenta is not None: toner_magenta_final = rd.toner_magenta
+                    if rd.toner_yellow is not None:  toner_yellow_final  = rd.toner_yellow
+                    if rd.alerts:                    alerts_final        = list(rd.alerts)
+                    # IP REAL! (para deduplicação com coleta SNMP broadcast funcionar!)
+                    final_ip_address = host_from_port
+                else:
+                    pages_bw_final = int(pages_total or 0)
+                    pages_color_final = 0
+                    pages_total_final = int(pages_total or 0)
+                    final_ip_address = None  # vai cair no USB:slug abaixo
+            else:
+                pages_bw_final = int(pages_total or 0)
+                pages_color_final = 0
+                pages_total_final = int(pages_total or 0)
+                final_ip_address = None
+
+            # ------------------ Se nao temos IP real (USB/SNMP falhou) -> fallback slug
+            if final_ip_address is None:
+                slug_base = _slugify(model + " " + (serial or name))
+                slug = slug_base
+                i = 2
+                while slug in seen_slugs:
+                    slug = f"{slug_base}_{i}"
+                    i += 1
+                seen_slugs.add(slug)
+                final_ip_address = f"USB:{slug}"
 
             status_lc = status.lower()
             online = not any(k in status_lc for k in ("error", "offline", "unavailable", "paused"))
@@ -724,20 +862,20 @@ try {
                 status_str = status_str[:48]
 
             printer = PrinterData(
-                ip_address=ip_virtual,
+                ip_address=final_ip_address,
                 mac_address=None,
                 model=model,
                 manufacturer=manufacturer or None,
                 serial_number=serial,
                 status=status_str,
-                pages_total=bw + color,
-                pages_bw=bw,
-                pages_color=color,
-                toner_black=None,
-                toner_cyan=None,
-                toner_magenta=None,
-                toner_yellow=None,
-                alerts=[],
+                pages_total=max(0, pages_total_final),
+                pages_bw=max(0, pages_bw_final),
+                pages_color=max(0, pages_color_final),
+                toner_black=toner_black_final,
+                toner_cyan=toner_cyan_final,
+                toner_magenta=toner_magenta_final,
+                toner_yellow=toner_yellow_final,
+                alerts=alerts_final,
             )
             pages_src_parts = []
             if reg_pages_used: pages_src_parts.append("REG_CUMULATIVO")
@@ -746,13 +884,15 @@ try {
             if int(pages_total or 0) == 0:
                 pages_src_parts.append("ZERO (ou driver nao expoe contador cumulativo ou nenhuma pagina impressa ainda)")
             pages_src_info = " | ".join(pages_src_parts)
+            if snmp_ok:
+                pages_src_info = "SNMP_QUICK_READ (REDE TCP/IP!) | " + pages_src_info
             if all_reg_candidates:
                 pages_src_info += (" [candidatos_reg: " + ",".join(str(x) for x in all_reg_candidates[:8]) + "]")
             serial_src = "REG" if reg_serial_used else ("PORT/NM" if serial else "NAO_LIDO")
 
             results.append(printer)
             logger.info("  USB OK [%s] %s | port=%s | pag=%s [%s] | serial=%s [%s] | local=%s | state=%s",
-                        ip_virtual, model, port or "?", pages_total, pages_src_info,
+                        final_ip_address, model, port or "?", pages_total_final, pages_src_info,
                         serial or "(nao lido)", serial_src,
                         local_flag or "?", printer_state or "")
         except Exception as ex:
