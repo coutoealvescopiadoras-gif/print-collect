@@ -720,11 +720,6 @@ export default function Clientes() {
                             </div>
                             <div>
                               <div style={{ fontSize: "1rem" }}><strong>{c.name}</strong></div>
-                              {c.partner_name && (
-                                <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 2 }}>
-                                  🤝 Parceiro: <strong>{c.partner_name}</strong>
-                                </div>
-                              )}
                             </div>
                           </div>
                         </button>
@@ -732,7 +727,7 @@ export default function Clientes() {
                     </td>
                     <td>
                       <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "0.25rem 0.55rem", borderRadius: 8, background: c.cnpj ? "rgba(16,185,129,0.08)" : "transparent", border: c.cnpj ? "1px solid rgba(16,185,129,0.2)" : "1px solid transparent", color: c.cnpj ? "var(--text)" : "var(--text-muted)", fontSize: 14, fontFamily: c.cnpj ? "'JetBrains Mono', 'Courier New', ui-monospace, monospace" : "inherit", letterSpacing: c.cnpj ? 0.4 : 0 }}>
-                        {c.cnpj ? <>🏢 <strong>{formatCNPJ(c.cnpj)}</strong></> : <>🏢 —</>}
+                        {c.cnpj ? <><strong>{formatCNPJ(c.cnpj)}</strong></> : <>—</>}
                       </div>
                     </td>
                     <td>
