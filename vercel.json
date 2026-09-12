@@ -1,17 +1,19 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
-  "installCommand": "cd web && npm install && cd .. && python -m pip install -r requirements.txt",
+  "installCommand": "cd web && npm install --include=dev && cd .. && python -m pip install --break-system-packages -r requirements.txt",
   "buildCommand": "cd web && npm run build",
   "outputDirectory": "web/dist",
   "functions": {
     "api/index.py": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "includeFiles": "server/**"
     }
   },
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api/index" },
     { "source": "/health", "destination": "/api/index" },
+    { "source": "/health-db", "destination": "/api/index" },
     { "source": "/debug-init", "destination": "/api/index" },
     { "source": "/docs", "destination": "/api/index" },
     { "source": "/openapi.json", "destination": "/api/index" },
