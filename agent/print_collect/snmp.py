@@ -79,7 +79,8 @@ def _snmp_get(ip: str, oid: str, community: str, timeout: int) -> Optional[str]:
 
         async def fetch():
             try:
-                transport = await UdpTransportTarget.create((ip, 161), timeout=timeout, retries=1)
+                # v6.9.5: retries=3 (antes era 1!) para rede WiFi instavel cliente
+                transport = await UdpTransportTarget.create((ip, 161), timeout=timeout, retries=3)
                 error_indication, error_status, _, var_binds = await get_cmd(
                     SnmpEngine(),
                     CommunityData(community),
@@ -121,7 +122,8 @@ def _snmp_walk_table(ip: str, base_oid: str, community: str, timeout: int) -> di
 
         async def walk():
             try:
-                transport = await UdpTransportTarget.create((ip, 161), timeout=timeout, retries=1)
+                # v6.9.5: retries=3 (antes era 1!) para WiFi instavel do cliente
+                transport = await UdpTransportTarget.create((ip, 161), timeout=timeout, retries=3)
                 initial_var_bind = ObjectType(ObjectIdentity(base_oid))
                 var_binds = initial_var_bind
                 while True:
@@ -301,7 +303,8 @@ def _snmp_walk_table_raw_strings(ip: str, base_oid: str, community: str, timeout
 
         async def walk():
             try:
-                transport = await UdpTransportTarget.create((ip, 161), timeout=timeout, retries=1)
+                # v6.9.5: retries=3 (antes era 1!) para WiFi instavel do cliente
+                transport = await UdpTransportTarget.create((ip, 161), timeout=timeout, retries=3)
                 initial_var_bind = ObjectType(ObjectIdentity(base_oid))
                 var_binds = initial_var_bind
                 while True:
@@ -544,7 +547,7 @@ def discover_local_subnets() -> list[str]:
 # Coleta real de 1 IP de impressora (SNMP completo)
 # ---------------------------------------------------------------------------
 
-def collect_printer(ip: str, community: str = "public", timeout: int = 2) -> Optional[PrinterData]:
+def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Optional[PrinterData]:
     sys_descr = _snmp_get(ip, OID_SYS_DESCR, community, timeout)
     if not sys_descr:
         return None

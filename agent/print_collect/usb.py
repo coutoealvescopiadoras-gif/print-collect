@@ -83,21 +83,42 @@ def _extract_host_from_port(port: str) -> Optional[str]:
     return None
 
 
-def _snmp_quick_read(host: str, community: str = "public", timeout_sec: float = 1.5) -> Optional[PrinterData]:
-    """Tenta UMA coleta SNMP RAPIDA (timeout curto 1.5s, 1 retentativa!)
-    em uma impressora que sabemos o IP (extraido da porta TCP/IP).
-    **NAO TRAVA o loop principal de coleta USB!**
-    Retorna PrinterData (com pages_color REAL!) se sucesso.
-    Retorna None se falhar (o resto do loop continua com registro spooler normal!)
-    """
+def _snmp_quick_read(host: str, community: str = "public", timeout_sec: float = 4.0) -> Optional[PrinterData]:
+    """Tenta coleta SNMP em impressora de REDE (v6.9.5 MELHORADO!).
+    MELHORIAS vs 1.5s antigo:
+      * Timeout 4s (nao 1.5s!) — rede WiFi lenta de cliente tem tempo de responder.
+      * Primeiro tenta community 'public' (padrão), se falhar tenta 'private' (fallback!).
+      * Chama collect_printer() 2x se necessário para aumentar chance.
+    **NAO TRAVA o loop principal. Se falhar → fallback spooler normal!
+    Retorna PrinterData (com pages_color REAL!) se sucesso, None se falhar."""
     try:
         from print_collect.snmp import collect_printer
-        timeout_ms = int(timeout_sec * 1000)
-        return collect_printer(host, community=community, timeout=timeout_ms)
     except Exception as exc:
-        logger.debug("  USB->SNMP quick read falhou host=%s: %s (type=%s)",
-                     host, exc, type(exc).__name__)
+        logger.debug("  USB->SNMP quick read import falhou host=%s: %s", host, exc)
         return None
+
+    timeout_ms = int(timeout_sec * 1000)
+    communities = [community]
+    if community.lower() != "private":
+        communities.append("private")
+
+    last_exc = None
+    for c in communities:
+        for attempt in (1, 2):
+            try:
+                rd = collect_printer(host, community=c, timeout=timeout_ms)
+                if rd is not None and (rd.pages_total > 0 or rd.pages_color > 0 or rd.model):
+                    if c != community:
+                        logger.info("  USB->SNMP quick_read OK na community alternativa '%s' (host=%s, tentativa %d)",
+                                    c, host, attempt)
+                    return rd
+            except Exception as exc:
+                last_exc = exc
+                import time as _t
+                _t.sleep(0.25)
+    logger.debug("  USB->SNMP quick read falhou host=%s communities=%s attempts=2. Ultimo erro: %s (type=%s)",
+                 host, communities, last_exc, type(last_exc).__name__ if last_exc else "None")
+    return None
 
 # Impressoras VIRTUAIS do Windows - NAO COLETAMOS nada delas
 VIRTUAL_KEYWORDS = (
@@ -343,46 +364,200 @@ def _extract_all_plausible_page_counts(reg_dict: dict[str, Any]) -> list[int]:
     return sorted(found, reverse=True)
 
 
-def _run_ps(cmd: str) -> str:
-    """Executa comando PowerShell retornando stdout como UTF-8 seguro.
-    Importante: chcp 65001 ANTES para garantir que acentos (Epson EcoTank Série etc)
-    sejam retornados em UTF-8, evitando erros de JSON parse.
+def _run_ps(cmd: str, timeout_sec: int = 90) -> str:
+    """Executa comando PowerShell retornando stdout como UTF-8 seguro (v6.9.5).
+    MELHORAS:
+      * Timeout reduzido 90s (nao 120s!)
+      * Loga stderr SEMPRE em WARNING (nao so DEBUG!) para diagnosticar
+        por que a coleta USB esta retornando vazio.
+      * Retry 2x se primeira chamada der vazio (PowerShell as vezes falha silenciosamente).
+      * Força [System.Text.Encoding]::UTF8 em TUDO (Input + Output) + chcp 65001.
+      * Usa -MTA para evitar STA deadlock.
     """
-    try:
-        # cmd = comando PowerShell a rodar. Precisamos rodar PS com MTA (padrão) +
-        # força UTF8 no PowerShell, antes de rodar qualquer coisa:
-        wrapped = f"""
+    last_err = ""
+    for attempt in (1, 2):
+        try:
+            wrapped = f"""
+[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding           = [System.Text.Encoding]::UTF8
+$PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
+$ErrorActionPreference    = 'Continue'
 chcp 65001 > $null
 {cmd}
 """
-        proc = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-NonInteractive",
-             "-ExecutionPolicy", "Bypass", "-Command", wrapped],
-            capture_output=True,
-            timeout=120,
-        )
-        out_bytes = proc.stdout or b""
-        err_bytes = proc.stderr or b""
-        # Tenta UTF8 estrito, se falhar usa latin1 (CP1252 fallback, nunca levanta exceção)
-        try:
-            text = out_bytes.decode("utf-8", errors="replace")
-        except Exception:
-            text = out_bytes.decode("latin-1", errors="replace")
-        # Se veio stderr não-vazio (e stdout vazio), loga como debug (não quebra nada):
-        if err_bytes and not out_bytes:
+            proc = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-MTA",
+                 "-ExecutionPolicy", "Bypass", "-Command", wrapped],
+                capture_output=True,
+                timeout=timeout_sec,
+            )
+            out_bytes = proc.stdout or b""
+            err_bytes = proc.stderr or b""
             try:
-                logger.debug("USB/powershell stderr: %s", err_bytes.decode("utf-8", errors="replace")[:800])
+                text = out_bytes.decode("utf-8", errors="replace")
             except Exception:
-                pass
-        return text
-    except subprocess.TimeoutExpired as exc:
-        logger.warning("USB/PowerShell demorou mais de 120s (timeout): %s", exc)
-        return ""
+                text = out_bytes.decode("latin-1", errors="replace")
+            # v6.9.5: LOGA stderr SEMPRE (mesmo se stdout vazio!) para diagnostico
+            if err_bytes:
+                try:
+                    err_txt = err_bytes.decode("utf-8", errors="replace").strip()
+                except Exception:
+                    err_txt = err_bytes.decode("latin-1", errors="replace").strip()
+                if err_txt:
+                    last_err = err_txt
+                    if not text.strip():
+                        logger.warning("USB/powershell attempt=%d STDERR (stdout vazio!): %.1200s",
+                                       attempt, err_txt[:1200])
+                    else:
+                        logger.debug("USB/powershell attempt=%d stderr: %.800s", attempt, err_txt[:800])
+            if text.strip():
+                return text
+            # Stdout vazio -> tenta novamente (retry)
+            logger.warning("USB/powershell attempt=%d retornou ZERO bytes de stdout. Vamos tentar novamente (retry=%d)...",
+                           attempt, 2 if attempt == 1 else 0)
+            if attempt == 1:
+                import time as _time
+                _time.sleep(1.2)
+        except subprocess.TimeoutExpired as exc:
+            logger.warning("USB/PowerShell attempt=%d timeout %ds: %s", attempt, timeout_sec, exc)
+            last_err = f"TimeoutExpired {timeout_sec}s"
+            if attempt == 1:
+                import time as _time
+                _time.sleep(0.8)
+        except Exception as exc:
+            logger.warning("USB/powershell attempt=%d erro geral: %s (type=%s)", attempt, exc, type(exc).__name__)
+            last_err = f"{type(exc).__name__}: {exc}"
+            if attempt == 1:
+                import time as _time
+                _time.sleep(0.8)
+
+    # Se chegamos aqui, as 2 tentativas falharam -> tenta FALLBACK WMIC (ultima chance!)
+    logger.warning("USB/powershell 2 tentativas falharam (ultimo erro: %.200s). TENTANDO FALLBACK WMIC.EXE (Get-WMIObject legacy)...",
+                   last_err[:200])
+    try:
+        return _collect_windows_wmic_fallback()
     except Exception as exc:
-        logger.warning("USB/powershell erro geral: %s (type=%s)", exc, type(exc).__name__)
+        logger.warning("USB/powershell fallback WMIC tambem falhou: %s (type=%s). COLETA USB CANCELADA NESTE CICLO.",
+                       exc, type(exc).__name__)
         return ""
+
+
+def _collect_windows_wmic_fallback() -> str:
+    """FALLBACK ULTIMA CHANCE se PowerShell Get-CimInstance falhar.
+    Usa WMIC.EXE (legado, existe em TODO Windows desde XP) para pegar
+    Win32_Printer, Win32_PerfFormattedData_Spooler_PrintQueue, Drivers, Jobs.
+    Gera as mesmas linhas JSON_START_* que o PowerShell normal.
+    """
+    out_lines: list[str] = []
+    try:
+        import json as _json
+
+        # --- 1) Win32_Printer via WMIC ---
+        try:
+            proc = subprocess.run(
+                ["wmic.exe", "printer", "get", "/all", "/format:list"],
+                capture_output=True, timeout=30,
+            )
+            txt = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
+            if not txt:
+                txt = (proc.stdout or b"").decode("latin-1", errors="replace").strip()
+            arr = _wmic_list_to_dicts(txt)
+            filtered = []
+            for p in arr:
+                if not p:
+                    continue
+                filtered.append({
+                    "Name": p.get("Name") or p.get("Caption"),
+                    "DriverName": p.get("DriverName"),
+                    "Manufacturer": p.get("Manufacturer"),
+                    "PortName": p.get("PortName"),
+                    "DeviceID": p.get("DeviceID"),
+                    "Status": p.get("Status"),
+                    "ExtendedPrinterStatus": p.get("ExtendedPrinterStatus"),
+                    "Default": p.get("Default"),
+                    "WorkOffline": p.get("WorkOffline"),
+                    "PrinterState": p.get("PrinterState"),
+                    "PrinterStatus": p.get("PrinterStatus"),
+                    "Shared": p.get("Shared"),
+                    "Local": p.get("Local"),
+                })
+            out_lines.append("JSON_START_PRINTERS " + _json.dumps(filtered, separators=(",", ":"), ensure_ascii=False))
+        except Exception as exc:
+            logger.warning("FALLBACK WMIC printer falhou: %s", exc)
+            out_lines.append("JSON_START_PRINTERS []")
+
+        # --- 2) Print Queue via WMIC ---
+        try:
+            proc = subprocess.run(
+                ["wmic.exe", "path", "Win32_PerfFormattedData_Spooler_PrintQueue", "get", "/all", "/format:list"],
+                capture_output=True, timeout=30,
+            )
+            txt = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
+            if not txt:
+                txt = (proc.stdout or b"").decode("latin-1", errors="replace").strip()
+            arr = _wmic_list_to_dicts(txt)
+            filtered = []
+            for q in arr:
+                if not q:
+                    continue
+                try:
+                    tp = int(q.get("TotalPagesPrinted") or 0)
+                except Exception:
+                    tp = 0
+                try:
+                    tj = int(q.get("TotalJobsPrinted") or 0)
+                except Exception:
+                    tj = 0
+                try:
+                    js = int(q.get("JobsSpooling") or 0)
+                except Exception:
+                    js = 0
+                filtered.append({
+                    "Name": q.get("Name"),
+                    "TotalPagesPrinted": tp,
+                    "TotalJobsPrinted": tj,
+                    "JobsSpooling": js,
+                })
+            out_lines.append("JSON_START_QUEUES " + _json.dumps(filtered, separators=(",", ":"), ensure_ascii=False))
+        except Exception as exc:
+            logger.warning("FALLBACK WMIC printqueue falhou: %s", exc)
+            out_lines.append("JSON_START_QUEUES []")
+
+        # --- 3) Drivers, PnP, Registry, Jobs, Ports - fallback [] (melhor que nada!) ---
+        out_lines.append("JSON_START_DRIVERS []")
+        out_lines.append("JSON_START_PNP []")
+        out_lines.append("JSON_START_REGISTRY []")
+        out_lines.append("JSON_START_JOBS []")
+        out_lines.append("JSON_START_PORTS []")
+
+        return "\n".join(out_lines) + "\n"
+    except Exception as exc:
+        logger.warning("_collect_windows_wmic_fallback erro geral: %s", exc)
+        return ""
+
+
+def _wmic_list_to_dicts(txt: str) -> list[dict[str, Any]]:
+    """Converte saida wmic.exe ... /format:list (blocos chave=valor separados por linha em branco)
+    em uma lista de dicionarios Python."""
+    results: list[dict[str, Any]] = []
+    cur: dict[str, Any] = {}
+    if not txt:
+        return results
+    for raw_line in txt.splitlines():
+        line = raw_line.strip()
+        if not line:
+            if cur:
+                results.append(cur)
+                cur = {}
+            continue
+        if "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        cur[k.strip()] = v.strip()
+    if cur:
+        results.append(cur)
+    return results
 
 
 def _collect_windows() -> list[PrinterData]:

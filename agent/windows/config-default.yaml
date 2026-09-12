@@ -5,8 +5,8 @@ server_url: "https://print-collect.onrender.com"
 # Token de agente - sera substituido pelo Wizard de Pareamento
 agent_token: "agent-dev-key"
 
-# Versao do agente (v6.9.4 = FIX CANON G3111 WIFI (porta _N + SNMP quick read! + pages_color real + desinstalacao forcada bat corrigido))
-agent_version: "6.9.4"
+# Versao do agente (v6.9.5 = MELHORIAS CRITICAS: USB Powershell retornava vazio (agora retry 2x + fallback WMIC legacy!), SNMP timeout 2s→5s + retries 1→3, quick_read 1.5s→4s communities public+private, bat remover /SD /ST conflito pt-BR)
+agent_version: "6.9.5"
 
 # Intervalo de coleta em minutos (30 min = padrao do cliente Julio)
 interval_minutes: 30
@@ -17,6 +17,6 @@ interval_minutes: 30
 # Configuracoes SNMP (descoberta de impressoras)
 snmp:
   community: "public"
-  timeout: 2
+  timeout: 5
   subnets: []
   ips: []
