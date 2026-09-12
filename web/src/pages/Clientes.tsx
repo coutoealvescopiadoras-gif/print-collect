@@ -706,18 +706,6 @@ export default function Clientes() {
                           }}
                         >
                           <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-                            <div
-                              style={{
-                                width: 36, height: 36, borderRadius: 10,
-                                background: "linear-gradient(135deg, rgba(32,128,240,0.18), rgba(32,128,240,0.06))",
-                                border: "1px solid rgba(32,128,240,0.25)",
-                                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                                fontSize: 16, fontWeight: 800, color: "var(--primary)",
-                                letterSpacing: 0.3,
-                              }}
-                            >
-                              {(c.name || "  ").trim().charAt(0).toUpperCase()}
-                            </div>
                             <div>
                               <div style={{ fontSize: "1rem" }}><strong>{c.name}</strong></div>
                             </div>
@@ -1091,25 +1079,15 @@ Qualquer dúvida é só chamar a gente!`}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem", marginBottom: "1rem" }}>
                   <div style={{ minWidth: 0 }}>
                     {/* ===== (NOVO) CARDS SUPERIORES: Avatar + Dados + Contato ===== */}
-                    <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr) minmax(0, 1fr)", gap: "1rem", alignItems: "stretch", flexWrap: "wrap" }}>
-                      {/* ========== CARD 1: AVATAR + NOME DA EMPRESA ========== */}
-                      <div style={{ display: "flex", alignItems: "center", gap: "1rem", padding: "0.65rem 0", minWidth: 0 }}>
-                        <div style={{
-                          width: 74, height: 74, borderRadius: 16, flexShrink: 0,
-                          background: "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)",
-                          boxShadow: "0 4px 16px rgba(59,130,246,0.3)",
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          color: "white", fontSize: 30, fontWeight: 800, letterSpacing: 1,
-                          border: "2px solid rgba(255,255,255,0.18)",
-                        }}>
-                          {(clienteModal.name || "  ").trim().charAt(0).toUpperCase()}
-                        </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: "1rem", alignItems: "stretch", flexWrap: "wrap" }}>
+                      {/* ========== CARD 1: NOME DA EMPRESA + ID/PARCEIRO + EDITAR ========== */}
+                      <div style={{ padding: "0.65rem 0", minWidth: 0 }}>
                         <div style={{ minWidth: 0 }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                             <h2 style={{
                               margin: 0, fontSize: "1.5rem",
                               whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden",
-                              maxWidth: 420,
+                              maxWidth: 520,
                               lineHeight: 1.2,
                             }}>
                               {clienteModal.name}
