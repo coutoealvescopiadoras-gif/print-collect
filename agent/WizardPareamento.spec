@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['C:\\Users\\Julio\\Desktop\\print-collect\\agent\\WizardPareamento.py'],
+    ['WizardPareamento.py'],
     pathex=[],
     binaries=[],
     datas=[],

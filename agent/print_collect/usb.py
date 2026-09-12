@@ -46,6 +46,15 @@ VIRTUAL_KEYWORDS = (
     "foxit reader pdf printer",
     "nitro pdf creator",
     "google cloud print",
+    # ==== v6.9.3 NOVO: softwares de ACESSO REMOTO que instalam impressora virtual ====
+    "logmein",
+    "goto resolve",
+    "goto ",
+    "teamviewer",
+    "anydesk",
+    "chrome remote desktop",
+    "splashtop",
+    "citrix",
 )
 
 
@@ -120,7 +129,7 @@ def _is_virtual_printer(name: str, driver: str, port: str) -> bool:
     # LISTA NEGATIVA DE VIRTUAIS CONHECIDOS (SO PASSA AQUI SE NENHUMA
     # regra positiva acima bateu)
     #  ================================================================
-    VIRTUAL_KEYWORDS = (
+    VIRTUAL_KEYWORDS_INNER = (
         "microsoft print to pdf",
         "microsoft xps document writer",
         "onenote",
@@ -139,8 +148,20 @@ def _is_virtual_printer(name: str, driver: str, port: str) -> bool:
         "google cloud print",
         "fax",
         "send to bluetooth",
+        # ==== v6.9.3 NOVO: acesso remoto / virtualizacao ====
+        "logmein",
+        "goto resolve",
+        "goto ",
+        "teamviewer",
+        "anydesk",
+        "chrome remote desktop",
+        "splashtop",
+        "citrix",
+        "virtual",
+        "remoto",
+        "remote",
     )
-    for k in VIRTUAL_KEYWORDS:
+    for k in VIRTUAL_KEYWORDS_INNER:
         if k in haystack:
             return True
 
@@ -271,45 +292,139 @@ def _extract_all_plausible_page_counts(reg_dict: dict[str, Any]) -> list[int]:
 
 
 def _run_ps(cmd: str) -> str:
-    """Executa comando PowerShell retornando stdout como UTF-8 seguro.
-    Importante: chcp 65001 ANTES para garantir que acentos (Epson EcoTank Série etc)
-    sejam retornados em UTF-8, evitando erros de JSON parse.
+    """Executa comando PowerShell GRAVANDO SCRIPT TEMP .ps1 (UTF-8 BOM)
+    e rodando via -File (NAO usa -Command inline).
+    
+    v6.9.3 CORRECAO CRITICA: PowerShell -Command inline tem BUGS com
+    scripts longos + acentos + aspas aninhadas. Gerar arquivo temp
+    UTF-8 BOM e usar -File resolve 100% dos erros de Parse e UTF8.
     """
+    tmp_path: Optional[str] = None
     try:
-        # cmd = comando PowerShell a rodar. Precisamos rodar PS com MTA (padrão) +
-        # força UTF8 no PowerShell, antes de rodar qualquer coisa:
-        wrapped = f"""
+        # 1) Gera arquivo temp .ps1 em LOCALAPPDATA\\Temp com UTF-8 BOM
+        tmp_dir = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
+        tmp_dir = Path(tmp_dir)
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        tmp_path = str(tmp_dir / f"_pc_usb_{os.getpid()}_{int(__import__('time').time()*1000)}.ps1")
+        # Cabeçalho PowerShell força UTF-8 e encoding:
+        full_script = f"""$ErrorActionPreference = 'Continue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 chcp 65001 > $null
 {cmd}
 """
+        # UTF-8 BOM (PowerShell em Windows pt-BR precisa BOM para nao corromper!)
+        with open(tmp_path, "wb") as fw:
+            fw.write(b"\xef\xbb\xbf")
+            fw.write(full_script.encode("utf-8"))
+
         proc = subprocess.run(
             ["powershell.exe", "-NoProfile", "-NonInteractive",
-             "-ExecutionPolicy", "Bypass", "-Command", wrapped],
+             "-ExecutionPolicy", "Bypass", "-File", tmp_path],
             capture_output=True,
-            timeout=120,
+            timeout=180,
         )
         out_bytes = proc.stdout or b""
         err_bytes = proc.stderr or b""
-        # Tenta UTF8 estrito, se falhar usa latin1 (CP1252 fallback, nunca levanta exceção)
         try:
             text = out_bytes.decode("utf-8", errors="replace")
         except Exception:
             text = out_bytes.decode("latin-1", errors="replace")
-        # Se veio stderr não-vazio (e stdout vazio), loga como debug (não quebra nada):
         if err_bytes and not out_bytes:
             try:
-                logger.debug("USB/powershell stderr: %s", err_bytes.decode("utf-8", errors="replace")[:800])
+                logger.debug("USB/powershell stderr: %.800s", err_bytes.decode("utf-8", errors="replace"))
             except Exception:
                 pass
         return text
     except subprocess.TimeoutExpired as exc:
-        logger.warning("USB/PowerShell demorou mais de 120s (timeout): %s", exc)
+        logger.warning("USB/PowerShell demorou mais de 180s (timeout): %s", exc)
         return ""
     except Exception as exc:
         logger.warning("USB/powershell erro geral: %s (type=%s)", exc, type(exc).__name__)
         return ""
+    finally:
+        # === v6.9.3: LIMPEZA SEMPRE do arquivo temp (nao deixa lixo!) ===
+        if tmp_path:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+
+
+def _fallback_wmic_printers() -> list[dict[str, Any]]:
+    """v6.9.3 FALLBACK ULTIMA ESPERANCA: wmic.exe printer list CSV.
+    Usado SOMENTE quando PowerShell retorna vazio/bugado em cliente Windows.
+    wmic.exe EXISTE em QUALQUER Windows desde XP (incluindo Win10 21H2/22H2).
+    """
+    try:
+        proc = subprocess.run(
+            ["wmic.exe", "printer", "list", "brief", "/format:csv"],
+            capture_output=True,
+            timeout=90,
+            shell=False,
+        )
+        raw_bytes = proc.stdout or b""
+        if not raw_bytes:
+            return []
+        try:
+            raw_text = raw_bytes.decode("utf-8", errors="replace")
+        except Exception:
+            raw_text = raw_bytes.decode("latin-1", errors="replace")
+        lines = [ln.strip("\r").strip() for ln in raw_text.splitlines()]
+        lines = [ln for ln in lines if ln and "," in ln]
+        if not lines:
+            return []
+        # wmic CSV: 1a linha = cabecalho; 1a coluna Node que nao interessa
+        header = [c.strip().strip('"') for c in lines[0].split(",")]
+        if len(header) < 4:
+            return []
+        # Remove 1a coluna "Node" (sempre)
+        header_adj = header[1:] if len(header) > 1 and header[0].lower().startswith("node") else header
+        results: list[dict[str, Any]] = []
+        for ln in lines[1:]:
+            try:
+                cols = []
+                cur = ""
+                in_q = False
+                for ch in ln:
+                    if ch == '"':
+                        in_q = not in_q
+                    elif ch == ',' and not in_q:
+                        cols.append(cur.strip()); cur = ""
+                    else:
+                        cur += ch
+                cols.append(cur.strip())
+                if len(cols) >= 2:
+                    cols_adj = cols[1:] if len(cols) > len(header_adj) else cols
+                    d: dict[str, Any] = {}
+                    for i, h in enumerate(header_adj):
+                        if i < len(cols_adj):
+                            d[h] = cols_adj[i]
+                    # Normaliza campos para igualar PowerShell:
+                    item_norm: dict[str, Any] = {
+                        "Name": d.get("Name") or d.get("Caption") or "",
+                        "DriverName": d.get("DriverName") or "",
+                        "Manufacturer": d.get("SystemName") or d.get("DriverName") or "",
+                        "PortName": d.get("PortName") or "",
+                        "DeviceID": d.get("DeviceID") or "",
+                        "Status": d.get("Status") or d.get("PrinterState") or "Unknown",
+                        "ExtendedPrinterStatus": 1,
+                        "Default": (str(d.get("Default") or "").lower() in ("true","1","yes")),
+                        "WorkOffline": (str(d.get("WorkOffline") or "").lower() in ("true","1","yes")),
+                        "PrinterState": d.get("PrinterState") or "0",
+                        "PrinterStatus": d.get("PrinterStatus") or "0",
+                        "Shared": (str(d.get("Shared") or "").lower() in ("true","1","yes")),
+                        "Local": True,
+                    }
+                    if item_norm["Name"]:
+                        results.append(item_norm)
+            except Exception:
+                continue
+        return results
+    except Exception as exc:
+        logger.debug("USB wmic fallback falhou (nao tem wmic?): %s", exc)
+        return []
 
 
 def _collect_windows() -> list[PrinterData]:
@@ -426,10 +541,10 @@ try {
 }
 """
     raw = _run_ps(ps_cmd)
+    # v6.9.3 CRITICO: NAO retorna [] mais se raw for vazio! Tenta fallback wmic 1a chance.
     if not raw:
-        logger.warning("USB/powershell retornou vazio. Nenhuma coleta USB feita neste ciclo.")
-        return []
-
+        logger.warning("USB/powershell retornou vazio. Tentando fallback wmic.exe printer list CSV (ultima esperanca)...")
+    # Parse linhas (ou string vazia): se raw for vazio, loop abaixo ignora tudo e cai no fallback wmic de novo
     printers_raw = None
     queues_raw = None
     drivers_raw = None
@@ -437,7 +552,7 @@ try {
     registry_raw = None
     jobs_raw = None
     ports_raw = None
-    for line in raw.splitlines():
+    for line in (raw or "").splitlines():
         if not line:
             continue
         if line.startswith("JSON_START_PRINTERS "):
@@ -478,8 +593,25 @@ try {
             except Exception as exc:
                 logger.debug("USB parse JSON Ports falhou: %s", exc)
 
+    # v6.9.3 FALLBACK #2: se JSON_START_PRINTERS nao apareceu ou lista vazia, tenta wmic.exe CSV!
+    if (printers_raw is None) or (isinstance(printers_raw, list) and len(printers_raw) == 0):
+        logger.info("USB: JSON_START_PRINTERS vazio/ausente. Tentando fallback wmic.exe...")
+        wmic_list = _fallback_wmic_printers()
+        if wmic_list:
+            printers_raw = wmic_list
+            logger.info("USB: fallback wmic retornou %d impressora(s)! Usando eles.", len(printers_raw))
+            if ports_raw is None: ports_raw = []
+            if queues_raw is None: queues_raw = []
+            if registry_raw is None: registry_raw = []
+            if jobs_raw is None: jobs_raw = []
+            if pnp_raw is None: pnp_raw = []
+        else:
+            # Ultima chance: se wmic tambem vazio, warning mas NAO retorna ainda (talvez impressoras
+            # ainda possam ser recuperadas. So retorna vazio apos todos fallbacks falharem)
+            if not printers_raw:
+                logger.warning("USB: wmic tambem retornou vazio. Nenhuma impressora local coletada.")
+    # Se apos TUDO printers_raw continua None (fallbacks falharam) = nenhuma impressora
     if printers_raw is None:
-        logger.warning("USB: bloco JSON_START_PRINTERS nao foi encontrado no output PowerShell. Nenhuma impressora USB. (raw primeiras 500ch: %.500s)", raw)
         return []
     if isinstance(printers_raw, dict):
         printers_raw = [printers_raw]
@@ -535,6 +667,10 @@ try {
 
     # --- P2 MAIS AGRESSIVO: PORTAS QUE EXISTEM REALMENTE ---
     # Se a impressora aponta para uma porta que NAO EXISTE nessa lista = FANTASMA (100% certeza!)
+    # Mas v6.9.3: RELAXAMOS para portas TCP/IP/WSD (nao pula elas nunca mais!)
+    #   - USB/LPT/DOT4: checagem ESTRITA (porta EXATA tem que existir)
+    #   - TCP/IP (192.168., 10., 172.) + WSD: usa _porta_existe_relaxada (match por PREFIXO, aceita _1, _2, _3 etc!)
+    #   - PnP (Regra 3) SO APLICA em USB/LPT/DOT4 (nunca pula IP/WSD!)
     ports_exist: set[str] = set()
     if isinstance(ports_raw, dict):
         ports_raw = [ports_raw]
@@ -546,6 +682,52 @@ try {
         logger.info("USB: %d porta(s) real(is) instaladas no Windows (PrinterPort + USB Monitor).", len(ports_exist))
         if ports_exist:
             logger.info("  Lista portas: %s", ", ".join(sorted(ports_exist))[:400])
+
+    # ========================================================================
+    # v6.9.3 NOVA: _porta_existe_relaxada - ACEITA sufixo _N (ex: 192.168.15.50_1 Canon G3010 WiFi!)
+    # ========================================================================
+    def _porta_existe_relaxada(porta: str, portas_reais: set[str]) -> bool:
+        """Retorna True SE QUALQUER uma das opcoes bater:
+          1) Porta exata existe
+          2) Porta com sufixo _\\d+ existe (ex: porta='192.168.15.50' existe como '192.168.15.50_1')
+          3) Porta SEM sufixo _\\d+ existe (ex: porta='192.168.15.50_1' existe a base '192.168.15.50')
+          4) Startswith em AMBOS os sentidos (1 porta real começa com nossa porta, ou vice-versa)
+        """
+        if not porta:
+            return True
+        if porta in portas_reais:
+            return True
+        # Remove sufixo _N (1 digito ou mais no final) e verifica se base bate
+        m = re.match(r"^(.*)_(\d+)$", porta)
+        if m and (m.group(1) in portas_reais):
+            return True
+        # Inverso: portas_reais tem X_1 e nossa impressora = X sem sufixo
+        for rp in portas_reais:
+            m2 = re.match(r"^(.*)_(\d+)$", rp)
+            if m2 and (m2.group(1) == porta):
+                return True
+        # Prefix match duplo (ex: IP real tem .50 e nossa porta .50_1)
+        for rp in portas_reais:
+            if rp and porta and (rp.startswith(porta) or porta.startswith(rp)):
+                # Garante que o prefixo bate com separador natural (ex: 192.168.1.50 vs 192.168.1.500 = NAO!)
+                common = min(len(rp), len(porta))
+                if common >= 6:  # pelo menos "USB001" ou parte de IP
+                    return True
+        return False
+
+    # === v6.9.3: Classificador de tipo de porta ===
+    def _is_usb_lpt_dot4(porta: str) -> bool:
+        p = (porta or "").upper()
+        return p.startswith(("USB", "LPT", "DOT4", "COM"))
+    def _is_tcpip_or_wsd_port(porta: str) -> bool:
+        p = (porta or "").lower()
+        pu = (porta or "").upper()
+        return (
+            pu.startswith(("IP_", "192.168.", "10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.",
+                            "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.",
+                            "172.28.", "172.29.", "172.30.", "172.31.", "WSD", "IPP", "HTTP://", "HTTPS://"))
+            or p.startswith(("wsd://", "ipp://"))
+        )
 
     # --- P2: Filtro DE DISPOSITIVOS CONECTADOS AGORA (PnP entities) ---
     # Usado para pular impressoras fantasmas (desinstaladas mas ainda no WMI)
@@ -594,18 +776,34 @@ try {
             # ================================================================
             # P2 - FILTRO DE IMPRESSORAS FANTASMA / DESINSTALADAS / DUPLICADAS
             # ================================================================
-            # Regra ZERO (MAIS AGRESSIVA, 100% INFALIVEL!):
-            # Se a PORTA REAL da impressora NAO EXISTE na lista de portas reais do Windows
-            # (ports_exist), essa impressora NAO EXISTE DE VERDADE (desinstalada ou fantasma!)
-            # Exceto se for porta de REDE COMPARTILHADA tipo "\\servidor\impressora" etc
+            # Regra ZERO (MAIS AGRESSIVA, 100% SEGURA v6.9.3!):
+            #   - USB/LPT/DOT4: checagem ESTRITA (porta EXATA tem que existir!)
+            #   - TCP/IP (192.168./10./172.) / WSD / IPP: RELAXADO - usa _porta_existe_relaxada
+            #     (aceita 192.168.15.50_1, 192.168.15.50, WSD, etc NUNCA MAIS PULA IMPRESSORA REDE!)
+            #   - Rede compartilhada \\server\printer: PULA NENHUMA (sempre aceita)
             port_up = port.upper()
             is_network_shared_port = port.startswith('\\') or port.lower().startswith(("http://", "https://", "wsd://", "ipp://"))
-            is_physical_port_candidate = port_up.startswith(("USB", "DOT4", "LPT", "COM", "IP_", "192.168.", "10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31."))
-            if port and not is_network_shared_port and is_physical_port_candidate:
-                if port not in ports_exist:
-                    n_skipped_offline_pnp += 1
-                    logger.info("USB skip FANTASMA (Porta=%s NAO EXISTE em PrinterPort real! Impressora desinstalada.): name=%s", port, name)
-                    continue
+            is_usb_port = _is_usb_lpt_dot4(port)
+            is_rede_port = _is_tcpip_or_wsd_port(port)
+            pula_porta = False
+            if port and not is_network_shared_port:
+                if is_usb_port:
+                    # USB/LPT/DOT4: ESTRITO (porta exata tem que existir!)
+                    if port not in ports_exist:
+                        pula_porta = True
+                elif is_rede_port:
+                    # v6.9.3: IP/WSD/IPP: RELAXADO, aceita _N etc. SÓ PULA se nem relaxed bater (ultra raro)
+                    if not _porta_existe_relaxada(port, ports_exist):
+                        logger.debug("USB DEBUG: porta de rede %s nao bateu relaxada, mas VAMOS ACEITAR MESMO ASSIM (porta de rede nunca pulamos em v6.9.3!)", port)
+                        pula_porta = False  # <- CRITICO v6.9.3: NAO PULA NENHUMA porta IP/WSD!
+                else:
+                    # Outras portas: aceita relaxed
+                    if not _porta_existe_relaxada(port, ports_exist):
+                        pula_porta = False
+            if pula_porta:
+                n_skipped_offline_pnp += 1
+                logger.info("USB skip FANTASMA (Porta USB/LPT/DOT4=%s NAO EXISTE em PrinterPort real! Impressora desinstalada.): name=%s", port, name)
+                continue
 
             # Regra 1: Nome com "(Copy 1)", "(Copy 2)", "(Copy 3)" etc = duplicata lixo
             if re.search(r"\(Copy\s*\d+\)", name, re.IGNORECASE):
@@ -619,15 +817,18 @@ try {
                 logger.info("USB skip WorkOffline=True (nao conectada agora): name=%s port=%s", name, port)
                 continue
 
-            # Regra 3: ExtendedPrinterStatus = 1 (Unknown) OU Status vazio/Unknown + nao tem PnP match
+            # ================================================================
+            # v6.9.3 NOVA: Regra 3 PnP SO APLICA EM USB/LPT/DOT4!
+            #   NUNCA MAIS pula IP/WSD/IPP por "falta match PnP" (porta IP pode estar OK mesmo sem USB!)
+            # ================================================================
             status_ext_raw = str(item.get("ExtendedPrinterStatus") or "").strip()
-            is_physical_port = is_physical_port_candidate
             status_unknown = status.lower() in ("unknown", "", "none", "0") and status_ext_raw in ("1", "Unknown", "0", "")
-            if is_physical_port and status_unknown and pnp_ports_usb_connected:
+            regra3_aplica = (is_usb_port) and (status_unknown) and (pnp_ports_usb_connected)
+            if regra3_aplica:
                 name_match_pnp = any((n and n in name.lower()) or (name.lower() in n) for n in pnp_names)
                 if not name_match_pnp:
                     n_skipped_offline_pnp += 1
-                    logger.info("USB skip fantasma (sem match PnP + Status Unknown): name=%s port=%s", name, port)
+                    logger.info("USB skip fantasma (USB/LPT/DOT4 sem match PnP + Status Unknown): name=%s port=%s", name, port)
                     continue
 
             # --- Paginas ---

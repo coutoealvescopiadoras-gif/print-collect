@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['C:\\Users\\Julio\\Desktop\\print-collect\\agent\\SearchPrinters.py'],
+    ['SearchPrinters.py'],
     pathex=[],
     binaries=[],
     datas=[],
