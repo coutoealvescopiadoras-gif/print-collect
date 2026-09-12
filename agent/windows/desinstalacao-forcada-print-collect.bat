@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul 2>&1
-title PRINT COLLECT - DESINSTALACAO FORCADA v6.9.3
+title PRINT COLLECT - DESINSTALACAO FORCADA v6.9.3 CORRIGIDA
 
 setlocal enabledelayedexpansion
 
@@ -9,19 +9,20 @@ set "PROGRAMDATA_DIR=C:\ProgramData\PrintCollect"
 set "TASK_NAME=PrintCollectAgent"
 set "UNINSTALL_EXE=%INSTALL_DIR%\unins000.exe"
 
-==============================================================================
-   PRINT COLLECT - DESINSTALACAO FORCADA v6.9.3 (CORRIGIDA!)
-==============================================================================
-   ESTE SCRIPT VAI:
-     1) Desativar e remover Tarefa Agendada (para nao reabrir agente!)
-     2) MATAR TODOS os processos (agente tray, wizard, search) 5 TENTATIVAS!
-     3) RODAR UNINSTALLER OFICIAL Inno Setup COM START /WAIT (ESPERAR TERMINAR!)
-     4) APAGAR PASTAS com takeown + icacls (resolver permissao UAC bloqueada!)
-     5) Limpar atalhos menu iniciar e desktop
-     6) Limpar entrada Registro Uninstall Display
-==============================================================================
+echo ================================================================================
+echo   PRINT COLLECT - DESINSTALACAO FORCADA v6.9.3 (CORRIGIDA! SEM LINHAS SOLTAS!)
+echo ================================================================================
+echo   ESTE SCRIPT VAI:
+echo     1. Desativar e remover Tarefa Agendada (para nao reabrir agente!)
+echo     2. MATAR TODOS os processos 5 VEZES (agente tray, wizard, search)
+echo     3. RODAR UNINSTALLER OFICIAL Inno COM START /WAIT (ESPERA TERMINAR!)
+echo     4. APAGAR PASTAS com takeown + icacls (UAC permissao)
+echo     5. Limpar atalhos menu iniciar e desktop
+echo     6. Limpar entrada Registro Uninstall Display
+echo ================================================================================
+echo.
 
-VERIFICANDO SE ESTOU COMO ADMINISTRADOR...
+echo VERIFICANDO SE ESTOU COMO ADMINISTRADOR...
 net session >nul 2>&1
 if %errorlevel% neq 0 (
     echo.
@@ -34,9 +35,9 @@ if %errorlevel% neq 0 (
 echo  [OK] Rodando como Administrador! Prosseguindo...
 echo.
 
---------------------------------------------------------------------
-  PASSO 1) DESATIVAR + REMOVER TAREFA AGENDADA (impede reabrir!)
---------------------------------------------------------------------
+echo ------------------------------------------------------------------------------
+echo   PASSO 1/7 - DESATIVAR + REMOVER TAREFA AGENDADA (impede reabrir!)
+echo ------------------------------------------------------------------------------
 echo.
 echo [PASSO 1/7] Desativando e removendo Tarefa Agendada %TASK_NAME%...
 schtasks /Change /TN "%TASK_NAME%" /DISABLE >nul 2>&1
@@ -44,9 +45,10 @@ timeout /t 1 /nobreak >nul
 schtasks /Delete /TN "%TASK_NAME%" /F >nul 2>&1
 echo  OK tarefa desativada/removida.
 
---------------------------------------------------------------------
-  PASSO 2) MATAR TODOS OS PROCESSOS (5 TENTATIVAS COM ESPERA!)
---------------------------------------------------------------------
+echo.
+echo ------------------------------------------------------------------------------
+echo   PASSO 2/7 - MATAR TODOS OS PROCESSOS (5 TENTATIVAS COM ESPERA!)
+echo ------------------------------------------------------------------------------
 echo.
 echo [PASSO 2/7] Fechando processos PrintCollect... (5 tentativas!)
 set "tentativas=5"
@@ -59,7 +61,6 @@ for /L %%i in (1,1,%tentativas%) do (
     taskkill /F /IM unins000.exe /T >nul 2>&1
     timeout /t 1 /nobreak >nul
 
-    REM === VERIFICAR SE AINDA EXISTEM PROCESSOS ===
     set "restam=0"
     tasklist /FI "IMAGENAME eq PrintCollectAgent.exe" /NH 2>nul | find /I "PrintCollectAgent.exe" >nul && set "restam=1"
     tasklist /FI "IMAGENAME eq WizardPareamento.exe" /NH 2>nul | find /I "WizardPareamento.exe" >nul && set "restam=1"
@@ -76,12 +77,13 @@ for /L %%i in (1,1,%tentativas%) do (
 if "%kill_ok%"=="1" (
     echo  [OK] Processos 100%% fechados.
 ) else (
-    echo  [AVISO] Algum processo ainda vivo? Vou tentar handle do desinstalador Inno CloseApplications e seguir.
+    echo  [AVISO] Algum processo ainda vivo? Vou tentar handle Inno CloseApplications e seguir.
 )
 
---------------------------------------------------------------------
-  PASSO 3) RODAR UNINS000.EXE OFICIAL COM START /WAIT!!!
---------------------------------------------------------------------
+echo.
+echo ------------------------------------------------------------------------------
+echo   PASSO 3/7 - RODAR UNINS000.EXE OFICIAL COM START /WAIT!!!
+echo ------------------------------------------------------------------------------
 echo.
 echo [PASSO 3/7] Executando desinstalador oficial Inno Setup...
 if exist "%UNINSTALL_EXE%" (
@@ -93,9 +95,10 @@ if exist "%UNINSTALL_EXE%" (
     echo  [INFO] unins000.exe nao encontrado (ja foi removido antes?). Pular para remocao manual pastas.
 )
 
---------------------------------------------------------------------
-  PASSO 4) REMOVER PASTA PROGRAM FILES (COM TAKEOWN + ICACLS!)
---------------------------------------------------------------------
+echo.
+echo ------------------------------------------------------------------------------
+echo   PASSO 4/7 - REMOVER PASTA PROGRAM FILES (COM TAKEOWN + ICACLS!)
+echo ------------------------------------------------------------------------------
 echo.
 echo [PASSO 4/7] Removendo "%INSTALL_DIR%"...
 if exist "%INSTALL_DIR%" (
@@ -104,7 +107,6 @@ if exist "%INSTALL_DIR%" (
     icacls "%INSTALL_DIR%" /grant Administradores:F /T /C /Q >nul 2>&1
     timeout /t 1 /nobreak >nul
 
-    REM === 3 TENTATIVAS DE RMDIR ===
     set "rm_ok=0"
     for /L %%j in (1,1,3) do (
         echo    Tentativa %%j: rmdir /S /Q "%INSTALL_DIR%"
@@ -120,15 +122,16 @@ if exist "%INSTALL_DIR%" (
     if "!rm_ok!"=="1" (
         echo  [OK] Pasta Program Files removida!
     ) else (
-        echo  [AVISO] Nao consegui remover Program Files ainda? Vou tentar no PASSO 7 REBOOT no final do script!
+        echo  [AVISO] Nao consegui remover Program Files ainda? Tente no PASSO 7 REBOOT no final do script!
     )
 ) else (
     echo  [OK] Pasta Program Files ja nao existia.
 )
 
---------------------------------------------------------------------
-  PASSO 5) REMOVER PASTA PROGRAMDATA (CONFIGURACAO!)
---------------------------------------------------------------------
+echo.
+echo ------------------------------------------------------------------------------
+echo   PASSO 5/7 - REMOVER PASTA PROGRAMDATA (CONFIGURACAO!)
+echo ------------------------------------------------------------------------------
 echo.
 echo [PASSO 5/7] Removendo "%PROGRAMDATA_DIR%" (configs/logs)...
 if exist "%PROGRAMDATA_DIR%" (
@@ -148,9 +151,10 @@ if exist "%PROGRAMDATA_DIR%" (
     echo  [OK] ProgramData ja nao existia.
 )
 
---------------------------------------------------------------------
-  PASSO 6) ATALHOS START MENU + DESKTOP
---------------------------------------------------------------------
+echo.
+echo ------------------------------------------------------------------------------
+echo   PASSO 6/7 - ATALHOS START MENU + DESKTOP
+echo ------------------------------------------------------------------------------
 echo.
 echo [PASSO 6/7] Limpando atalhos Menu Iniciar e Desktop...
 set "STARTMENU=%ProgramData%\Microsoft\Windows\Start Menu\Programs\Print Collect Agent"
@@ -162,9 +166,10 @@ if exist "%PUBLICDESK%" ( del /F /Q "%PUBLICDESK%" >nul 2>&1 )
 if exist "%USERDESK%" ( del /F /Q "%USERDESK%" >nul 2>&1 )
 echo  [OK] Atalhos desktop verificados.
 
---------------------------------------------------------------------
-  PASSO 7) ENTRADA REGISTRO UNINSTALL
---------------------------------------------------------------------
+echo.
+echo ------------------------------------------------------------------------------
+echo   PASSO 7/7 - ENTRADA REGISTRO UNINSTALL
+echo ------------------------------------------------------------------------------
 echo.
 echo [PASSO 7/7] Limpando entrada Registro Uninstall DisplayName...
 set "UNREG1=HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PrintCollect_is1"
@@ -173,17 +178,18 @@ reg delete "%UNREG1%" /f >nul 2>&1
 reg delete "%UNREG2%" /f >nul 2>&1
 echo  [OK] Registro limpo.
 
-==============================================================================
-   STATUS FINAL (JULIO CONFERIR NO CLIENTE!)
-==============================================================================
+echo.
+echo ================================================================================
+echo   STATUS FINAL (JULIO CONFERIR NO CLIENTE!)
+echo ================================================================================
 set "FINAL_OK=1"
-echo -----------------------------------------------------------------------------
+echo ------------------------------------------------------------------------------
 tasklist /FI "IMAGENAME eq PrintCollectAgent.exe" /NH 2>nul | find /I "PrintCollectAgent.exe" >nul && (echo  [!] PRINTCOLLECTAGENT.EXE AINDA RODANDO! && set FINAL_OK=0)
 tasklist /FI "IMAGENAME eq WizardPareamento.exe" /NH 2>nul | find /I "WizardPareamento.exe" >nul && (echo  [!] WIZARDPAREAMENTO.EXE AINDA RODANDO! && set FINAL_OK=0)
-echo -----------------------------------------------------------------------------
+echo ------------------------------------------------------------------------------
 if exist "%INSTALL_DIR%" ( echo  [PENDENTE] PASTA Program Files ainda existe: "%INSTALL_DIR%" && set FINAL_OK=2 ) else ( echo  [OK] Pasta Program Files apagada. )
 if exist "%PROGRAMDATA_DIR%" ( echo  [PENDENTE] PASTA ProgramData ainda existe: "%PROGRAMDATA_DIR%" && set FINAL_OK=2 ) else ( echo  [OK] Pasta ProgramData apagada. )
-echo -----------------------------------------------------------------------------
+echo ------------------------------------------------------------------------------
 
 if "!FINAL_OK!"=="1" (
     color 2F
@@ -202,7 +208,7 @@ if "!FINAL_OK!"=="0" (
     color 4F
     echo.
     echo  [FALHOU ENCERRAR PROCESSOS!] Tente REINICIAR o Windows e RODAR ESTE SCRIPT NOVAMENTE como ADMINISTRADOR.
-    echo  Alternativa: Abrir Gerenciador de Tarefas -^> Details -^> Finalizar PrintCollectAgent.exe manualmente.
+    echo  Alternativa: Abrir Gerenciador de Tarefas - Details - Finalizar PrintCollectAgent.exe manualmente.
 )
 echo.
 set "INSTALL_DIR="
@@ -210,6 +216,6 @@ set "PROGRAMDATA_DIR="
 set "TASK_NAME="
 set "UNINSTALL_EXE="
 endlocal
-echo FIM DA DESINSTALACAO FORCADA.
+echo FIM DA DESINSTALACAO FORCADA CORRIGIDA.
 pause
 exit /b 0
