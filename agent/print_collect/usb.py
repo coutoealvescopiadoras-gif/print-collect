@@ -10,13 +10,17 @@ consiga enviar tudo pro backend sem precisar de NENHUMA alteracao.
 """
 from __future__ import annotations
 
+import csv as _csv
 import hashlib
 import json
 import logging
+import os
 import platform
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
+from io import StringIO as _SIO
 from typing import Optional, Any
 
 # ---------------------------------------------------------------------------
@@ -509,28 +513,53 @@ def _get_any_key(d: dict, *keys, default=None):
 
 def _wmic_csv_to_dicts(txt: str) -> list[dict[str, Any]]:
     """Converte saída wmic ... /format:csv (cabeçalhos SEMPRE em inglês, NÃO localizado!)
-    em lista de dicionários. Muito mais seguro que /format:list em Windows OEM localizado."""
+    em lista de dicionários. Muito mais seguro que /format:list em Windows OEM localizado.
+
+    ATENCAO v6.9.8: wmic CSV SEMPRE coloca a 1a coluna = Node (hostname), EXCLUIMOS ela
+    e também usamos QUOTING_MINIMAL para nao quebrar campos com vírgula/papel/caracteres.
+    """
     if not txt:
         return []
-    import csv as _csv
-    from io import StringIO as _SIO
     results: list[dict[str, Any]] = []
-    lines_clean = [ln for ln in txt.splitlines() if ln.strip() and not ln.strip().startswith("\ufeff")]
+    lines_raw = txt.splitlines()
+    lines_clean: list[str] = []
+    for ln in lines_raw:
+        s = ln.strip()
+        if not s:
+            continue
+        if s.startswith("\ufeff"):
+            s = s[1:].strip()
+            if not s:
+                continue
+        lines_clean.append(ln.rstrip("\n").rstrip("\r"))
     if not lines_clean:
         return results
     try:
-        reader = _csv.reader(lines_clean, delimiter=",", quotechar='"', skipinitialspace=True)
+        reader = _csv.reader(
+            _SIO("\n".join(lines_clean)),
+            delimiter=",",
+            quotechar='"',
+            quoting=_csv.QUOTE_MINIMAL,
+            skipinitialspace=False,
+        )
         rows = list(reader)
         if len(rows) < 2:
             return results
-        headers = [str(h).strip() for h in rows[0]]
+        headers_raw = [str(h).strip() for h in rows[0]]
+        if not headers_raw:
+            return results
+        has_node_col = headers_raw[0].lower() in ("node", "servidor", "nomehost")
+        headers = headers_raw[1:] if has_node_col else headers_raw
         for row in rows[1:]:
-            if not row or len(row) < 2:
+            if not row:
+                continue
+            vals = row[1:] if has_node_col else row
+            if len(vals) < 1:
                 continue
             d: dict[str, Any] = {}
             for i, h in enumerate(headers):
-                if i < len(row):
-                    d[h] = str(row[i]).strip()
+                if i < len(vals):
+                    d[h] = str(vals[i]).strip()
                 else:
                     d[h] = ""
             results.append(d)
@@ -570,11 +599,26 @@ def _collect_windows_wmic_fallback() -> str:
                 txt2 = _wmic_decode(proc2.stdout or b"")
                 arr = _wmic_list_to_dicts(txt2)
             filtered = []
+            FAKE_NAMES = (
+                "win32_printer", "win32_computersystem", "win32_pnpentity",
+                "computersystem", "printer", "system", "root",
+            )
             for p in arr:
                 if not p:
                     continue
                 pname = str(_get_any_key(p, "Name", "Nome", "Caption", "Legenda") or "").strip()
                 if not pname:
+                    continue
+                low = pname.lower()
+                if low in FAKE_NAMES:
+                    continue
+                if low.startswith("desktop-") or low.startswith("desktop_") or low == "desktop":
+                    continue
+                if len(pname) < 2:
+                    continue
+                if "," in pname and len(pname) > 80:
+                    continue
+                if pname.startswith("{") and pname.endswith("}"):
                     continue
                 filtered.append({
                     "Name": pname,
@@ -647,23 +691,16 @@ def _collect_windows_wmic_fallback() -> str:
         out_lines.append("JSON_START_REGISTRY []")
         out_lines.append("JSON_START_JOBS []")
 
-        # --- 4) PORTAS REAIS via WMIC (CSV! TCPIP Printer Port + printerport ALL) ---
+        # --- 4) PORTAS REAIS via WMIC (PROVADO v6.9.6 com /format:list, CSV dá 261 falsas!) ---
         ports_arr: list[dict[str, Any]] = []
         try:
-            _TCP_COLS = "Name,HostAddress,Protocol,Description"
+            # v6.9.8: VOLTAMOS para /format:list AQUI em TCPIPPrinterPort (CSV dava 261 falsas!)
             proc = subprocess.run(
-                ["wmic.exe", "path", "Win32_TCPIPPrinterPort", "get", _TCP_COLS, "/format:csv"],
+                ["wmic.exe", "path", "Win32_TCPIPPrinterPort", "get", "/all", "/format:list"],
                 capture_output=True, timeout=20,
             )
-            txt = _wmic_decode(proc.stdout or b"")
-            arr = _wmic_csv_to_dicts(txt)
-            if not arr:
-                proc2 = subprocess.run(
-                    ["wmic.exe", "path", "Win32_TCPIPPrinterPort", "get", "/all", "/format:list"],
-                    capture_output=True, timeout=20,
-                )
-                txt2 = _wmic_decode(proc2.stdout or b"")
-                arr = _wmic_list_to_dicts(txt2)
+            txt2 = _wmic_decode(proc.stdout or b"")
+            arr = _wmic_list_to_dicts(txt2)
             for p in arr:
                 nm = str(_get_any_key(p, "Name", "Nome") or "").strip()
                 if not nm:
@@ -682,19 +719,13 @@ def _collect_windows_wmic_fallback() -> str:
         except Exception as exc:
             logger.debug("WMIC TCPIPPrinterPort falhou: %s", exc)
         try:
-            proc = subprocess.run(
-                ["wmic.exe", "printerport", "get", "Name,Description,Type,PortMonitor", "/format:csv"],
+            # v6.9.8: printerport TAMBÉM volta para /format:list (provado v6.9.6 = 38 portas reais)
+            proc2 = subprocess.run(
+                ["wmic.exe", "printerport", "get", "/all", "/format:list"],
                 capture_output=True, timeout=20,
             )
-            txt = _wmic_decode(proc.stdout or b"")
-            arr = _wmic_csv_to_dicts(txt)
-            if not arr:
-                proc2 = subprocess.run(
-                    ["wmic.exe", "printerport", "get", "/all", "/format:list"],
-                    capture_output=True, timeout=20,
-                )
-                txt2 = _wmic_decode(proc2.stdout or b"")
-                arr = _wmic_list_to_dicts(txt2)
+            txt2 = _wmic_decode(proc2.stdout or b"")
+            arr = _wmic_list_to_dicts(txt2)
             for p in arr:
                 nm = str(_get_any_key(p, "Name", "Nome") or "").strip()
                 if not nm:

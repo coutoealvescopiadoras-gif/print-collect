@@ -7,8 +7,8 @@ server_url: "https://print-collect.onrender.com"
 # Token do agente — crie em: Painel > Agentes > Novo agente
 agent_token: "agent-dev-key"
 
-# Versão (informativo) — v6.9.7: (1) _run_ps reescrito com ARQUIVO TEMPORÁRIO .ps1 UTF-8 BOM + powershell -File (resolver 100% MissingCatchOrFinally OEM pt-BR, scripts longos não passam por linha de comando). (2) Fallback WMIC Win32_Printer agora usa /format:csv (cabeçalhos SEMPRE inglês, NÃO localizado!) + helper _get_any_key com traduções pt-BR (NomeDaPorta, NomeDoDriver, Fabricante etc) + _wmic_csv_to_dicts. PortName NUNCA MAIS fica vazio (antes todas port=? no Joaquim!). (3) REMOVIDA CAMADA 2 PowerShell ScheduledTasks v6.4 (100% redundante, sempre dava HRESULT 0x80041318 em Windows pt-BR). Mantida CAMADA 1 schtasks (RC=0) + CAMADA 3 schtasks HOURLY (RC=0). Canon G3111 WiFi IP 192.168.15.50_1 agora aparece com IP REAL e SNMP.
-agent_version: "6.9.7"
+# Versão (informativo) — v6.9.8: (1) FIX v6.9.7 NameError 'os' / 'tempfile' faltavam imports no topo. (2) _wmic_csv_to_dicts SKIPA 1a coluna Node (hostname, wmic CSV SEMPRE tem) + QUOTING_MINIMAL correto, senao gerava 83 impressoras FALSAS (Win32_ComputerSystem, DESKTOP-E02OP26, lista de papel). (3) Filtro FAKE_NAMES rígido no printer fallback, remove nomes invalidos. (4) Busca de PORTAS (TCPIPPrinterPort + printerport) VOLTA para /format:list provado v6.9.6 (38 portas reais). v6.9.7 CSV dava 261 falsas. Win32_Printer + PrintQueue CONTINUAM com /format:csv.
+agent_version: "6.9.8"
 
 # Intervalo entre coletas automáticas (minutos)
 # 30 minutos = atualiza contadores de 30 em 30 min
