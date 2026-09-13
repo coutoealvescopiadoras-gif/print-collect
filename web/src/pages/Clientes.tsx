@@ -1274,6 +1274,27 @@ Qualquer dúvida é só chamar a gente!`}
                       >
                         🔗 Gerar Pareamento
                       </button>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        style={{
+                          fontSize: 14,
+                          padding: "0.5rem 0.9rem",
+                          fontWeight: 700,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "0.4rem",
+                          boxShadow: "0 3px 10px rgba(249,115,22,0.3)",
+                          background: "linear-gradient(135deg, #f97316, #ea580c)",
+                          border: "1px solid rgba(249,115,22,0.5)",
+                        }}
+                        onClick={() => {
+                          _resetAddPrinterForm();
+                          setShowAddPrinterModal(true);
+                        }}
+                      >
+                        ➕ Adicionar Impressora Manualmente
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1281,23 +1302,7 @@ Qualquer dúvida é só chamar a gente!`}
 
               {/* ===== CORPO: TABELA IMPRESSORAS (Sem titulo, Julio pediu para apagar!) ===== */}
               <div style={{ padding: "0.75rem 1.4rem", overflowY: "auto", flex: 1 }}>
-                {/* ===== (NOVO JULIO 05/09) Barra Ações + Botão Adicionar Impressora Manual ===== */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", marginBottom: "0.85rem", flexWrap: "wrap" }}>
-                  <div style={{ color: "var(--text-muted)", fontSize: "0.88rem" }}>
-                    💡 <strong>Dica:</strong> se a impressora estiver em outra VLAN, VPN ou sub-rede diferente (não aparece no scanner automático), use o botão abaixo para cadastrar manualmente!
-                  </div>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() => {
-                      _resetAddPrinterForm();
-                      setShowAddPrinterModal(true);
-                    }}
-                    style={{ fontSize: 14, padding: "0.55rem 1.1rem", fontWeight: 700 }}
-                  >
-                    ➕ Adicionar Impressora
-                  </button>
-                </div>
+                {/* ===== (NOVO JULIO 12/09) Botao Adicionar Impressora Manualmente AGORA NA CAIXA VERDE, junto com Gerar Pareamento! ===== */}
 
                 {loadingClienteModal ? (
                   <div className="loading" style={{ padding: "2rem 0" }}>Carregando impressoras…</div>
@@ -1306,7 +1311,7 @@ Qualquer dúvida é só chamar a gente!`}
                     Nenhuma impressora encontrada para este cliente ainda.
                     <div style={{ marginTop: "0.75rem", fontSize: "0.85rem" }}>
                       💡 Use o botão <strong>"🔗 Gerar Pareamento"</strong> na caixa verde acima (código do cliente) para criar um código curto e instalar o agente na máquina do cliente!
-                      {" "}<strong>OU</strong> clique no botão <strong>"➕ Adicionar Impressora"</strong> acima para cadastrar manualmente (VLANs/VPNs).
+                      {" "}<strong>OU</strong> clique no botão <strong>"➕ Adicionar Impressora Manualmente"</strong> na caixa verde acima para cadastrar manualmente (VLANs/VPNs).
                     </div>
                   </div>
                 ) : (
