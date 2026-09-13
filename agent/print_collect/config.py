@@ -170,7 +170,7 @@ def load_config(path: Path) -> AgentConfig:
 
 
 def save_config(path: Path, config: AgentConfig) -> Path:
-    """
+    r"""
     Salva AgentConfig em arquivo YAML.
     Se der PERMISSION DENIED (erro 13) no caminho original (por exemplo,
     dentro de C:\Program Files), salva automaticamente no caminho GRAVAVEL

@@ -797,109 +797,68 @@ def _collect_windows() -> list[PrinterData]:
         LINHA 4 = JSON_START_PNP      <JSON de Win32_PnPEntity (dispositivos USB conectados AGORA!)>
     """
     ps_cmd = r"""
-$ErrorActionPreference = 'Continue'
-# --- Linha 1: impressoras WMI Win32_Printer (todas as propriedades, incluindo WorkOffline!) ---
-try {
-    $arr = @(Get-CimInstance Win32_Printer -ErrorAction Stop | Select-Object Name,DriverName,Manufacturer,PortName,DeviceID,Status,ExtendedPrinterStatus,Default,WorkOffline,PrinterState,PrinterStatus,Shared,Local)
-    if ($arr.Count -eq 0) { Write-Output ('JSON_START_PRINTERS []') }
-    else { $json = $arr | ConvertTo-Json -Depth 4 -Compress ; Write-Output ('JSON_START_PRINTERS ' + $json) }
-} catch {
-    Write-Output ('JSON_START_PRINTERS []')
-}
-# --- Linha 2: filas spooler + contadores (DESDE BOOT, mas melhor que nada) ---
-try {
-    $arr = @(Get-CimInstance Win32_PerfFormattedData_Spooler_PrintQueue -ErrorAction Stop | Select-Object Name,TotalPagesPrinted,TotalJobsPrinted,JobsSpooling)
-    if ($arr.Count -eq 0) { Write-Output ('JSON_START_QUEUES []') }
-    else { $json = $arr | ConvertTo-Json -Depth 4 -Compress ; Write-Output ('JSON_START_QUEUES ' + $json) }
-} catch {
-    Write-Output ('JSON_START_QUEUES []')
-}
-# --- Linha 3: Drivers instalados (para ver se DriverDate/Version existe e se Epson tem DriverInfo cumulativo) ---
-try {
-    $arr = @(Get-CimInstance Win32_PrinterDriver -ErrorAction Stop | Select-Object Name,Manufacturer,SupportedPlatform,Version,DrivePath,DataFile,ConfigFile)
-    if ($arr.Count -eq 0) { Write-Output ('JSON_START_DRIVERS []') }
-    else { $json = $arr | ConvertTo-Json -Depth 4 -Compress ; Write-Output ('JSON_START_DRIVERS ' + $json) }
-} catch {
-    Write-Output ('JSON_START_DRIVERS []')
-}
-# --- Linha 4: Win32_PnPEntity (dispositivos Plug&Play CONECTADOS AGORA!) ---
-try {
-    $arr = @(Get-CimInstance Win32_PnPEntity -ErrorAction Stop | Where-Object { $_.PNPClass -in ('Printer','USBPrint','USB','Dot4') } | Select-Object Name,PNPClass,Status,DeviceID,Manufacturer,HardwareID)
-    if ($arr.Count -eq 0) { Write-Output ('JSON_START_PNP []') }
-    else { $json = $arr | ConvertTo-Json -Depth 4 -Compress ; Write-Output ('JSON_START_PNP ' + $json) }
-} catch {
-    Write-Output ('JSON_START_PNP []')
-}
-# --- Linha 5: Registro do Windows HKLM...Print\Printers (CONTADOR CUMULATIVO da vida util!) ---
-# Muitos fabricantes (Epson, HP, Canon) salvam TotalPages CUMULATIVO (nao desde boot!) aqui.
-try {
-    $regPrintersPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Printers'
-    $allReg = @()
-    if (Test-Path $regPrintersPath) {
-        $subkeys = @(Get-ChildItem $regPrintersPath -ErrorAction SilentlyContinue)
-        foreach ($k in $subkeys) {
-            $objProps = @{
-                PrinterName = $k.PSChildName
+$ErrorActionPreference = 'SilentlyContinue'
+# --- 1/7: Win32_Printer (NIVEL 1, SEM try aninhado!) ---
+$arr = @(Get-CimInstance Win32_Printer -ErrorAction SilentlyContinue | Select-Object Name,DriverName,Manufacturer,PortName,DeviceID,Status,ExtendedPrinterStatus,Default,WorkOffline,PrinterState,PrinterStatus,Shared,Local)
+if ($arr.Count -eq 0) { Write-Output ('JSON_START_PRINTERS []') }
+else { $json = $arr | ConvertTo-Json -Depth 4 -Compress ; Write-Output ('JSON_START_PRINTERS ' + $json) }
+# --- 2/7: PrintQueue spooler (NIVEL 1) ---
+$arr = @(Get-CimInstance Win32_PerfFormattedData_Spooler_PrintQueue -ErrorAction SilentlyContinue | Select-Object Name,TotalPagesPrinted,TotalJobsPrinted,JobsSpooling)
+if ($arr.Count -eq 0) { Write-Output ('JSON_START_QUEUES []') }
+else { $json = $arr | ConvertTo-Json -Depth 4 -Compress ; Write-Output ('JSON_START_QUEUES ' + $json) }
+# --- 3/7: Drivers (NIVEL 1) ---
+$arr = @(Get-CimInstance Win32_PrinterDriver -ErrorAction SilentlyContinue | Select-Object Name,Manufacturer,SupportedPlatform,Version,DrivePath,DataFile,ConfigFile)
+if ($arr.Count -eq 0) { Write-Output ('JSON_START_DRIVERS []') }
+else { $json = $arr | ConvertTo-Json -Depth 4 -Compress ; Write-Output ('JSON_START_DRIVERS ' + $json) }
+# --- 4/7: PnP Plug&Play CONECTADOS (NIVEL 1) ---
+$arr = @(Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue | Where-Object { $_.PNPClass -in ('Printer','USBPrint','USB','Dot4') } | Select-Object Name,PNPClass,Status,DeviceID,Manufacturer,HardwareID)
+if ($arr.Count -eq 0) { Write-Output ('JSON_START_PNP []') }
+else { $json = $arr | ConvertTo-Json -Depth 4 -Compress ; Write-Output ('JSON_START_PNP ' + $json) }
+# --- 5/7: REGISTRY Print\Printers (NIVEL 1, SEM loops aninhados com try/catch!) ---
+$allReg = @()
+$regPrintersPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Printers'
+if (Test-Path $regPrintersPath) {
+    $subkeys = @(Get-ChildItem $regPrintersPath -ErrorAction SilentlyContinue)
+    foreach ($k in $subkeys) {
+        $objProps = @{ PrinterName = $k.PSChildName }
+        $props = Get-ItemProperty $k.PSPath -ErrorAction SilentlyContinue
+        if ($props) {
+            $props.PSObject.Properties | ForEach-Object {
+                if ($_.Name -notlike 'PS*') { $objProps[$_.Name] = $_.Value }
             }
-            try {
-                $props = Get-ItemProperty $k.PSPath -ErrorAction SilentlyContinue
-                if ($props) {
-                    $props.PSObject.Properties | ForEach-Object {
-                        if ($_.Name -notlike 'PS*') {
-                            $objProps[$_.Name] = $_.Value
-                        }
-                    }
+        }
+        $driverDataPath = Join-Path $k.PSPath 'PrinterDriverData'
+        if (Test-Path $driverDataPath) {
+            $dd = Get-ItemProperty $driverDataPath -ErrorAction SilentlyContinue
+            if ($dd) {
+                $dd.PSObject.Properties | ForEach-Object {
+                    if ($_.Name -notlike 'PS*') { $objProps['DD_' + $_.Name] = $_.Value }
                 }
-            } catch {}
-            try {
-                $driverDataPath = Join-Path $k.PSPath 'PrinterDriverData'
-                if (Test-Path $driverDataPath) {
-                    $dd = Get-ItemProperty $driverDataPath -ErrorAction SilentlyContinue
-                    if ($dd) {
-                        $dd.PSObject.Properties | ForEach-Object {
-                            if ($_.Name -notlike 'PS*') {
-                                $objProps['DD_' + $_.Name] = $_.Value
-                            }
-                        }
-                    }
-                }
-            } catch {}
-            $allReg += [PSCustomObject]$objProps
+            }
+        }
+        $allReg += [PSCustomObject]$objProps
+    }
+}
+if ($allReg.Count -eq 0) { Write-Output ('JSON_START_REGISTRY []') }
+else { $json = $allReg | ConvertTo-Json -Depth 5 -Compress ; Write-Output ('JSON_START_REGISTRY ' + $json) }
+# --- 6/7: Jobs spooler (NIVEL 1) ---
+$arr = @(Get-CimInstance Win32_PrintJob -ErrorAction SilentlyContinue | Select-Object Name,JobId,TotalPages,Document,Owner)
+if ($arr.Count -eq 0) { Write-Output ('JSON_START_JOBS []') }
+else { $json = $arr | ConvertTo-Json -Depth 4 -Compress ; Write-Output ('JSON_START_JOBS ' + $json) }
+# --- 7/7: PORTAS REAIS (NIVEL 1, SEM try ANINHADO!) ---
+$portsArr = @()
+$portsArr += @(Get-PrinterPort -ErrorAction SilentlyContinue | Select-Object Name,Description,Type,PortMonitor)
+$portsArr += @(Get-CimInstance Win32_TCPIPPrinterPort -ErrorAction SilentlyContinue | ForEach-Object { [PSCustomObject]@{ Name=$_.Name; Description='TCPIP'; Type='TCPIP'; PortMonitor=$_.Protocol } })
+$usbp = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors\USB Monitor\Ports'
+if (Test-Path $usbp) {
+    Get-ChildItem $usbp -ErrorAction SilentlyContinue | ForEach-Object {
+        if (-not ($portsArr.Name -contains $_.PSChildName)) {
+            $portsArr += [PSCustomObject]@{ Name=$_.PSChildName; Description='USB Monitor Port'; Type='USB'; PortMonitor='USB Monitor' }
         }
     }
-    if ($allReg.Count -eq 0) { Write-Output ('JSON_START_REGISTRY []') }
-    else { $json = $allReg | ConvertTo-Json -Depth 5 -Compress ; Write-Output ('JSON_START_REGISTRY ' + $json) }
-} catch {
-    Write-Output ('JSON_START_REGISTRY []')
 }
-# --- Linha 6: Win32_PrintJob (JOBS JA PROCESSADOS NO SPOOLER, HISTORICO DE TRABALHOS!) ---
-# Estimativa EXCELENTE para vida util cumulativa: soma TotalPages de todos JOBS que jah passaram!
-try {
-    $arr = @(Get-CimInstance Win32_PrintJob -ErrorAction Stop | Select-Object Name,JobId,TotalPages,Document,Owner)
-    if ($arr.Count -eq 0) { Write-Output ('JSON_START_JOBS []') }
-    else { $json = $arr | ConvertTo-Json -Depth 4 -Compress ; Write-Output ('JSON_START_JOBS ' + $json) }
-} catch {
-    Write-Output ('JSON_START_JOBS []')
-}
-# --- Linha 7: PORTAS REAIS EXISTENTES (se a porta nao existe aqui, FANTASMA!) ---
-try {
-    $arr = @()
-    try {
-        $arr += @(Get-PrinterPort -ErrorAction Stop | Select-Object Name,Description,Type,PortMonitor)
-    } catch {
-        # Fallback para Windows 7 que nao tem modulo PrintManagement
-        try { Get-CimInstance Win32_TCPIPPrinterPort -ErrorAction Stop | ForEach-Object { $arr += [PSCustomObject]@{ Name=$_.Name; Description='TCPIP'; Type='TCPIP'; PortMonitor=$_.Protocol } } catch {}
-    }
-    # Adiciona portas USB/LPT/DOT4 que existem em Port Monitors do registro (fallback!)
-    try {
-        $usbp = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors\USB Monitor\Ports'
-        if (Test-Path $usbp) { Get-ChildItem $usbp -ErrorAction SilentlyContinue | ForEach-Object { if (-not ($arr.Name -contains $_.PSChildName)) { $arr += [PSCustomObject]@{ Name=$_.PSChildName; Description='USB Monitor Port'; Type='USB'; PortMonitor='USB Monitor' } } }
-    } catch {}
-    if ($arr.Count -eq 0) { Write-Output ('JSON_START_PORTS []') }
-    else { $json = $arr | ConvertTo-Json -Depth 4 -Compress ; Write-Output ('JSON_START_PORTS ' + $json) }
-} catch {
-    Write-Output ('JSON_START_PORTS []')
-}
+if ($portsArr.Count -eq 0) { Write-Output ('JSON_START_PORTS []') }
+else { $json = $portsArr | ConvertTo-Json -Depth 4 -Compress ; Write-Output ('JSON_START_PORTS ' + $json) }
 """
     raw = _run_ps(ps_cmd)
     if not raw:
@@ -1044,15 +1003,24 @@ try {
 
     results: list[PrinterData] = []
     seen_slugs: set[str] = set()
+    seen_dup_keys: set[str] = set()
     n_skipped_virtual = 0
     n_skipped_ghost_copy = 0
     n_skipped_offline_pnp = 0
+    n_skipped_dup_port_driver = 0
     for idx, item in enumerate(printers_raw or []):
         try:
             name = str(item.get("Name") or "").strip()
             driver = str(item.get("DriverName") or "").strip()
             manufacturer = str(item.get("Manufacturer") or "").strip()
             port = str(item.get("PortName") or "").strip()
+            port_orig = port
+            if not port:
+                alt_pn = _get_any_key(item, "NomeDaPorta", "NomePorta", "Porta", "PortaNome", "Port")
+                if alt_pn: port = str(alt_pn).strip()
+            if not driver:
+                alt_dr = _get_any_key(item, "NomeDoDriver", "NomeDriver", "Driver")
+                if alt_dr: driver = str(alt_dr).strip()
             status = str(item.get("Status") or item.get("ExtendedPrinterStatus") or "Unknown").strip()
             work_offline = str(item.get("WorkOffline") or "").strip().lower()
             printer_state = str(item.get("PrinterState") or item.get("PrinterStatus") or "").strip()
@@ -1066,6 +1034,23 @@ try {
                 n_skipped_virtual += 1
                 logger.debug("USB skip virtual (pulado): name=%s port=%s driver=%s", name, port, driver)
                 continue
+
+            # ================================================================
+            # P0 - DEDUP TOTAL (DRIVER + PORTA REAL ou IP REAL extraido da porta)
+            #      Evita TSC E210 x3 / RICOH SP x3 / etc (impressora duplicada 3x WMI)
+            # ================================================================
+            _dup_host = _extract_host_from_port(port) or ""
+            _dup_key = "||".join([
+                re.sub(r"[^A-Z0-9]", "", (driver or "").upper()) or "NODRIVER",
+                re.sub(r"[^A-Z0-9._]", "", (port or "").upper()) or "NOPORT",
+                re.sub(r"[^A-Z0-9._]", "", (_dup_host or "").upper()) or "NOHOST",
+            ])
+            if _dup_key in seen_dup_keys:
+                n_skipped_dup_port_driver += 1
+                logger.info("USB skip DUP (mesmo Driver+Porta+Host=%s): name=%s port=%s driver=%s",
+                            _dup_key, name, port, driver)
+                continue
+            seen_dup_keys.add(_dup_key)
 
             # ================================================================
             # P2 - FILTRO DE IMPRESSORAS FANTASMA / DESINSTALADAS / DUPLICADAS
@@ -1314,8 +1299,9 @@ try {
             continue
 
     logger.info("USB final: %d impressora(s) coletadas, %d pulada(s) (virtual), "
-                "%d pulada(s) (copy duplicata), %d pulada(s) (offline/fantasma).",
-                len(results), n_skipped_virtual, n_skipped_ghost_copy, n_skipped_offline_pnp)
+                "%d pulada(s) (copy duplicata), %d pulada(s) (dup driver+porta), %d pulada(s) (offline/fantasma).",
+                len(results), n_skipped_virtual, n_skipped_ghost_copy,
+                n_skipped_dup_port_driver, n_skipped_offline_pnp)
     return results
 
 
