@@ -1067,16 +1067,6 @@ Qualquer dúvida é só chamar a gente!`}
                               </>
                             )}
                           </div>
-                          {canEditClients && (
-                            <button
-                              className="btn btn-secondary"
-                              style={{ fontSize: 12.5, padding: "0.3rem 0.7rem", marginTop: 10 }}
-                              onClick={() => { handleFecharModalCliente(); handleOpenEdit(clienteModal); }}
-                              title="Editar dados deste cliente (nome, CNPJ, contato, etc.)"
-                            >
-                              ✏️ Editar dados do cliente
-                            </button>
-                          )}
                         </div>
                       </div>
 
@@ -1252,27 +1242,6 @@ Qualquer dúvida é só chamar a gente!`}
                       </div>
                     </div>
                     <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
-                      <a
-                        href={INSTALLER_DOWNLOAD_URL}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="btn btn-primary"
-                        style={{
-                          fontSize: 14,
-                          padding: "0.5rem 0.9rem",
-                          fontWeight: 700,
-                          textDecoration: "none",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: "0.4rem",
-                          boxShadow: "0 3px 10px rgba(59,130,246,0.3)",
-                          background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
-                          border: "1px solid rgba(59,130,246,0.5)",
-                        }}
-                        title="Baixa o instalador do agente Windows para enviar para o cliente"
-                      >
-                        ⬇️ <span>Baixar Instalador</span>
-                      </a>
                       <button
                         type="button"
                         className="btn btn-primary"
@@ -1288,19 +1257,22 @@ Qualquer dúvida é só chamar a gente!`}
                       </button>
                       <button
                         type="button"
-                        className="btn btn-secondary"
-                        style={{ fontSize: 12, padding: "0.35rem 0.75rem" }}
+                        className="btn btn-primary"
+                        style={{
+                          fontSize: 14,
+                          padding: "0.5rem 0.9rem",
+                          fontWeight: 700,
+                          textDecoration: "none",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "0.4rem",
+                          boxShadow: "0 3px 10px rgba(59,130,246,0.3)",
+                          background: "linear-gradient(135deg, #3b82f6, #1d4ed8)",
+                          border: "1px solid rgba(59,130,246,0.5)",
+                        }}
                         onClick={() => { handleFecharModalCliente(); openPairing(clienteModal); }}
                       >
-                        🔗 Gerar Pareamento (instalar agente)
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        style={{ fontSize: 12, padding: "0.35rem 0.75rem" }}
-                        onClick={() => copyText(buildPairingMessage(clienteModal))}
-                      >
-                        📩 Copiar mensagem
+                        🔗 Gerar Pareamento
                       </button>
                     </div>
                   </div>
