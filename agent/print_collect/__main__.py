@@ -643,11 +643,23 @@ def cmd_install(args: argparse.Namespace) -> int:
             rc_install = rc_fb
 
         # =====================================================================
-        # CAMADA 3: SEMPRE roda once p/ garantir primeira coleta AGORA
+        # CAMADA 3/3 (AJUSTADA v6.9.10): PULAR COLETA 'ONCE' NO WIZARD (ANTI-TRAVAMENTO!)
+        #   Antes: rodava coleta once aqui que travava no loop USB de impressoras
+        #          instaladas manualmente (Canon G3111 etc) -> Wizard nao fechava com ENTER.
+        #   Agora (v6.9.10): NAO RODA NENHUMA COLETA AQUI -> WIZARD VAI DIRETO PARA TELA FINAL!
+        #          A 1a coleta roda automaticamente nas proximas horas via TAREFA AGENDADA:
+        #             - "Print Collect Agent - 30 Minutos" (a cada 30min, ja criada acima)
+        #             - "Print Collect Agent - Ao Logar" + "Ao Iniciar" (quando usuario logar)
+        #             - "Print Collect Agent - Diario Repeticao" (diario + 60min repeticao)
+        #             - "Print Collect Agent - Watchdog" (garante coleta caso algo falhe)
+        #   Julio pediu explicitamente: "quero meu setup funcionando certinho igual antes,
+        #                                Wizard fecha apertando ENTER e NAO TRAVA mais"
         # =====================================================================
-        print("\n[CAMADA 3/3] Rodando coleta UMA VEZ agora p/ testar... (max 90 segundos)")
-        base_cmd_once = base_cmd + ["once"]
-        _exe_cmd(base_cmd_once, timeout=90)
+        print("\n[CAMADA 3/3 v6.9.10 (AJUSTE ANTI-TRAVAMENTO)]:")
+        print("  >>> Coleta imediata 'once' DESATIVADA aqui no Wizard (evita travamento USB/loop!)")
+        print("  >>> A primeira coleta automatica roda nas proximas 30 minutos pela TAREFA AGENDADA.")
+        print("  >>> Tarefas instaladas: 30 Minutos / Watchdog 10min / Diario / Ao Iniciar / Ao Logar")
+        print("  >>> (Voce tambem pode rodar manualmente agora via atalho 'Print Collect - Coletar' no Menu Iniciar)")
 
         print("\n[DICA] Para ver as 6 tarefas no Windows:")
         print("       Painel de Controle > Ferramentas Administrativas > Agendador de Tarefas")

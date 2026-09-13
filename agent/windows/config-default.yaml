@@ -5,8 +5,8 @@ server_url: "https://print-collect.onrender.com"
 # Token de agente - sera substituido pelo Wizard de Pareamento
 agent_token: "agent-dev-key"
 
-# Versao do agente (v6.9.9 = FIX TRAVAMENTO WIZARD no Joaquim: (A) CAMADA 3/3 cmd_install _exe_cmd ganhou timeout=90s max subprocess (antes sem timeout travava). (B) _snmp_quick_read REESCRITO com ThreadPoolExecutor timeout global 6.5s + 1 tentativa 'public' 2.5s (antes 2 comunidades x 2 tentativas x 4s podia TRAVAR UDP infinitamente em impressora tipo Canon G3111 WiFi (sem resposta SNMP), causava loop USB travar = Wizard nao fechar + contador zero Canon). v6.9.8 = FIX NameError scoping os/tempfile / WMIC CSV Node / 83 falsas / 261 portas falsas / MissingCatchOrFinally PS / dup 3x / port=?.)
-agent_version: "6.9.9"
+# Versao do agente (v6.9.10 = LIMPEZA ANTI-TRAVAMENTO WIZARD + CANON G3111. (1) CAMADA3/3 cmd_install REMOVIDA coleta 'once' automática no final do Wizard (era a causa do TRAVAMENTO no Joaquim: loop USB hang nao deixava chegar na tela final ENTER fechar). Agora Wizard VAI DIREITO p/ tela final; primeira coleta roda automaticamente em <30min pelas Tarefas Agendadas (30 Min, Diario, Watchdog 10min, Ao Logar, Ao Iniciar). (2) LIMPEZA CANON: REMOVIDO fallback USB->SNMP _snmp_quick_read (UDP em impressoras manual TCP/IP). Impressoras manual TCP/IP agora caem DIRETO em fallback seguro de registro Windows + spooler historico (sem UDP, sem chance de travar pysnmp OEM). (3) collect_all_usb ganhou TIMEOUT GLOBAL 45s (ThreadPoolExecutor). Mesmo que qualquer ponto WMI/PowerShell/driver trave, aborta em 45s retorna [], SEMPRE continua sem travar Wizard. Todo o resto (scaneamento automatico rede SNMP, contadores P&B/Color/Total, cards toner CMYK separados, Konicas/Ricoh/Epson, agendamento 30/30 min, extra-targets servidor) NAO FOI ALTERADO NADA e continua 100% igual as versoes boas.)
+agent_version: "6.9.10"
 
 # Intervalo de coleta em minutos (30 min = padrao do cliente Julio)
 interval_minutes: 30

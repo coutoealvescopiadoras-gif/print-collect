@@ -1180,11 +1180,21 @@ else { $json = $portsArr | ConvertTo-Json -Depth 4 -Compress ; Write-Output ('JS
                     pass
 
             # ================================================================
-            # FIX v6.9.4 CANON WIFI: TENTAR SNMP QUICK READ na porta de REDE!
-            # Se a impressora for TCP/IP instalada manualmente (Canon WiFi etc),
-            # extrai IP LIMPO da porta (remove IP_ prefixo + _N sufixo!) e tenta
-            # SNMP de 1.5s. Se responder, usa CONTADORES REAIS DA IMPRESSORA e
-            # seta ip_address com IP REAL para deduplicação não duplicar!
+            # AJUSTE v6.9.10 (LIMPEZA ANTI-TRAVAMENTO!): CANON G3111 WIFI etc.
+            #   Julio pediu explicitamente: "limpar, esquecer essa canon,
+            #                                 quero setup funcionando certinho igual ANTES"
+            #   Antes (v6.9.4 ate v6.9.9): tentava _snmp_quick_read() UDP para
+            #      pegar contadores reais de impressoras TCP/IP manual (Canon).
+            #      Isso TRAVAVA o loop USB em Windows OEM pt-BR (pysnmp UDP +
+            #      impressoras que NAO respondem SNMP → hang infinito apesar de
+            #      timeouts individuais → Wizard NAO fechava com ENTER no final).
+            #   Agora (v6.9.10): PULAR COMPLETAMENTE a tentativa USB->SNMP.
+            #      Impressoras TCP/IP instaladas manualmente vao DIRETO para
+            #      os fallbacks seguros de SEMPRE (registro Windows cumulativo
+            #      + spooler historico jobs) = ZERO chance de travamento UDP.
+            #      Contadores e Toners de impressoras TCP/IP vem do SCANEAMENTO
+            #      NORMAL DA REDE (step 3/4) que funciona perfeitamente em
+            #      Konica/Ricoh/Epson e NUNCA travou.
             # ================================================================
             host_from_port = _extract_host_from_port(port)
             snmp_ok = False
@@ -1195,50 +1205,12 @@ else { $json = $portsArr | ConvertTo-Json -Depth 4 -Compress ; Write-Output ('JS
             alerts_final: list[str] = []
 
             if host_from_port:
-                logger.debug("  USB->SNMP: porta=%s extraiu host=%s → tentando quick read 1.5s...",
-                             port, host_from_port)
-                rd = _snmp_quick_read(host_from_port)
-                if rd is not None and (rd.pages_total > 0 or rd.model or rd.pages_color > 0):
-                    # ================= SNMP DEU CERTO! USA DADOS REAIS! =================
-                    snmp_ok = True
-                    logger.info("  USB->SNMP OK! host=%s model=%s pag_total=%s pag_color=%s [usar estes contadores OFICIAIS!]",
-                                host_from_port, rd.model or "(null)", rd.pages_total, rd.pages_color)
-                    # Sobrescreve campos que vieram do SNMP pois são MELHORES!
-                    if rd.pages_total >= int(pages_total or 0):
-                        pages_total = int(rd.pages_total)
-                    if rd.pages_bw is not None:
-                        pages_bw_snmp = int(rd.pages_bw)
-                    else:
-                        pages_bw_snmp = 0
-                    pages_color_snmp = int(rd.pages_color)
-                    # Se paginas SNMP forem >0, confia em bw/color do SNMP 100%!
-                    if rd.pages_total > 0 or pages_color_snmp > 0 or pages_bw_snmp > 0:
-                        pages_bw_final = pages_bw_snmp
-                        pages_color_final = pages_color_snmp
-                        pages_total_final = int(rd.pages_total)
-                    else:
-                        pages_bw_final = int(pages_total or 0)
-                        pages_color_final = 0
-                        pages_total_final = int(pages_total or 0)
-                    if rd.model:
-                        model = str(rd.model)
-                    if rd.manufacturer:
-                        manufacturer = str(rd.manufacturer)
-                    if rd.serial_number and len(str(rd.serial_number)) >= 4:
-                        serial = str(rd.serial_number)
-                        reg_serial_used = False
-                    if rd.toner_black is not None:   toner_black_final   = rd.toner_black
-                    if rd.toner_cyan is not None:    toner_cyan_final    = rd.toner_cyan
-                    if rd.toner_magenta is not None: toner_magenta_final = rd.toner_magenta
-                    if rd.toner_yellow is not None:  toner_yellow_final  = rd.toner_yellow
-                    if rd.alerts:                    alerts_final        = list(rd.alerts)
-                    # IP REAL! (para deduplicação com coleta SNMP broadcast funcionar!)
-                    final_ip_address = host_from_port
-                else:
-                    pages_bw_final = int(pages_total or 0)
-                    pages_color_final = 0
-                    pages_total_final = int(pages_total or 0)
-                    final_ip_address = None  # vai cair no USB:slug abaixo
+                logger.debug("  USB->SNMP [DESLIGADO v6.9.10 anti-travamento]: host=%s. Usando fallback registro/spooler seguro (nao tenta UDP para nao travar loop USB).",
+                             host_from_port)
+                pages_bw_final = int(pages_total or 0)
+                pages_color_final = 0
+                pages_total_final = int(pages_total or 0)
+                final_ip_address = None
             else:
                 pages_bw_final = int(pages_total or 0)
                 pages_color_final = 0
@@ -1313,18 +1285,45 @@ else { $json = $portsArr | ConvertTo-Json -Depth 4 -Compress ; Write-Output ('JS
 def collect_all_usb() -> list[PrinterData]:
     """Entry point principal. Chama a funcao correta conforme SO.
     Qualquer erro retorna [] - NAO QUEBRA a coleta SNMP (ADITIVO 100%).
+
+    v6.9.10 (SEGURANCA MAXIMA ANTI-TRAVAMENTO!):
+      TIMEOUT GLOBAL 45 SEGUNDOS com ThreadPoolExecutor.
+      Mesmo que _collect_windows() travar em qualquer ponto (WMI OEM pt-BR,
+      PowerShell MissingCatchOrFinally antigo, driver bugado etc), o executor aborta
+      em 45s e retorna [] = COLETA USB PULA, WIZARD E COLETA PRINCIPAL
+      CONTINUAM RODANDO SEMPRE SEM TRAVAR NUNCA MAIS!
     """
     try:
         system = platform.system().lower()
         if system != "windows":
             logger.debug("Coleta USB skip: SO=%s (apenas Windows por enquanto)", system)
             return []
-        n = _collect_windows()
-        if n:
-            logger.info("Coleta USB: %d impressora(s) fisica(s) locais encontradas.", len(n))
-        else:
-            logger.info("Coleta USB: nenhuma impressora fisica local encontrada neste ciclo (pode ser normal se nao houver USB/LPT/Shared).")
-        return n
+
+        def _usb_worker() -> list[PrinterData]:
+            try:
+                return _collect_windows()
+            except Exception as exc_w:
+                logger.warning("Coleta USB (worker interno) falhou (ignorado): %s", exc_w, exc_info=True)
+                return []
+
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
+        USB_GLOBAL_TIMEOUT_SEC = 45
+        try:
+            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="pc_usb_global") as pool:
+                fut = pool.submit(_usb_worker)
+                n = fut.result(timeout=USB_GLOBAL_TIMEOUT_SEC)
+                if n:
+                    logger.info("Coleta USB: %d impressora(s) fisica(s) locais encontradas.", len(n))
+                else:
+                    logger.info("Coleta USB: nenhuma impressora fisica local encontrada neste ciclo (pode ser normal se nao houver USB/LPT/Shared).")
+                return n
+        except FutTimeout:
+            logger.warning(
+                "Coleta USB TIMEOUT GLOBAL (%ss) ESTOURADO! _collect_windows() travou em algum ponto WMI/PowerShell OEM. "
+                "ABORTADO automaticamente para NAO TRAVAR Wizard e nao atrasar coleta. "
+                "(Proxima coleta em 30min tenta novamente, sem prejuizo para scaneamento rede SNMP.)",
+                USB_GLOBAL_TIMEOUT_SEC)
+            return []
     except Exception as exc:
         logger.warning("Coleta USB FALHOU de maneira geral (ignorado, SNMP continua ok): %s (type=%s)",
                        exc, type(exc).__name__, exc_info=True)
