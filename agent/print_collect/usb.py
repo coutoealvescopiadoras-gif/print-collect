@@ -376,16 +376,22 @@ def _run_ps(cmd: str, timeout_sec: int = 90) -> str:
       2) Executa powershell.exe -File temp.ps1
       3) -File NÃO passa nada pela linha de comando → 0 chance de encoding quebrar.
       4) Apaga o arquivo temporário no finally (nunca deixa lixo).
+    v6.9.8 FIX SCOPING NAMEERROR: imports DENTRO da funcao para garantir escopo local
+    (evita confusao de Python 3.12 com variaveis `as exc` no except que marcam nomes como LOCAL).
     """
+    import os as _os
+    import tempfile as _tempfile
+    import subprocess as _subprocess
+    import time as _time
     last_err = ""
     tmp_path = None
     for attempt in (1, 2):
         try:
             # 1) Escreve o script num arquivo temporário .ps1 (UTF-8 BOM = PowerShell entende nativamente)
             #    Usa pasta temp do Windows + PID + attempt para nunca colidir
-            suffix = f"_pc_{os.getpid()}_{attempt}.ps1"
-            tmp_dir = tempfile.gettempdir()
-            tmp_path = os.path.join(tmp_dir, f"pc_usb{suffix}")
+            suffix = f"_pc_{_os.getpid()}_{attempt}.ps1"
+            tmp_dir = _tempfile.gettempdir()
+            tmp_path = _os.path.join(tmp_dir, f"pc_usb{suffix}")
             with open(tmp_path, "w", encoding="utf-8-sig", errors="replace") as f:
                 f.write("# Print Collect - USB collect (temp file, auto-deleted)\n")
                 f.write("[Console]::InputEncoding  = [System.Text.Encoding]::UTF8\n")
@@ -396,7 +402,7 @@ def _run_ps(cmd: str, timeout_sec: int = 90) -> str:
                 f.write("chcp 65001 > $null\n")
                 f.write(cmd + "\n")
             # 2) Executa powershell.exe -File temp.ps1 (NÃO -Command, NÃO -EncodedCommand!)
-            proc = subprocess.run(
+            proc = _subprocess.run(
                 ["powershell.exe", "-NoProfile", "-NonInteractive", "-MTA",
                  "-ExecutionPolicy", "Bypass", "-File", tmp_path],
                 capture_output=True,
@@ -436,30 +442,27 @@ def _run_ps(cmd: str, timeout_sec: int = 90) -> str:
                         logger.debug("USB/powershell attempt=%d stderr: %.800s", attempt, err_txt[:800])
             if text.strip():
                 # Limpa arquivo temporário
-                if tmp_path and os.path.exists(tmp_path):
-                    try: os.remove(tmp_path)
+                if tmp_path and _os.path.exists(tmp_path):
+                    try: _os.remove(tmp_path)
                     except Exception: pass
                 return text
             logger.warning("USB/powershell attempt=%d retornou ZERO bytes de stdout. Vamos tentar novamente (retry=%d)...",
                            attempt, 2 if attempt == 1 else 0)
             if attempt == 1:
-                import time as _time
                 _time.sleep(1.2)
-        except subprocess.TimeoutExpired as exc:
+        except _subprocess.TimeoutExpired as exc:
             logger.warning("USB/PowerShell attempt=%d timeout %ds: %s", attempt, timeout_sec, exc)
             last_err = f"TimeoutExpired {timeout_sec}s"
             if attempt == 1:
-                import time as _time
                 _time.sleep(0.8)
         except Exception as exc:
             logger.warning("USB/powershell attempt=%d erro geral: %s (type=%s)", attempt, exc, type(exc).__name__)
             last_err = f"{type(exc).__name__}: {exc}"
             if attempt == 1:
-                import time as _time
                 _time.sleep(0.8)
         finally:
-            if tmp_path and os.path.exists(tmp_path):
-                try: os.remove(tmp_path)
+            if tmp_path and _os.path.exists(tmp_path):
+                try: _os.remove(tmp_path)
                 except Exception: pass
 
     # 2 tentativas falharam → FALLBACK WMIC.EXE
