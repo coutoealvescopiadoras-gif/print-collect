@@ -87,42 +87,47 @@ def _extract_host_from_port(port: str) -> Optional[str]:
     return None
 
 
-def _snmp_quick_read(host: str, community: str = "public", timeout_sec: float = 4.0) -> Optional[PrinterData]:
-    """Tenta coleta SNMP em impressora de REDE (v6.9.5 MELHORADO!).
-    MELHORIAS vs 1.5s antigo:
-      * Timeout 4s (nao 1.5s!) — rede WiFi lenta de cliente tem tempo de responder.
-      * Primeiro tenta community 'public' (padrão), se falhar tenta 'private' (fallback!).
-      * Chama collect_printer() 2x se necessário para aumentar chance.
-    **NAO TRAVA o loop principal. Se falhar → fallback spooler normal!
-    Retorna PrinterData (com pages_color REAL!) se sucesso, None se falhar."""
-    try:
-        from print_collect.snmp import collect_printer
-    except Exception as exc:
-        logger.debug("  USB->SNMP quick read import falhou host=%s: %s", host, exc)
+def _snmp_quick_read(host: str, community: str = "public", timeout_sec: float = 2.5) -> Optional[PrinterData]:
+    """Tenta coleta SNMP em impressora de REDE — v6.9.9 PROTEGIDA CONTRA TRAVAMENTO!
+
+    REGRAS DE SEGURANCA ANTI-TRAVA (NAO QUEBRA NUNCA MAIS!):
+      * APENAS 1 tentativa na community 'public' (nao tenta private).
+      * Timeout individual pysnmp: 2.5s (reduzido de 4s)
+      * PROTECAO GLOBAL por ThreadPoolExecutor: timeout TOTAL MAXIMO 6.5s!
+        Se o pysnmp travar UDP infinitamente por qualquer motivo,
+        ThreadPoolExecutor aborta a thread no timeout e retorna None.
+      * NUNCA retorna exception, sempre retorna None em caso de erro/falha/timeout.
+    """
+    def _inner_try() -> Optional[PrinterData]:
+        try:
+            from print_collect.snmp import collect_printer
+        except Exception as exc_inner:
+            logger.debug("  USB->SNMP quick read import falhou host=%s: %s", host, exc_inner)
+            return None
+        timeout_ms = int(timeout_sec * 1000)
+        try:
+            rd = collect_printer(host, community=community, timeout=timeout_ms)
+            if rd is not None and (rd.pages_total > 0 or rd.pages_color > 0 or rd.model):
+                return rd
+        except Exception as exc_try:
+            logger.debug("  USB->SNMP quick read inner fail host=%s: %s (type=%s)",
+                         host, exc_try, type(exc_try).__name__)
         return None
 
-    timeout_ms = int(timeout_sec * 1000)
-    communities = [community]
-    if community.lower() != "private":
-        communities.append("private")
-
-    last_exc = None
-    for c in communities:
-        for attempt in (1, 2):
-            try:
-                rd = collect_printer(host, community=c, timeout=timeout_ms)
-                if rd is not None and (rd.pages_total > 0 or rd.pages_color > 0 or rd.model):
-                    if c != community:
-                        logger.info("  USB->SNMP quick_read OK na community alternativa '%s' (host=%s, tentativa %d)",
-                                    c, host, attempt)
-                    return rd
-            except Exception as exc:
-                last_exc = exc
-                import time as _t
-                _t.sleep(0.25)
-    logger.debug("  USB->SNMP quick read falhou host=%s communities=%s attempts=2. Ultimo erro: %s (type=%s)",
-                 host, communities, last_exc, type(last_exc).__name__ if last_exc else "None")
-    return None
+    # Executor com 1 thread worker: PROTECAO GLOBAL timeout!
+    try:
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="pc_snmp_qr") as pool:
+            fut = pool.submit(_inner_try)
+            return fut.result(timeout=6.5)
+    except FutTimeout:
+        logger.warning("  USB->SNMP quick_read TIMEOUT MAXIMO (6.5s) estourado host=%s. "
+                       "Abortado para NAO TRAVAR loop USB (fallback para contador spooler/registro!).", host)
+        return None
+    except Exception as exc_global:
+        logger.debug("  USB->SNMP quick_read executor falhou host=%s (fallback ok): %s (type=%s)",
+                     host, exc_global, type(exc_global).__name__)
+        return None
 
 # Impressoras VIRTUAIS do Windows - NAO COLETAMOS nada delas
 VIRTUAL_KEYWORDS = (

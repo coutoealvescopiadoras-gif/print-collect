@@ -252,11 +252,16 @@ def cmd_networks(_: argparse.Namespace) -> int:
     return 0
 
 
-def _exe_cmd(cmd: list[str], check: bool = False) -> int:
+def _exe_cmd(cmd: list[str], check: bool = False, timeout: int | None = None) -> int:
     print("[>] " + " ".join(cmd))
     try:
-        result = subprocess.run(cmd)
+        result = subprocess.run(cmd, timeout=timeout)
         rc = result.returncode
+    except subprocess.TimeoutExpired as e_t:
+        print(f"[ATENCAO] Comando demorou mais que {timeout}s e foi CANCELADO automaticamente (timeout).")
+        print(f"          (Coleta de impressoras pode ser executada depois manualmente via atalho.)")
+        print(f"          Detalhe: {e_t}")
+        return 124
     except FileNotFoundError as e:
         print(f"[ERRO] Comando nao encontrado: {e}")
         return 127
@@ -640,9 +645,9 @@ def cmd_install(args: argparse.Namespace) -> int:
         # =====================================================================
         # CAMADA 3: SEMPRE roda once p/ garantir primeira coleta AGORA
         # =====================================================================
-        print("\n[CAMADA 3/3] Rodando coleta UMA VEZ agora p/ testar...")
+        print("\n[CAMADA 3/3] Rodando coleta UMA VEZ agora p/ testar... (max 90 segundos)")
         base_cmd_once = base_cmd + ["once"]
-        _exe_cmd(base_cmd_once)
+        _exe_cmd(base_cmd_once, timeout=90)
 
         print("\n[DICA] Para ver as 6 tarefas no Windows:")
         print("       Painel de Controle > Ferramentas Administrativas > Agendador de Tarefas")

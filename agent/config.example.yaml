@@ -7,8 +7,8 @@ server_url: "https://print-collect.onrender.com"
 # Token do agente — crie em: Painel > Agentes > Novo agente
 agent_token: "agent-dev-key"
 
-# Versão (informativo) — v6.9.8: (1) FIX v6.9.7 NameError 'os' / 'tempfile' faltavam imports no topo. (2) _wmic_csv_to_dicts SKIPA 1a coluna Node (hostname, wmic CSV SEMPRE tem) + QUOTING_MINIMAL correto, senao gerava 83 impressoras FALSAS (Win32_ComputerSystem, DESKTOP-E02OP26, lista de papel). (3) Filtro FAKE_NAMES rígido no printer fallback, remove nomes invalidos. (4) Busca de PORTAS (TCPIPPrinterPort + printerport) VOLTA para /format:list provado v6.9.6 (38 portas reais). v6.9.7 CSV dava 261 falsas. Win32_Printer + PrintQueue CONTINUAM com /format:csv.
-agent_version: "6.9.8"
+# Versão (informativo) — v6.9.9: (1) PROTECAO TRAVAMENTO WIZARD: CAMADA 3/3 subprocess.run 'once' timeout=90s max, NAO TRAVA MAIS se coleta demorar. (2) _snmp_quick_read (USB->SNMP para impressoras manual TCP/IP tipo Canon WiFi) REESCRITO com ThreadPoolExecutor timeout 6.5s + 1 tentativa community public (antes 2 comunidades x 2 tentativas x 4s que podia TRAVAR UDP infinitamente em Canon G3111 no Joaquim causando Wizard nao fechar e contador zero). v6.9.8: (1) FIX v6.9.7 NameError 'os' / 'tempfile' faltavam imports no topo. (2) _wmic_csv_to_dicts SKIPA 1a coluna Node (hostname, wmic CSV SEMPRE tem) + QUOTING_MINIMAL correto. (3) Filtro FAKE_NAMES rigido no printer fallback. (4) Busca de PORTAS (TCPIPPrinterPort + printerport) VOLTA para /format:list provado v6.9.6.
+agent_version: "6.9.9"
 
 # Intervalo entre coletas automáticas (minutos)
 # 30 minutos = atualiza contadores de 30 em 30 min
