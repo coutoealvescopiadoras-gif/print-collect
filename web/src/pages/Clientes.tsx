@@ -1070,51 +1070,7 @@ Qualquer dúvida é só chamar a gente!`}
                         </div>
                       </div>
 
-                      {/* ========== CARD 2: DADOS CADASTRITAIS (CNPJ) ========== */}
-                      <div style={{
-                        background: "var(--surface)",
-                        border: "1px solid var(--border)",
-                        borderRadius: 12,
-                        padding: "0.9rem 1rem",
-                        minWidth: 240,
-                        boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
-                      }}>
-                        <div style={{ fontSize: 11.5, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 6 }}>
-                          🏢 Dados Cadastrais
-                        </div>
-                        {clienteModal.cnpj ? (
-                          <div
-                            onClick={() => copyText(String(clienteModal.cnpj || ""))}
-                            title="Clique para copiar CNPJ"
-                            style={{
-                              display: "inline-flex", alignItems: "center", gap: 8,
-                              fontFamily: "'JetBrains Mono', 'Courier New', ui-monospace, monospace",
-                              fontSize: 18, fontWeight: 800, color: "var(--primary)",
-                              padding: "0.3rem 0.55rem", marginLeft: "-0.55rem",
-                              borderRadius: 8, cursor: "pointer",
-                              transition: "background .15s",
-                              userSelect: "all",
-                            }}
-                            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--surface-hover)"; }}
-                            onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
-                          >
-                            {formatCNPJ(clienteModal.cnpj)}
-                            <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500, fontFamily: "ui-sans-serif, system-ui" }}>📋 copiar</span>
-                          </div>
-                        ) : (
-                          <div style={{ fontSize: 13.5, color: "var(--text-muted)", padding: "0.25rem 0" }}>
-                            🚫 CNPJ não cadastrado
-                          </div>
-                        )}
-                        <div style={{ marginTop: 8, fontSize: 12.5, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 6 }}>
-                          <span>📄 Tipo:</span>
-                          <strong style={{ color: "var(--text)" }}>
-                            {clienteModal.cnpj && _onlyDigits(clienteModal.cnpj).length === 14 ? "Pessoa Jurídica (CNPJ)" : clienteModal.cnpj && _onlyDigits(clienteModal.cnpj).length === 11 ? "Pessoa Física (CPF)" : "Não informado"}
-                          </strong>
-                        </div>
-                      </div>
-
-                      {/* ========== CARD 3: CONTATO PRINCIPAL ========== */}
+                      {/* ========== CARD 2: CONTATO PRINCIPAL ========== */}
                       <div style={{
                         background: "var(--surface)",
                         border: "1px solid var(--border)",
@@ -1185,6 +1141,50 @@ Qualquer dúvida é só chamar a gente!`}
                               🚫 Nenhum contato cadastrado
                             </div>
                           )}
+                        </div>
+                      </div>
+
+                      {/* ========== CARD 3: DADOS CADASTRITAIS (CNPJ) ========== */}
+                      <div style={{
+                        background: "var(--surface)",
+                        border: "1px solid var(--border)",
+                        borderRadius: 12,
+                        padding: "0.9rem 1rem",
+                        minWidth: 240,
+                        boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
+                      }}>
+                        <div style={{ fontSize: 11.5, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 6 }}>
+                          🏢 Dados Cadastrais
+                        </div>
+                        {clienteModal.cnpj ? (
+                          <div
+                            onClick={() => copyText(String(clienteModal.cnpj || ""))}
+                            title="Clique para copiar CNPJ"
+                            style={{
+                              display: "inline-flex", alignItems: "center", gap: 8,
+                              fontFamily: "'JetBrains Mono', 'Courier New', ui-monospace, monospace",
+                              fontSize: 18, fontWeight: 800, color: "var(--primary)",
+                              padding: "0.3rem 0.55rem", marginLeft: "-0.55rem",
+                              borderRadius: 8, cursor: "pointer",
+                              transition: "background .15s",
+                              userSelect: "all",
+                            }}
+                            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--surface-hover)"; }}
+                            onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
+                          >
+                            {formatCNPJ(clienteModal.cnpj)}
+                            <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500, fontFamily: "ui-sans-serif, system-ui" }}>📋 copiar</span>
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: 13.5, color: "var(--text-muted)", padding: "0.25rem 0" }}>
+                            🚫 CNPJ não cadastrado
+                          </div>
+                        )}
+                        <div style={{ marginTop: 8, fontSize: 12.5, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 6 }}>
+                          <span>📄 Tipo:</span>
+                          <strong style={{ color: "var(--text)" }}>
+                            {clienteModal.cnpj && _onlyDigits(clienteModal.cnpj).length === 14 ? "Pessoa Jurídica (CNPJ)" : clienteModal.cnpj && _onlyDigits(clienteModal.cnpj).length === 11 ? "Pessoa Física (CPF)" : "Não informado"}
+                          </strong>
                         </div>
                       </div>
                     </div>
