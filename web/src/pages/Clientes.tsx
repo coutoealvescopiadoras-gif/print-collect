@@ -1041,8 +1041,47 @@ Qualquer dúvida é só chamar a gente!`}
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem", marginBottom: "1rem" }}>
                   <div style={{ minWidth: 0 }}>
                     {/* ===== (NOVO JULIO 12/09) CARDS SUPERIORES: 3 COLUNAS IGUAIS, MESMO TAMANHO, LADO A LADO! ===== */}
-                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr)", gap: "1rem", alignItems: "stretch" }}>
-                      {/* ========== CARD 1: DADOS CADASTRITRAIS (PRIMEIRO, como Julio pediu!) ========== */}
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr)", gap: "1rem", alignItems: "stretch" }}>
+                      {/* ========== CARD 1: NOME DO CLIENTE + STATUS ATIVO/INATIVO (PRIMEIRO, Julio pediu!) ========== */}
+                      <div style={{
+                        background: "var(--surface)",
+                        border: "1px solid var(--border)",
+                        borderRadius: 12,
+                        padding: "0.85rem 1rem",
+                        minWidth: 0,
+                        boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
+                        display: "flex", flexDirection: "column",
+                      }}>
+                        <div style={{ fontSize: 11.5, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 6 }}>
+                          🆔 Cliente
+                        </div>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <h2 style={{
+                              margin: 0, fontSize: "1.35rem",
+                              whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden",
+                              minWidth: 0, maxWidth: 560,
+                              lineHeight: 1.2,
+                            }}>
+                              {clienteModal.name}
+                            </h2>
+                            <span className={`badge ${clienteModal.active ? "online" : "offline"}`} style={{ fontSize: 12.5, padding: "0.25rem 0.7rem", margin: 0 }}>
+                              {clienteModal.active ? "✅ Ativo" : "⏸️ Inativo"}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginTop: 8, display: "flex", alignItems: "center", gap: "0.85rem", flexWrap: "wrap" }}>
+                            <span>🆔 ID <strong style={{ color: "var(--text)", fontFamily: "'JetBrains Mono', monospace" }}>#{clienteModal.id}</strong></span>
+                            {clienteModal.partner_name && (
+                              <>
+                                <span style={{ color: "var(--border)" }}>·</span>
+                                <span>🤝 Parceiro: <strong style={{ color: "var(--text)" }}>{clienteModal.partner_name}</strong></span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* ========== CARD 2: DADOS CADASTRITRAIS (SEGUNDO, Julio pediu!) ========== */}
                       <div style={{
                         background: "var(--surface)",
                         border: "1px solid var(--border)",
@@ -1087,7 +1126,7 @@ Qualquer dúvida é só chamar a gente!`}
                         </div>
                       </div>
 
-                      {/* ========== CARD 2: CONTATO PRINCIPAL ========== */}
+                      {/* ========== CARD 3: CONTATO PRINCIPAL (TERCEIRO, Julio pediu!) ========== */}
                       <div style={{
                         background: "var(--surface)",
                         border: "1px solid var(--border)",
@@ -1159,45 +1198,6 @@ Qualquer dúvida é só chamar a gente!`}
                               🚫 Nenhum contato cadastrado
                             </div>
                           )}
-                        </div>
-                      </div>
-
-                      {/* ========== CARD 3: NOME DO CLIENTE + STATUS ATIVO/INATIVO (terceiro card) ========== */}
-                      <div style={{
-                        background: "var(--surface)",
-                        border: "1px solid var(--border)",
-                        borderRadius: 12,
-                        padding: "0.85rem 1rem",
-                        minWidth: 0,
-                        boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
-                        display: "flex", flexDirection: "column",
-                      }}>
-                        <div style={{ fontSize: 11.5, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 6 }}>
-                          🆔 Cliente
-                        </div>
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                            <h2 style={{
-                              margin: 0, fontSize: "1.35rem",
-                              whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden",
-                              minWidth: 0, maxWidth: 360,
-                              lineHeight: 1.2,
-                            }}>
-                              {clienteModal.name}
-                            </h2>
-                            <span className={`badge ${clienteModal.active ? "online" : "offline"}`} style={{ fontSize: 12.5, padding: "0.25rem 0.7rem", margin: 0 }}>
-                              {clienteModal.active ? "✅ Ativo" : "⏸️ Inativo"}
-                            </span>
-                          </div>
-                          <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginTop: 8, display: "flex", alignItems: "center", gap: "0.85rem", flexWrap: "wrap" }}>
-                            <span>🆔 ID <strong style={{ color: "var(--text)", fontFamily: "'JetBrains Mono', monospace" }}>#{clienteModal.id}</strong></span>
-                            {clienteModal.partner_name && (
-                              <>
-                                <span style={{ color: "var(--border)" }}>·</span>
-                                <span>🤝 Parceiro: <strong style={{ color: "var(--text)" }}>{clienteModal.partner_name}</strong></span>
-                              </>
-                            )}
-                          </div>
                         </div>
                       </div>
                     </div>
