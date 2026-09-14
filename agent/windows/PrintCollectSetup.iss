@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "6.9.11"
+  #define MyAppVersion "6.9.12"
 #endif
 
 #define MyAppName "Print Collect Agent"
@@ -83,8 +83,45 @@ Filename: "{app}\open-config.bat"; Description: "Editar config.yaml manualmente"
 [Tasks]
 Name: "desktopicon"; Description: "Criar atalho Wizard na Area de Trabalho"; GroupDescription: "Atalhos adicionais:"; Flags: unchecked
 
+; =============================================================================
+; v6.9.11 FIX INSTALL POR CIMA: apaga EXEs/BATs antigos em {app} ANTES de copiar
+; os novos. Evita corrupcao (v6.9.10 bug onde Setup subiu com EXE antigo!).
+; Nao apaga config.yaml manual do usuario (que fica em {commonappdata}\PrintCollect,
+; nao em {app}).
+; =============================================================================
+[InstallDelete]
+Type: files; Name: "{app}\*.exe"
+Type: files; Name: "{app}\*.bat"
+Type: files; Name: "{app}\*.yaml"
+
+; =============================================================================
+; v6.9.11 FIX DESINSTALACAO: 3 CAMADAS para GARANTIR que tudo e removido.
+; CAMADA 1/3: BAT unregister (16 variantes schtasks /Delete, sem pause!)
+; CAMADA 2/3: EXE nativo uninstall (mesmas 16 variantes, garantia se BAT falhar)
+; Flags waituntilterminated = espera o fim (NAO pula para proxima etapa!)
+; Flags runascurrentuser = roda COMO ADMIN (mesmo usuario que abriu uninst.exe,
+;   igual fizemos no [Run] install para evitar 'Acesso negado' no schtasks!)
+; RunOnceId = Inno avisa se esquecer de definir, evita WARNING compilação.
+; =============================================================================
 [UninstallRun]
-Filename: "{app}\unregister-startup-task.bat"; Flags: runhidden skipifdoesntexist
+Filename: "{app}\unregister-startup-task.bat"; \
+  Flags: waituntilterminated runhidden skipifdoesntexist runascurrentuser; \
+  RunOnceId: "pc_unreg_bat"
+Filename: "{app}\PrintCollectAgent.exe"; \
+  Parameters: "uninstall"; \
+  Flags: waituntilterminated runhidden skipifdoesntexist runascurrentuser; \
+  RunOnceId: "pc_unreg_exe"
+
+; =============================================================================
+; v6.9.11 FIX DESINSTALACAO: [UninstallDelete] roda DEPOIS do UninstallRun.
+; Remove: (1) EXEs/BATs/yaml que sobraram na pasta {app}
+;         (2) Pasta ProgramData\PrintCollect com config.yaml, logs etc
+;             (se usuario quiser manter, ele copia ANTES de desinstalar).
+; =============================================================================
+[UninstallDelete]
+Type: files; Name: "{app}\*.*"
+Type: dirifempty; Name: "{app}"
+Type: filesandordirs; Name: "{commonappdata}\PrintCollect"
 
 [Code]
 var

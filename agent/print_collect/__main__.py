@@ -766,22 +766,41 @@ def cmd_install(args: argparse.Namespace) -> int:
 def cmd_uninstall(args: argparse.Namespace) -> int:
     system = platform.system().lower()
     if system == "windows":
-        # Remove TODAS as versoes de tarefas: antigo (1 unica), 08h/18h (legado), HORARIO (novo), Ao Logar
+        # v6.9.11 FIX: 16 variantes = TUDO que ja existiu em todas as versoes.
+        # Antes (ate v6.9.10): soh 7 nomes antigos. Bug: NENHUMA das tarefas novas
+        # (30 Minutos / Watchdog / Diario Repeticao / Ao Iniciar etc) era apagada!
         tarefas = [
-            "Print Collect Agent",                    # nome antigo (ainda pode existir!)
-            "Print Collect Agent - Manha (08h)",       # legado
-            "Print Collect Agent - Tarde (18h)",       # legado
-            "Print Collect Agent - Ao Logar",          # sempre
-            "Print Collect Agent - A Cada 1 HORA",     # NOVA! (agenda a cada 1h PT1H)
-            "Print Collect Agent - A Cada 1 Hora",     # variacao de espaco/letra maiuscula
+            # NOMES ANTIGOS (ate v6.4)
+            "Print Collect Agent",
+            "Print Collect Agent - Manha (08h)",
+            "Print Collect Agent - Tarde (18h)",
+            "Print Way Agent",
+            "Print Collect",
+            # NOMES NOVOS v6.5+ (6 camadas de agendamento principais)
+            "Print Collect Agent - 30 Minutos",
+            "Print Collect Agent - Watchdog",
+            "Print Collect Agent - Diario Repeticao",
+            "Print Collect Agent - Ao Iniciar",
+            "Print Collect Agent - Ao Logar",
+            # VARIANTES DE NOME (bugs de builds antigas, pode existir!)
+            "Print Collect Agent - A Cada 1 Hora",
+            "Print Collect Agent - A Cada 1 HORA",
+            "Print Collect Agent - Hora",
+            "Print Collect Agent - Hourly",
+            "Print Collect Agent - Inicializacao",
+            "Print Collect - Coletar",
         ]
         total_ok = 0
+        total = len(tarefas)
         for tn in tarefas:
             rc = _exe_cmd(["schtasks", "/Delete", "/F", "/TN", tn])
             if rc == 0:
                 total_ok += 1
-        print(f"\nForam removidas {total_ok} tarefa(s) do Agendador.")
-        return 0 if total_ok > 0 else 1
+        print(f"\nForam removidas {total_ok}/{total} variantes de tarefa(s) do Agendador.")
+        print(f"(Variantes que retornaram erro ja nao existiam — normal.)")
+        # Sempre retorna 0 agora. Antigamente bugava se a 1a tarefa antiga nao existia,
+        # return 1 e o Inno pensava que tinha dado erro.
+        return 0
     # Linux
     _exe_cmd(["systemctl", "disable", "--now", "print-collect.service"], check=False)
     import os
