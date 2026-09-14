@@ -23,6 +23,75 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+# =============================================================================
+# DEFESA ANTI-UNICODE CRASH EM WINDOWS OEM CP1252/PyInstaller EXE (GARANTE
+# WIZARD SEMPRE CHEGA NA TELA FINAL ENTER SEM TRAVAR!
+#   Problema: print("\u2705 ...") (emoji) ou caracteres não CP1252 → EXE crash com
+#     UnicodeEncodeError: 'charmap' codec can't encode character maps to <undefined>.
+#   Causas: PyInstaller console inicializa stdout/stderr com cp1252 OEM (pt-BR que não
+#     tem emojis nem alguns símbolos. Ao codificar esses chars → aborto IMEDIATO!
+#   Solucao GARANTIDA: Mudar sys.stdout/sys.stderr PARA UTF-8 + errors='replace'
+#     (se possivel via reconfigure) SENAO reabrir FD 1 (stdout) FD 2 (stderr)
+#     COM encoding='utf-8', errors='replace'. Em UTF-8 NAO EXISTE caractere invalido:
+#     tudo grava OK. O CMD Windows OEM nao vai desenhar emojis, mas NAO TRAVA mais!
+# =============================================================================
+if platform.system().lower() == "windows":
+    def _force_utf8_replace_std(name: str) -> None:
+        stream = getattr(sys, name)
+        fallback_stream = getattr(sys, f"__{name}__")
+        try:
+            if hasattr(stream, "reconfigure"):
+                try:
+                    stream.reconfigure(encoding="utf-8", errors="replace")
+                    return
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            fileno = -1
+            try:
+                fileno = fallback_stream.fileno()
+            except Exception:
+                try:
+                    fileno = stream.fileno()
+                except Exception:
+                    pass
+            if fileno >= 0:
+                new_stream = open(
+                    fileno,
+                    mode="w",
+                    encoding="utf-8",
+                    errors="replace",
+                    closefd=False,
+                    buffering=1,
+                )
+                setattr(sys, name, new_stream)
+                return
+        except Exception:
+            pass
+        try:
+            buf = getattr(stream, "buffer", None) or getattr(fallback_stream, "buffer", None)
+            if buf is not None:
+                from io import TextIOWrapper
+                new_stream = TextIOWrapper(buf, encoding="utf-8", errors="replace", line_buffering=True)
+                setattr(sys, name, new_stream)
+        except Exception:
+            pass
+
+    try:
+        os.environ.setdefault("PYTHONIOENCODING", "utf-8:replace")
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            _force_utf8_replace_std("stdout")
+        try:
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            _force_utf8_replace_std("stderr")
+    except Exception:
+        pass
+
 from print_collect.collector import run_daemon, run_once
 
 if TYPE_CHECKING:
@@ -373,9 +442,9 @@ def _windows_relaunch_self_as_admin(args: argparse.Namespace | None = None) -> N
             print(f"\n[ERRO] Nao foi possivel elevar automaticamente (erro {le}).")
             print("       ================ SOLUCAO MANUAL 1 CLIQUE =================")
             print("       1) FECHE esta janela do CMD/Prompt.")
-            print("       2) Menu Iniciar → Procure Print Collect → Clique com BOTAO DIREITO em")
+            print("       2) Menu Iniciar -> Procure Print Collect -> Clique com BOTAO DIREITO em")
             print("          'Reinstalar inicializacao' OU 'Wizard de pareamento'")
-            print("       3) Clique em 'Mais' → 'Executar como Administrador' → SIM no UAC.")
+            print("       3) Clique em 'Mais' -> 'Executar como Administrador' -> SIM no UAC.")
             print("       ==============================================================")
             try:
                 input("\n[Enter para fechar...]")
@@ -555,7 +624,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         # v6.4 CORRECAO DEFITIVA: Usa BATs SEPARADOS (sem wrapper inline) + /RU SYSTEM invisivel!
         # =====================================================================
         def _native_schtasks_ps_create_6_tasks() -> int:
-            print("\n[CAMADA 2/3] ✅ FALLBACK NATIVO v6.4 (schtasks/PowerShell Python): CRIANDO 6 CAMADAS DE TAREFAS...")
+            print("\n[CAMADA 2/3] FALLBACK NATIVO v6.4 (schtasks/PowerShell Python): CRIANDO 6 CAMADAS DE TAREFAS...")
             # Lista de tarefas SUPERV6 v6.4:
             #   (nome, schtasks args [menos /TN /TR], dispararRun?, run_as_system?)
             tasks = [
@@ -740,17 +809,17 @@ def cmd_pair(args: argparse.Namespace) -> int:
     if not server_url.startswith("http"):
         server_url = "https://" + server_url
 
-    # Código de vínculo: ACEITA AMBOS (🎫 Código Cliente Fixo OU 🔗 Pareamento Temporário)
+    # Codigo de vinculo: ACEITA AMBOS (Codigo Cliente Fixo OU Pareamento Temporario)
     code = (args.code or "").strip() or os.environ.get("PAIRING_CODE", "").strip()
     if not code:
         try:
             code = input(
-                "🎫 CÓDIGO DO CLIENTE (RECOMENDADO): 8 caracteres, fixo, NÃO EXPIRA — use o mesmo código em\n"
-                "   TODAS as filiais ou reinstalações do MESMO cliente (coluna '🎫 Código Cliente' no painel).\n"
+                "CODIGO DO CLIENTE (RECOMENDADO): 8 caracteres, fixo, NAO EXPIRA — use o mesmo codigo em\n"
+                "   TODAS as filiais ou reinstalacoes do MESMO cliente (coluna 'Codigo Cliente' no painel).\n"
                 "OU\n"
-                "🔗 CÓDIGO DE PAREAMENTO (TEMPORÁRIO): 8 caracteres, expira em 24h, uso único (botão 🔗 Pareamento\n"
-                "   na aba Clientes do painel, serve para um agente específico).\n"
-                "Digite QUALQUER um dos dois códigos abaixo: ").strip()
+                "CODIGO DE PAREAMENTO (TEMPORARIO): 8 caracteres, expira em 24h, uso unico (botao Pareamento\n"
+                "   na aba Clientes do painel, serve para um agente especifico).\n"
+                "Digite QUALQUER um dos dois codigos abaixo: ").strip()
         except (EOFError, KeyboardInterrupt):
             return 2
 
@@ -811,7 +880,7 @@ def cmd_wizard(args: argparse.Namespace) -> int:
 
     # === CORRECAO V6.3: GARANTE ADMINISTRADOR NO WIZARD TAMBEM! ===
     #   O usuario clica no atalho do Menu Iniciar (normal user!)
-    #   Auto-eleva para UAC admin ANTES de perguntar o código → Acesso negado ZERO!
+    #   Auto-eleva para UAC admin ANTES de perguntar o código -> Acesso negado ZERO!
     _windows_relaunch_self_as_admin(args)
 
     print("=" * 62)
@@ -834,8 +903,8 @@ def cmd_wizard(args: argparse.Namespace) -> int:
                 "\n┌──────────────────────────────────────────────────────────┐\n"
                 "│  1/4) COLE AQUI SEU CÓDIGO (Código Cliente OU Pareamento):\n"
                 "└──────────────────────────────────────────────────────────┘\n"
-                "   🎫 Código Cliente: 8 caracteres · NUNCA expira · Fixo!\n"
-                "   🔗 Código Pareamento: 8 caracteres · 24h · Uso único.\n"
+                "   Codigo Cliente: 8 caracteres · NUNCA expira · Fixo!\n"
+                "   Codigo Pareamento: 8 caracteres · 24h · Uso unico.\n"
                 ">\n"
                 "> ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -949,20 +1018,20 @@ def cmd_wizard(args: argparse.Namespace) -> int:
             # As 4 tarefas PRINCIPAIS (30min/Horaria/Diario/Watchdog) foram criadas!
             instalou_parcialmente_ok = True
             print("\n[!] ATENCAO: Inicializacao automatica INSTALADA PARCIALMENTE (4/6 tarefas OK!)")
-            print("   ✅ TAREFAS JA CRIADAS (FUNCIONANDO DE HORA EM HORA NORMALMENTE!):")
+            print("   [OK] TAREFAS JA CRIADAS (FUNCIONANDO DE HORA EM HORA NORMALMENTE!):")
             print("      · Print Collect Agent - 30 Minutos")
             print("      · Print Collect Agent - A Cada 1 HORA")
             print("      · Print Collect Agent - Diario Repeticao")
             print("      · Print Collect Agent - Watchdog (a cada 10min, garante que nao pare!)")
             print()
-            print("   ⚠️  FALTARAM apenas 2 tarefas (precisam de ADMINISTRADOR para criar):")
+            print("   [!] FALTARAM apenas 2 tarefas (precisam de ADMINISTRADOR para criar):")
             print("      · Ao Iniciar (quando liga PC)   · Ao Logar (quando usuario entra)")
             print()
-            print("   ✅ PASSO A PASSO RAPIDO PARA ADICIONAR AS 2 FALTANTES AGORA MESMO:")
-            print("      1) Menu Iniciar → Print Collect")
-            print("      2) Botao DIREITO em 'Reinstalar inicializacao' → Mais → Executar como Administrador")
+            print("   [OK] PASSO A PASSO RAPIDO PARA ADICIONAR AS 2 FALTANTES AGORA MESMO:")
+            print("      1) Menu Iniciar -> Print Collect")
+            print("      2) Botao DIREITO em 'Reinstalar inicializacao' -> Mais -> Executar como Administrador")
             print("      OU: Abre C:\\Program Files (x86)\\Print Collect")
-            print("          Botao DIREITO em 'register-startup-task-silent.bat' → Executar como Administrador")
+            print("          Botao DIREITO em 'register-startup-task-silent.bat' -> Executar como Administrador")
             print("      3) Confirma 'Sim' no UAC, espera ~60 segundos. PRONTO! 6/6 tarefas!")
             print()
     except Exception as e:
@@ -974,22 +1043,22 @@ def cmd_wizard(args: argparse.Namespace) -> int:
     # -------------------------------------------------------------------------
     print()
     print("╔══════════════════════════════════════════════════════════╗")
-    print("║          🎉  TUDO PRONTO! INSTALAÇÃO CONCLUÍDA!         ║")
+    print("║            TUDO PRONTO! INSTALACAO CONCLUIDA!           ║")
     print("╚══════════════════════════════════════════════════════════╝")
     print()
-    print(f" · Código usado     : {code}")
+    print(f" · Codigo usado     : {code}")
     print(f" · Servidor         : {server_url}")
     print(f" · Config salvo em  : {actual_config_path}")
     print(f" · Impressoras hoje : {len(printers)} encontradas")
     if instalou_ok:
-        print(f" · Auto inicializa  : ✅ 6/6 TAREFAS INSTALADAS (100%!)")
+        print(f" · Auto inicializa  : 6/6 TAREFAS INSTALADAS (100%!)")
     elif instalou_parcialmente_ok:
-        print(f" · Auto inicializa  : ✅ 4/6 TAREFAS OK (funciona horario! Leia acima como add 2 faltantes.)")
+        print(f" · Auto inicializa  : 4/6 TAREFAS OK (funciona horario! Leia acima como add 2 faltantes.)")
     else:
-        print(f" · Auto inicializa  : ⚠️  Instale depois pelo atalho (como ADMIN!)")
+        print(f" · Auto inicializa  : [!] Instale depois pelo atalho (como ADMIN!)")
     print()
     print(" A partir de AGORA, este PC vai coletar as impressoras")
-    print(" automaticamente todos os dias! 🚀")
+    print(" automaticamente todos os dias!")
     print()
     try:
         input(" Pressione ENTER para FECHAR o Wizard...")
@@ -1089,7 +1158,7 @@ def cmd_watchdog(args: argparse.Namespace) -> int:
     idle_str = f"{(now - last_ts).total_seconds()/60:.0f} minutos" if last_ts else "NUNCA"
     print(f"[Watchdog] Ultima coleta detectada: {last_ts or 'JAMAIS'}. Inativo = {idle_str}. Max permitido = {MAX_IDLE.total_seconds()/60:.0f} min.")
 
-    # Sem log / log MUITO velho → Dispara coleta AGORA MESMO!
+    # Sem log / log MUITO velho -> Dispara coleta AGORA MESMO!
     if last_ts is None or (now - last_ts) > MAX_IDLE:
         print("[Watchdog] >>> IDLE LIMITE ULTRAPASSADO! Disparando run_once() IMEDIATAMENTE! <<<")
         t0 = time.time()

@@ -288,12 +288,19 @@ if %RC% EQU 0 (
 if %RC% NEQ 0 set RC_ALL=%RC%
 
 REM =============================================================================
-REM VALIDACAO FINAL: Roda EXE direto (prova que EXE/config estao bons)
+REM VALIDACAO FINAL: REMOVIDA CAMADA 3/3 v6.9.11 (ANTI-TRAVAMENTO WIZARD Julio!)
+REM   Antes (ate v6.9.10): rodava EXE --config ... once AQUI no final do BAT.
+REM      Problema: collect_all_usb() PODIA TRAVAR em loop USB impressoras manual
+REM      (Canon G3111, TSC E210 WorkOffline etc) -> BAT retorna RC=255 -> Wizard
+REM      falha CAMADA1/3, apesar de tarefas agendadas serem CRIADAS corretamente.
+REM   Agora (v6.9.11+): NAO RODA NENHUMA COLETA AQUI no BAT. A PRIMEIRA COLETA
+REM      roda automaticamente PELAS TAREFAS AGENDADAS ACIMA (30min / Watchdog 10min
+REM      / Diario Repeticao 60min / Ao Iniciar / Ao Logar). Garante BAT RC=0 SEMPRE
+REM      sem travamentos. Julio pediu: "quero setup fechar com ENTER certinho!"
 REM =============================================================================
-echo [%date% %time%] VALIDACAO FINAL: Rodando coleta uma vez (Camada 3/3)... >> "%LOG%"
-"%EXE%" --config "%CFG%" once >> "%LOG%" 2>&1
-set RC_EXE=%ERRORLEVEL%
-echo [%date% %time%]   EXE direto RC=%RC_EXE% >> "%LOG%"
+echo [%date% %time%] VALIDACAO FINAL v6.9.11 (AJUSTE ANTI-TRAVAMENTO): CAMADA 3/3 once DESLIGADA AQUI no BAT. >> "%LOG%"
+echo [%date% %time%]   (Primeira coleta automatica roda proximas 30 min pelas tarefas agendadas.) >> "%LOG%"
+set RC_EXE=0
 
 echo ================================================================================ >> "%LOG%"
 echo [%date% %time%] RESUMO v6.4 FINAL (BATs SEPARADOS + SYSTEM INVISIVEL!): >> "%LOG%"
