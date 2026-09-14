@@ -5,8 +5,8 @@ server_url: "https://print-collect.onrender.com"
 # Token de agente - sera substituido pelo Wizard de Pareamento
 agent_token: "agent-dev-key"
 
-# Versao do agente (v6.9.12 = CORRECAO DESINSTALACAO! v6.9.11 era bom mas tinha problema em remover: BAT unregister tinha PAUSE = trava runhidden, cmd_uninstall soh apagava tarefas antigas (7 nomes) e nao as novas de 6 camadas, ISS nao tinha waituntilterminated/runascurrentuser no UninstallRun, nao tinha UninstallDelete ProgramData, nao tinha InstallDelete instalacao POR CIMA. v6.9.12 corrige tudo isso! Mantem anti-travamento Wizard v6.9.11: CAMADA3/3 Python e BAT DESLIGADAS, coletas SNMP/rede intactas, split contadores P&B/Color/Total, toner CMYK separado coloridas, 30/30 min, 6 camadas tarefas, timeout USB.)
-agent_version: "6.9.12"
+# Versao do agente (v6.9.13 = CORRECAO DEFINITIVA DESINSTALACAO COM JANELA VISIVEL! v6.9.12 bug: runhidden invisivel + uninsneveruninstall bloqueava remocao ProgramData. v6.9.13 mostra janela CMD do BAT e EXE uninstall, apaga 16 variantes tarefas, apaga ProgramData.)
+agent_version: "6.9.13"
 
 # Intervalo de coleta em minutos (30 min = padrao do cliente Julio)
 interval_minutes: 30

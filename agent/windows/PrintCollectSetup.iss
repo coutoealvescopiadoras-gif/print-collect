@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "6.9.12"
+  #define MyAppVersion "6.9.13"
 #endif
 
 #define MyAppName "Print Collect Agent"
@@ -42,7 +42,11 @@ Source: "{src}\config.yaml"; DestDir: "{commonappdata}\PrintCollect"; DestName: 
 
 [Dirs]
 ; Garante que a pasta C:\ProgramData\PrintCollect exista antes de qualquer coisa
-Name: "{commonappdata}\PrintCollect"; Permissions: authusers-modify; Flags: uninsneveruninstall
+; v6.9.13 FIX: Removido flag 'uninsneveruninstall' — estava BLOQUEANDO 100% a remocao
+; da pasta ProgramData pelo desinstalador, mesmo com [UninstallDelete] declarado!
+; A preservacao de config.yaml em INSTALACAO POR CIMA continua garantida por
+; [Files] linha 39/41 com 'onlyifdoesntexist' (nunca sobrescreve config existente!).
+Name: "{commonappdata}\PrintCollect"; Permissions: authusers-modify
 
 [Icons]
 ; === WIZARD NATIVO: atalhos apontam para WizardPareamento.exe (NAO E .bat! EXE NATIVO!) ===
@@ -95,28 +99,23 @@ Type: files; Name: "{app}\*.bat"
 Type: files; Name: "{app}\*.yaml"
 
 ; =============================================================================
-; v6.9.11 FIX DESINSTALACAO: 3 CAMADAS para GARANTIR que tudo e removido.
-; CAMADA 1/3: BAT unregister (16 variantes schtasks /Delete, sem pause!)
-; CAMADA 2/3: EXE nativo uninstall (mesmas 16 variantes, garantia se BAT falhar)
-; Flags waituntilterminated = espera o fim (NAO pula para proxima etapa!)
-; Flags runascurrentuser = roda COMO ADMIN (mesmo usuario que abriu uninst.exe,
-;   igual fizemos no [Run] install para evitar 'Acesso negado' no schtasks!)
-; RunOnceId = Inno avisa se esquecer de definir, evita WARNING compilação.
+; v6.9.13 FIX: Mostra PAINEL VISIVEL para Julio VER o que esta acontecendo
+; (antes 'runhidden' = invisivel, parecia que nao desinstalava NADA!)
+; waituntilterminated: NAO pula para proxima etapa ate terminar!
+; runascurrentuser: Roda COMO ADMIN (schtasks nao da Acesso negado!)
+; RunOnceId: Id unico Inno Setup
 ; =============================================================================
 [UninstallRun]
 Filename: "{app}\unregister-startup-task.bat"; \
-  Flags: waituntilterminated runhidden skipifdoesntexist runascurrentuser; \
+  Flags: waituntilterminated skipifdoesntexist runascurrentuser; \
   RunOnceId: "pc_unreg_bat"
 Filename: "{app}\PrintCollectAgent.exe"; \
   Parameters: "uninstall"; \
-  Flags: waituntilterminated runhidden skipifdoesntexist runascurrentuser; \
+  Flags: waituntilterminated skipifdoesntexist runascurrentuser; \
   RunOnceId: "pc_unreg_exe"
 
 ; =============================================================================
-; v6.9.11 FIX DESINSTALACAO: [UninstallDelete] roda DEPOIS do UninstallRun.
-; Remove: (1) EXEs/BATs/yaml que sobraram na pasta {app}
-;         (2) Pasta ProgramData\PrintCollect com config.yaml, logs etc
-;             (se usuario quiser manter, ele copia ANTES de desinstalar).
+; v6.9.11 + v6.9.13: Roda APOS UninstallRun (depois que tarefas ja foram apagadas!)
 ; =============================================================================
 [UninstallDelete]
 Type: files; Name: "{app}\*.*"
