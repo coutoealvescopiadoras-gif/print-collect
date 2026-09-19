@@ -15,8 +15,8 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['C:/Users/Junim/Desktop/princollect/print-collect/agent/SearchPrinters.py'],
-    pathex=[],
+    ['SearchPrinters.py'],
+    pathex=['.', '.pydeps'],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -25,7 +25,6 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[],
     noarchive=False,
-    optimize=0,
 )
 pyz = PYZ(a.pure)
 

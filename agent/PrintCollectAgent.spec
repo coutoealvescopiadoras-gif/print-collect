@@ -3,8 +3,8 @@
 # (evita ModuleNotFoundError: 'yaml'/'charset_normalizer'/'pysnmp' que quebrou Wizard na v6.9.3!)
 
 a = Analysis(
-    ['agent\\print_collect\\__main__.py'],
-    pathex=['agent', 'agent\\.pydeps'],
+    ['print_collect\\__main__.py'],
+    pathex=['.', '.pydeps'],
     binaries=[],
     datas=[],
     hiddenimports=[
@@ -28,7 +28,6 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[],
     noarchive=False,
-    optimize=0,
 )
 pyz = PYZ(a.pure)
 
