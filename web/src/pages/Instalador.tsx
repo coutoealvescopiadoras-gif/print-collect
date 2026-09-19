@@ -101,7 +101,7 @@ export default function Instalador() {
                 </>
               ) : (
                 <>
-                  <strong style={{ marginLeft: "0.8rem" }}>Tamanho:</strong> ~12-15 MB ·
+                  <strong style={{ marginLeft: "0.8rem" }}>Tamanho:</strong> ~30,2 MB ·
                   <strong style={{ marginLeft: "0.8rem" }}>Plataforma:</strong> Windows 10/11 32/64 bits ou Windows Server 2016+
                 </>
               )}
@@ -269,7 +269,7 @@ export default function Instalador() {
               </tr>
               <tr>
                 <td style={{ fontWeight: 600, color: "var(--text-muted)" }}>Espaço em Disco</td>
-                <td>~80 MB após instalação completa (instalador ~12,7 MB).</td>
+                <td>~80 MB após instalação completa (instalador ~30,2 MB).</td>
               </tr>
               <tr>
                 <td style={{ fontWeight: 600, color: "var(--text-muted)" }}>Rede</td>
