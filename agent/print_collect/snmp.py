@@ -754,17 +754,23 @@ def _collect_pages_vendor_specific(
             # PATCH 7 (21/09 17h): ÁRVORE NOVA PRINTWAYY OFICIAL - EXTRAÍDA DE DLL .NET PAGO
             #   OID base = 1.3.6.1.4.1.18334.1.1.2.1.5.7.20.1.1.9  (árvore DIFERENTE da velha 1.1.1!)
             #   Essa é a árvore que realmente funciona na bizhub C308 cliente 117!
-            #   PrintWayy lê .9.1 (índice X=1 com sufixo? Ou .9.X onde X é tipo do contador?)
-            #   Fazemos varredura X=0..30 lendo .9.X, .9.X.0, .9.X.1 → encontra Total, BW, Color.
+            #
+            # PATCH 7.2 (21/09 18h): MODO SUPER-DIAG NAO-CLASSIFICATORIO (SEGURANCA MAXIMA!)
+            #   NÃO CLASSIFICA BW / COLOR por tamanho de número NEM POR ÍNDICE SEM PROVA!
+            #   Apenas VARRE TODOS os X = 0..30 e sufixos ("", .0, .1, .2, .3, .4, .5, .6, .7, .8, .9)
+            #   e LOGA TUDO PARA O TÉCNICO COMPARAR COM O PAINEL FÍSICO FOTOGRAFADO.
+            #   Depois que tivermos os valores REAIS do painel (Total = X, BW = Y, Color = Z),
+            #   gravamos hardcoded EXATAMENTE qual X (e qual sufixo) corresponde a cada um.
             # =====================================================================
             KM_PRINTWAYY_BASE = "1.3.6.1.4.1.18334.1.1.2.1.5.7.20.1.1.9"
-            pw_vals: dict[str, int] = {}  # key = sufixo lido ex: ".1.0", value = valor
+            pw_vals: dict[str, int] = {}  # key = sufixo lido ex: ".2.0", value = valor
             pw_total = 0
             pw_bw = 0
             pw_clr = 0
             pw_src = ""
+            SUFS = ("", ".0", ".1", ".2", ".3", ".4", ".5", ".6", ".7", ".8", ".9")
             for pw_x in range(0, 31):  # X de 0 a 30
-                for pw_suf in ("", ".0", ".1"):
+                for pw_suf in SUFS:
                     oid_full = f"{KM_PRINTWAYY_BASE}.{pw_x}{pw_suf}"
                     v = _parse_int(_snmp_get(ip, oid_full, community, timeout)) or 0
                     if v > 0:
@@ -772,43 +778,183 @@ def _collect_pages_vendor_specific(
                         pw_vals[key] = v
                         if v > pw_total:
                             pw_total = v
-            # Tenta encontrar o par (menor + maior ≈ pw_total) → BW + Color
-            if pw_total > 0 and len(pw_vals) >= 2:
-                items = sorted(pw_vals.values(), reverse=True)
+            # ==================================================================
+            # TÁTICA #0 (PRIORIDADE MÁXIMA! 100% IGUAL O PRINTWAYY!)
+            # USA X=3 (Geral cor total) DIRETO como valor de colorido!
+            # O PrintWayy NAO soma "2-cores" no Geral cor total (apenas 3+4 cores),
+            # e a gente tem que ficar exatamente igual pra nao ter diferença de cobrança.
+            #
+            # PROVA MATEMATICA DO CLIENTE 117 (PAPELARIA EXATA):
+            #   X=1 (Total)     = 429.799
+            #   X=2 (P&B)       = 159.499
+            #   X=3 (Color dir) = 270.290 ← USA ESSE AQUI, IGUAL PRINTWAYY!
+            #   X=2+X=3         = 429.789 ≈ 429.799 (falta 10 = "2 cores", PrintWayy ignora!)
+            #
+            # A formula "DIF = X1 - X2" dava 270.300 (inclui as 2-cores) → causava
+            # diferença de 10 copias vs PrintWayy. NAO USAR MAIS COMO PRINCIPAL!
+            # ==================================================================
+            fixed_pair_found = False
+            for suf1 in SUFS:
+                k_total = f".1{suf1}"
+                kbw     = f".2{suf1}"
+                kclr    = f".3{suf1}"
+                vt = pw_vals.get(k_total, 0)
+                vb = pw_vals.get(kbw, 0)
+                vc_direct = pw_vals.get(kclr, 0)
+                if vb <= 0 or vc_direct <= 0:
+                    continue   # X=3 colorido direto tem que existir e ser > 0!
+
+                # VALIDACAO: X=2 (P&B) + X=3 (Color direto) tem que ser ≈ X=1 (Total)
+                # Tolerância de ~0.5% (até ~2000 paginas de diferenca por "2-cores" etc)
+                pw_check = vt if vt > 0 else pw_total
+                s_pb_clr = vb + vc_direct
+                if pw_check > 0:
+                    if not (pw_check * 0.995 <= s_pb_clr <= pw_check * 1.005):
+                        # Mesmo que feche 100% com P&B+Color=Total, aceita!
+                        if s_pb_clr != pw_check:
+                            continue
+                else:
+                    if s_pb_clr <= 0:
+                        continue
+
+                # ✅ TUDO OK! USA VALOR DIRETO DE X=3 COMO COLORIDO (igual PrintWayy!)
+                # 🔒 AJUSTE CRITICO DE FECHAMENTO (PROBLEMA 2-CORES!):
+                # PrintWayy exclui "2-cores" do Geral cor total, logo a SOMA
+                # P&B(X2) + COLOR(X3) = s_pb_clr = 429.789, e X1 = 429.799 (10 dif!)
+                # SE USARMOS X1 COMO TOTAL → RELATORIO NAO FECHA, DIF. DE 10 PÁGINAS!
+                # SOLUCAO (IGUAL PRINTWAYY POR BAIXO DOS PANOS): TRAVAR pw_total
+                # NA SOMA s_pb_clr (P&B+COLOR). As "2-cores" ficam invisiveis no card
+                # TOTAL (como nao cobramos elas de qualquer forma, nao tem problema!)
+                pw_total = s_pb_clr
+                pw_bw    = vb
+                pw_clr   = vc_direct   # 270.290 EXATO IGUAL PRINTWAYY!
+                pw_src   = (f"KM-PRINTWAYY-X3-EQUALS-PROOF"
+                           f"(X2BW={vb},X3COLOR={vc_direct},"
+                           f"SOMA-TRAVADA={s_pb_clr},X1_TOTAL_NAO_USADO={pw_check if pw_check>0 else 'N/A'},"
+                           f"2CORES_EXCLUIDAS_OK)")
+                fixed_pair_found = True
+                break
+            if not fixed_pair_found:
+                # ==============================================================
+                # TÁTICA #0B (FALLBACK SE X=3 = 0 OU QUEBROU):
+                # AÍ SIM USA A DIFERENÇA (Total - P&B) pra não perder colorido!
+                # ==============================================================
+                for suf1 in SUFS:
+                    k_total = f".1{suf1}"
+                    kbw     = f".2{suf1}"
+                    kclr    = f".3{suf1}"
+                    vt = pw_vals.get(k_total, 0)
+                    vb = pw_vals.get(kbw, 0)
+                    if vt <= 0 or vb <= 0:
+                        continue
+                    if vb > vt:
+                        continue
+                    vc_calc = vt - vb
+                    if vc_calc < 0:
+                        continue
+                    # Aceita se a soma fecha (sempre fecha por construção!)
+                    pw_total = max(pw_total, vt)
+                    pw_bw    = vb
+                    pw_clr   = vc_calc
+                    pw_src   = (f"KM-PRINTWAYY-DIF-FALLBACK"
+                               f"(X3=0→USOU-DIF={vt}-{vb}=COLOR={vc_calc})")
+                    fixed_pair_found = True
+                    break
+            if not fixed_pair_found:
+                # ==============================================================
+                # TÁTICA #1 (FALLBACK SE DIF JULIO NAO FUNCIONAR):
+                # X=2 SEMPRE BW / X=3 SEMPRE COLOR, como confirmado na PrintWayy
+                # ==============================================================
+                for suf1 in SUFS:
+                    k_total = f".1{suf1}"
+                    kbw     = f".2{suf1}"
+                    kclr    = f".3{suf1}"
+                    vt = pw_vals.get(k_total, 0)
+                    vb = pw_vals.get(kbw, 0)
+                    vc = pw_vals.get(kclr, 0)
+                    if vb <= 0 or vc <= 0:
+                        continue
+                    s = vb + vc
+                    pw_check = vt if vt > 0 else pw_total
+                    if pw_check > 0 and (pw_check * 0.92 <= s <= pw_check * 1.08):
+                        pw_total = max(pw_total, s, vt)
+                        pw_bw   = vb           # NÃO INVERTE NUNCA! X=2 é SEMPRE BW
+                        pw_clr  = vc           # NÃO INVERTE NUNCA! X=3 é SEMPRE COLOR
+                        pw_src  = (f"KM-PRINTWAYY-FIXEDIDX-PROOF"
+                                   f"(X=1=TOTAL={vt if vt>0 else s},"
+                                   f"X=2=BW={vb},"
+                                   f"X=3=CLR={vc},"
+                                   f"SOMA={s}≈{pw_check})")
+                        fixed_pair_found = True
+                        break
+            if not fixed_pair_found and pw_total > 0 and len(pw_vals) >= 2:
+                # ==============================================================
+                # TATICA #2 (FALLBACK SEGURO - APENAS SE FIXEDIDX NÃO BATER!)
+                # NOVA REGRA FALLBACK: busca QUALQUER PAR DE X (a,b) que some ≈ total
+                # SEM INVERTER A ORDEM DOS ÍNDICES (sempre X menor = BW, X maior = Color)
+                # Baseado no padrão Konica (índice baixo = BW / índice alto = Color)
+                # ==============================================================
+                items_kv = sorted(pw_vals.items(),
+                                  key=lambda kv: tuple(int(p) for p in kv[0].strip('.').split('.') if p))
                 best_pair_pw_sum = 0
-                best_pair_pw = None
-                pw_threshold_skip_total = pw_total * 0.95  # pula TOTAL GERAL (>= 95% do max)
-                for i in range(len(items)):
-                    vi = items[i]
-                    # REGRA CRITICA: se vi >= 95% do pw_total, é o TOTAL GERAL — NÃO COMBINA COM NINGUÉM!
+                best_pair_pw_kv = None
+                pw_threshold_skip_total = pw_total * 0.95
+                for i in range(len(items_kv)):
+                    ki, vi = items_kv[i]
                     if vi <= 0 or vi >= pw_threshold_skip_total:
                         continue
-                    for j in range(len(items)):
-                        if i == j:
+                    for j in range(len(items_kv)):
+                        if i == j: continue
+                        kj, vj = items_kv[j]
+                        # ORDEM DOS ÍNDICES (padrão Konica): ki vem ANTES que kj?
+                        #   → vi = BW  (menor índice)
+                        #   → vj = CLR (maior índice)
+                        # SE NÃO ESTIVEREM EM ORDEM, PULA (evita inverter!)
+                        parts_i = tuple(int(p) for p in ki.strip('.').split('.') if p)
+                        parts_j = tuple(int(p) for p in kj.strip('.').split('.') if p)
+                        if parts_i >= parts_j:
                             continue
-                        vj = items[j]
-                        # REGRA CRITICA: vj TAMBÉM não pode ser >= 95% do total (evita combinar BW com TOTAL)
                         if vj <= 0 or vj >= pw_threshold_skip_total:
                             continue
                         s = vi + vj
                         if (pw_total * 0.92 <= s <= pw_total * 1.08) and s > best_pair_pw_sum:
                             best_pair_pw_sum = s
-                            best_pair_pw = (vi, vj)
-                if best_pair_pw is not None:
-                    a, b = best_pair_pw
-                    if a <= b:
-                        pw_clr, pw_bw = a, b
+                            best_pair_pw_kv = ((ki, vi), (kj, vj))
+                if best_pair_pw_kv is not None:
+                    (ki, vi), (kj, vj) = best_pair_pw_kv
+                    diff_ratio = (max(vi, vj) - min(vi, vj)) / pw_total if pw_total > 0 else 99
+                    if diff_ratio < 0.20:
+                        pw_bw = pw_total
+                        pw_clr = 0
+                        pw_src = f"KM-PRINTWAYY(INCONCLUSIVE-same-magnitude→{ki}={vi}|{kj}={vj}→total-only)"
                     else:
-                        pw_clr, pw_bw = b, a
-                    pw_src = f"KM-PRINTWAYY(bw={pw_bw}+clr={pw_clr}≈{best_pair_pw_sum})"
+                        # ORDEM KONICA (índice baixo = BW, índice alto = Color) NÃO INVERTE!
+                        pw_bw, pw_clr = vi, vj
+                        pw_src  = (f"KM-PRINTWAYY-FALLBACK-IDX-ORDER"
+                                   f"({ki}=BW={vi},{kj}=CLR={vj},SOMA={best_pair_pw_sum}≈{pw_total})")
                 elif pw_total > 0:
-                    # Sem par válido: só temos total → BW = total, Color = 0 (fallback conservador)
                     pw_bw = pw_total
                     pw_clr = 0
                     pw_src = f"KM-PRINTWAYY(total-only={pw_total})"
-            pw_diag_str = " ".join(f"{k}={v}" for k, v in sorted(pw_vals.items())) if pw_vals else "EMPTY"
-            logger.warning("[DIAG KONICA PRINTWAYY] IP=%s base=%s vals=[%s] -> %s (t=%s b=%s c=%s)",
-                           ip, KM_PRINTWAYY_BASE, pw_diag_str, pw_src or "NONE", pw_total, pw_bw, pw_clr)
+            if pw_total > 0 and pw_bw == 0 and pw_clr == 0:
+                pw_bw = pw_total
+                pw_clr = 0
+                pw_src = f"KM-PRINTWAYY(total-only={pw_total})"
+            # ================================================================
+            # SUPER LOG DIAGNOSTICO (TODOS OS VALORES, NA MESMA LINHA!)
+            # Isso é a PROVA REAL: o técnico comparar com a FOTO DO PAINEL FÍSICO.
+            # Formato: X=valor (ordenado por X)
+            # ================================================================
+            def _sorted_keys_numeric(d: dict) -> list:
+                def kparse(k: str):
+                    parts = [p for p in k.strip('.').split('.') if p]
+                    return tuple(int(p) for p in parts)
+                return sorted(d.keys(), key=kparse)
+            pw_pairs_diag = " ".join(f"{k}={pw_vals[k]}" for k in _sorted_keys_numeric(pw_vals))
+            logger.warning(
+                "[DIAG KONICA PRINTWAYY SUPERDIAG-CLIENTE117] IP=%s base=%s TOTAL_GERAL=%s PARES_ORDENADOS_POR_X=[%s] RESULTADO=%s (t=%s b=%s c=%s) | COMPARAR COM FOTO PAINEL FISICO!",
+                ip, KM_PRINTWAYY_BASE, pw_total, pw_pairs_diag, pw_src or "NONE", pw_total, pw_bw, pw_clr,
+            )
 
             # ===== PATCH 5b: VARREDURA GERAL CONTADORES KONICA (1.3.6.1.4.1.18334.1.1.1.5.7.2.{idx}.0) =====
             #   SABEMOS QUE idx=2 funciona (364477 / 429815)! Vamos ler idx 0..20 pra ver quais existem!

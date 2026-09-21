@@ -271,6 +271,27 @@ def cmd_scan(args: argparse.Namespace, _return_list: bool = False) -> int | list
             force=True,
         )
 
+    # ========================================================================
+    # BANNER VERSAO (Validacao tecnico em campo!)
+    # Atualizar SEMPRE que mudar logica de coleta / OIDs Konica / etc
+    # ========================================================================
+    AGENT_VERSION_BANNER = "v6.9.12-KM-EQUALS-PRINTWAYY-FINAL-20260921-7.3"
+    try:
+        W = 66
+        print("=" * W)
+        lb = " PRINT COLLECT AGENTE | " + AGENT_VERSION_BANNER + " "
+        pad_left = max(1, (W - len(lb) - 2) // 2)
+        pad_right = max(1, W - 2 - len(lb) - pad_left)
+        print("=" + (" " * pad_left) + lb + (" " * pad_right) + "=")
+        hb = " Konica Minolta: X3 Color Direto + Soma Trava P&B+Color "
+        pad_lh = max(1, (W - len(hb) - 2) // 2)
+        pad_rh = max(1, W - 2 - len(hb) - pad_lh)
+        print("=" + (" " * pad_lh) + hb + (" " * pad_rh) + "=")
+        print("=" * W)
+        print()
+    except Exception:
+        print(f"\n[VERSAO] {AGENT_VERSION_BANNER}\n")
+
     community = args.community or "public"
     timeout = int(args.timeout or 2)
     subnets = list(args.subnet or [])

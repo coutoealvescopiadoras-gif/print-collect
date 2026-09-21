@@ -1,1 +1,1 @@
-6.9.12-konica-printwayy-oids-20260921-7.1
+6.9.12-konica-equals-printwayy-final-20260921-7.3
