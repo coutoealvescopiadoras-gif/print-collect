@@ -1,1 +1,1 @@
-6.9.12-coleta-segura-oids
+﻿6.9.12-is_color-fix-20260921

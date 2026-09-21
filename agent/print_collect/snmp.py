@@ -275,6 +275,7 @@ def _collect_pages_from_marker_table(
     community: str,
     timeout: int,
     has_color_toners_hint: bool = False,
+    force_largest_heuristic_disabled: bool = False,
 ) -> tuple[int, int]:
     """Fallback PODEROSO para impressoras que NAO USAM OIDs fixos 1.2/1.3
     (ex: Konica Minolta bizhub C258, Ricoh, Kyocera, Xerox, Samsung, EPSON EcoTank coloridas etc).
@@ -282,12 +283,16 @@ def _collect_pages_from_marker_table(
     Faz WALK na tabela prtMarkerLifeCount + prtMarkerColorantRole,
     identifica contadores PB / Color por indice, soma tudo.
 
-    PARAMETRO NOVO v6.9.1 (Julio 11/09):
+    PARAMETROS v6.9.x (coleta segura):
       has_color_toners_hint = True/False (vem da deteccao dos toners CMY > 0% no SNMP)
         Se True = impressora E colorida (tem toners coloridos instalados)
         => HEURISTICA NOVA: nao tem roles de cor? nao joga tudo no PB!
            Split: maior contador = PB, soma dos outros 2/3 = COLORIDO.
         Se False = impressora provavelmente PB => tudo PB, como antes (100% seguro).
+
+      force_largest_heuristic_disabled = True/False (DEFESA EM PROFUNDIDADE 2026-09-21)
+        Se True = DESATIVA a heuristica "maior contador = preto", independente de has_color_toners_hint.
+        Usado quando o modelo NAO esta na whitelist EPSON EcoTank. NUNCA MAIS inventa paginas coloridas.
 
     Retorna tuple (pages_bw_total, pages_color_total)."""
     try:
@@ -352,7 +357,7 @@ def _collect_pages_from_marker_table(
         # ==================================================================
         remaining = [(suf, v) for suf, v in life_counts.items() if suf not in used]
 
-        if has_color_toners_hint and len(remaining) >= 2:
+        if has_color_toners_hint and not force_largest_heuristic_disabled and len(remaining) >= 2:
             # Ordena: MAIOR valor primeiro (maior contador = preto, normalmente)
             remaining_sorted = sorted(remaining, key=lambda t: t[1], reverse=True)
             for i, (_, v) in enumerate(remaining_sorted):
@@ -903,226 +908,232 @@ def discover_local_subnets() -> list[str]:
 # ---------------------------------------------------------------------------
 
 def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Optional[PrinterData]:
+    # ==========================================================================
+    # 🏆 NOVO FLUXO DE COLETA SEGURA — NUNCA MAIS INVENTA PÁGINAS COLORIDAS!
+    #    Ordem de prioridade (do MAIS SEGURO → fallback):
+    #      1) 🥇 DETECTA MARCA (PEN sysObjectID + sysDescr) ANTES de coletar!
+    #      2) 🥇 OIDs PRIVADOS DA MARCA (Tier A/B) → _collect_pages_vendor_specific
+    #      3) 🥈 OIDs FIXOS RFC .1.2 / .1.3 (HP antigo / marcas Tier D)
+    #      4) 🟣 Marker Table COM roles CMYK (prtMarkerColorantRole)
+    #      5) 🟡 SÓ EXCEÇÃO: Marker SEM roles + Epson EcoTank (L3xxx) + toner CMY>0%
+    #            → Roda heurística maior=preto SÓ NESSE CASO.
+    #      6) 🟢 FALLBACK FINAL SEGURO: só total → tudo PB, color = 0.
+    # ==========================================================================
+
+    # ========= PASSO 0: Dados básicos + valida que É impressora =========
     sys_descr = _snmp_get(ip, OID_SYS_DESCR, community, timeout)
     if not sys_descr:
         return None
-
     if not _looks_like_printer(sys_descr):
         logger.debug("%s responde SNMP mas nao parece impressora: %s", ip, sys_descr[:80])
         return None
 
     model = _snmp_get(ip, OID_PRINTER_MODEL, community, timeout) or sys_descr[:120]
-    serial = _snmp_get(ip, OID_PRINTER_SERIAL, community, timeout)
+    if model:
+        model = model.strip()
+    serial_raw = _snmp_get(ip, OID_PRINTER_SERIAL, community, timeout)
+    serial = serial_raw.strip() if serial_raw else None
 
-    # ==================================================================
-    # 🏆 REGRAS DE OURO — COBRANÇA SEGURA (JULIO NÃO PODE COBRAR ERRADO!)
-    # ==================================================================
-    #
-    # REGRA 1 — NUNCA INVENTA PÁGINAS COLORIDAS (prioridade MÁXIMA!)
-    #   Só confia em pages_color se OID FIXO RFC .1.3 > 0 OU
-    #   se marker table retornou COLORIDO > 0 (col_walk > 0) E (OID .1.3 = 0/inválido)
-    #   → Qualquer outra situação = pages_color = 0 (Tudo P&B!).
-    #
-    # REGRA 2 — SE TIVER DÚVIDA, TUDO VAI PARA P&B!
-    #   PEB (páginas em branco), feeder, duplex, toners sem role de cor → TUDO PB.
-    #   Melhor você NÃO cobrar por uma cor que a impressora não confirmou
-    #   do que cobrar errado e ter problema com cliente!
-    #
-    # REGRA 3 — PRIORIDADE DE FONTE (do mais seguro pro menos seguro):
-    #   1) 🔵 OID FIXO RFC .1.1 (total), .1.2 (pb), .1.3 (color)  [MELHOR / OFICIAL]
-    #   2) 🟣 Marker table COM roles CMYK detectados                 [SEGURO]
-    #   3) 🟣 Marker table SEM roles mas COM toners coloridos >0%   [v6.9.1 NOVO!]
-    #   4) 🟢 Só o .1.1 (total) existe → pages_bw = total, color=0  [FALLBACK PB]
-    #
-    # REGRA 4 — pages_total SEMPRE = max(OID total, pb+color_real)
-    #   Nunca deixa o total ser MENOR que o split correto (pois split real = realidade).
-    # ==================================================================
+    # ========= PASSO 1: MARCA REAL (PEN do sysObjectID OFICIAL + sysDescr fallback) =========
+    sys_oid = _snmp_get(ip, OID_SYS_OBJECT_ID, community, timeout)
+    manufacturer = _detect_manufacturer_real(sys_descr, sys_oid)
 
-    # ========== PASSO 1.5 (NOVO v6.9.1): DETECTA SE TEM TONERS COLORIDOS ANTES! ==========
-    # (precisamos passar essa info para o MarkerTable como dica de seguranÇa!)
-    # Coleta os toners ANTES para saber se temos colorida (has_color_toners_hint=True)
-    _t_black_percent = _toner_percent(
-        _snmp_get(ip, OID_TONER_LEVEL, community, timeout),
-        _snmp_get(ip, OID_TONER_MAX, community, timeout),
+    # ========= PASSO 2: TONER NA ORDEM CERTA DA MARCA (corrige Konica 4=Preto / Ricoh privado) =========
+    toner_black, toner_cyan, toner_magenta, toner_yellow = _collect_toner_by_manufacturer(
+        ip, community, timeout, manufacturer,
     )
-    _t_cyan_percent = _toner_percent(
-        _snmp_get(ip, OID_TONER_CYAN_LEVEL, community, timeout),
-        _snmp_get(ip, OID_TONER_CYAN_MAX, community, timeout),
-    )
-    _t_magenta_percent = _toner_percent(
-        _snmp_get(ip, OID_TONER_MAGENTA_LEVEL, community, timeout),
-        _snmp_get(ip, OID_TONER_MAGENTA_MAX, community, timeout),
-    )
-    _t_yellow_percent = _toner_percent(
-        _snmp_get(ip, OID_TONER_YELLOW_LEVEL, community, timeout),
-        _snmp_get(ip, OID_TONER_YELLOW_MAX, community, timeout),
-    )
-    # DICA DE SEGURANÇA: só considera toner colorido EXISTENTE se for > 0%
-    _pre_has_color_toners = False
-    for _pt in (_t_cyan_percent, _t_magenta_percent, _t_yellow_percent):
+
+    # ========= PRÓXIMOS PASSOS VÃO NOS PRÓXIMOS MINI-BLOCOS 3B/3C/3D =========
+    has_color_toners_hint = False  # placeholder, preenchemos no bloco 3B
+    pages_total = 0
+    pages_bw = 0
+    pages_color = 0
+    v_total, v_bw, v_color = (0, 0, 0)
+    rfc_total, rfc_pb, rfc_color = (0, 0, 0)
+    marker_pb, marker_color = (0, 0)
+    fonte_usada = "nenhuma"
+    allow_largest_heuristic = False
+    model_low = ""
+
+    # ========== (continuação) Calcula has_color_toners_hint (sem REPETIR coleta de toners!) ==========
+    # Dica real de "tem toner colorido?" (NÃO confunde valor 0 com "existe"):
+    has_color_toners_hint = False
+    for _pt in (toner_cyan, toner_magenta, toner_yellow):
         if _pt is None:
             continue
         try:
             if float(_pt) > 0:
-                _pre_has_color_toners = True
+                has_color_toners_hint = True
                 break
         except Exception:
             continue
-    logger.debug("%s: deteccao previa toner colorido = %s (C=%s M=%s Y=%s)",
-                 ip, _pre_has_color_toners, _t_cyan_percent, _t_magenta_percent, _t_yellow_percent)
+    logger.debug("%s marca=%s model=%s toner_color_hint=%s (C=%s M=%s Y=%s K=%s)",
+                 ip, manufacturer or "?", model or "?",
+                 has_color_toners_hint, toner_cyan, toner_magenta, toner_yellow, toner_black)
 
-    # ========== PASSO 1: OIDs FIXOS PADRAO RFC (MELHOR FONTE, 100% confiavel) ==========
-    oid_total = _parse_int(_snmp_get(ip, OID_PAGES_TOTAL, community, timeout)) or 0
-    oid_pb    = _parse_int(_snmp_get(ip, OID_PAGES_BW,    community, timeout)) or 0
-    oid_color = _parse_int(_snmp_get(ip, OID_PAGES_COLOR, community, timeout)) or 0
+    # ========= PASSO 3: 🥇 CONTADORES PRIVADOS DA MARCA (Tier A/B) — PRIORIDADE MÁXIMA! =========
+    v_total, v_bw, v_color = _collect_pages_vendor_specific(
+        ip, community, timeout, manufacturer, model=model,
+    )
 
-    # ========== PASSO 2 (ALTERADO v6.9.1): MARKER TABLE — SEMPRE RODA AGORA! ==========
-    # ANTES: só rodava se oid_pb/oid_color == 0 (se oid_pb=0 & oid_color=0)
-    # AGORA : SEMPRE roda a Marker Table. Ela é ADITIVA e nos dá uma 2ª visão!
-    #   (EPSON L3250: responde oid_pb=0 oid_color=0 mas tem Marker table com 3/4 contadores!)
-    # Passamos também a dica _pre_has_color_toners para a heuristica nova!
+    # ========= PASSO 4: 🥈 OIDs FIXOS RFC .1.1 / .1.2 / .1.3 (se marca não respondeu privado) =========
+    rfc_total = _parse_int(_snmp_get(ip, OID_PAGES_TOTAL, community, timeout)) or 0
+    rfc_pb    = _parse_int(_snmp_get(ip, OID_PAGES_BW,    community, timeout)) or 0
+    rfc_color = _parse_int(_snmp_get(ip, OID_PAGES_COLOR, community, timeout)) or 0
+
+    # ========= PASSO 5: 🟣 Marker Table (preparação — rodaremos no bloco 3C) =========
     marker_pb = 0
     marker_color = 0
+    # Variáveis locais extras usadas apenas pela versão antiga ainda rodando os fallback blocks:
+    _pre_has_color_toners = has_color_toners_hint
+    _t_black_percent = toner_black
+    _t_cyan_percent = toner_cyan
+    _t_magenta_percent = toner_magenta
+    _t_yellow_percent = toner_yellow
+    oid_total = rfc_total
+    oid_pb = rfc_pb
+    oid_color = rfc_color
     _oid_rfc_split_real = (oid_pb > 0) or (oid_color > 0)
-    marker_pb, marker_color = _collect_pages_from_marker_table(
-        ip, community, timeout,
-        has_color_toners_hint=_pre_has_color_toners,
+    # ========= PASSO 5: 🟣 Marker Table (SÓ RODA SE AINDA NÃO TEMOS SPLIT REAL!) =========
+    model_low = (model or "").lower()
+    allow_largest_heuristic = (
+        manufacturer == "Epson"
+        and any(low_mdl in model_low for low_mdl in (
+            m.lower() for m in ALLOW_HEURISTIC_LARGEST_BLACK_MODELS
+        ))
+        and has_color_toners_hint
     )
-    marker_pb    = marker_pb    or 0
-    marker_color = marker_color or 0
+    # Só roda Marker Table se NENHUM dos métodos acima (vendor / RFC) deu split REAL ainda
+    nao_tem_split_real = not (
+        (v_bw > 0 or v_color > 0) or (rfc_pb > 0 or rfc_color > 0)
+    )
+    if nao_tem_split_real:
+        # Dupla proteção: hint SÓ p/ EcoTank. Força disable p/ todo o resto!
+        marker_table_hint = has_color_toners_hint if allow_largest_heuristic else False
+        force_disable_heur = not allow_largest_heuristic
+        marker_pb, marker_color = _collect_pages_from_marker_table(
+            ip, community, timeout,
+            has_color_toners_hint=marker_table_hint,
+            force_largest_heuristic_disabled=force_disable_heur,
+        )
+        marker_pb    = marker_pb    or 0
+        marker_color = marker_color or 0
+        if not allow_largest_heuristic and marker_color > 0 and has_color_toners_hint:
+            # Reverte por segurança caso alguma condição interna ainda deixou passar heurística
+            marker_pb = marker_pb + marker_color
+            marker_color = 0
 
-    # ========== PASSO 3: APLICA REGRAS — NUNCA INVENTA COLORIDO! ==========
-    pages_total = oid_total or 0
+    # ========= PASSO 6: APLICA PRIORIDADE DAS FONTES (nunca inventa!) =========
+    pages_total = 0
     pages_bw    = 0
     pages_color = 0
-
-    # --- (FONTE 1) OID FIXO RFC .1.2 e .1.3 são os MELHORES. Usa eles primeiro! ---
-    if oid_pb > 0 or oid_color > 0:
-        pages_bw    = oid_pb
-        pages_color = oid_color  # só usa colorido SE OID .1.3 REALMENTE disse >0!
-    # --- (FONTE 2) MARKER TABLE — Melhoramos ela com a heuristica de toner! ---
-    # NOVO v6.9.1: Se OID RFC NÃO tem split REAL (zeros!), mas MARKER TABLE TEM colorido > 0,
-    #              USA a Marker Table! Resolve EPSON L3250 e TODAS coloridas com OIDs zeros!
-    if (pages_bw <= 0 and pages_color <= 0) and (marker_pb > 0 or marker_color > 0):
+    if v_total > 0 or v_bw > 0 or v_color > 0:
+        pages_bw    = v_bw
+        pages_color = v_color
+        pages_total = v_total
+        fonte_usada = f"vendor:{manufacturer or '?'}"
+    elif rfc_pb > 0 or rfc_color > 0:
+        pages_bw    = rfc_pb
+        pages_color = rfc_color
+        pages_total = rfc_total
+        fonte_usada = "rfc-fixed"
+    elif marker_pb > 0 or marker_color > 0:
         pages_bw    = marker_pb
         pages_color = marker_color
-        if pages_total <= 0:
-            pages_total = pages_bw + pages_color
-    # --- (FONTE 3) NENHUM contador separado REAL existe → TUDO P&B! ---
+        pages_total = marker_pb + marker_color
+        fonte_usada = "marker-table"
+    elif rfc_total > 0:
+        pages_bw    = rfc_total
+        pages_color = 0
+        pages_total = rfc_total
+        fonte_usada = "rfc-total-only"
     else:
-        if pages_bw <= 0 and pages_color <= 0 and pages_total > 0:
-            pages_bw    = pages_total  # Tudo = P&B!
+        pages_total = 0
+        pages_bw    = 0
+        pages_color = 0
+        fonte_usada = "nenhuma"
+
+    # ========= PASSO 7: VALIDAÇÕES DE SEGURANÇA MÁXIMA (anti-cobrança errada) =========
+    # 7.1 TIER D (Toshiba, Epson laser, OKI, Pantum) → Color = 0 OBRIGATÓRIO!
+    if manufacturer in MANUFACTURERS_TIER_D_ONLY_TOTAL:
+        is_ecotank_exception = (
+            manufacturer == "Epson" and marker_color > 0 and allow_largest_heuristic
+        )
+        if not is_ecotank_exception:
             pages_color = 0
-            # Se só tem pages_total (sem split), já está correto acima.
-
-    # ========== PASSO 3.5 (NOVO v6.9.1): VALIDAÇÃO CRUZADA INTELIGENTE! ==========
-    # Caso específico da EPSON colorida (e similares) que:
-    #   → pages_total > 0 (ex: 12.000)
-    #   → oid_pb = 0, oid_color = 0 (OIDs RFC zeros)
-    #   → marker_pb = 12.000, marker_color = 0 (ele pensou que tudo era preto na 1ª heuristica)
-    #   → _pre_has_color_toners = True (tem toner colorido!)
-    # SOLUÇÃO: se marker_color == 0 mas toner colorido SIM e tem marker+oid_total,
-    #          então usamos pages_total e, se ainda é tudo preto, NÃO FORÇAMOS cor.
-    #          (Segurança MÁXIMA: se não temos certeza, não inventamos páginas coloridas.)
-    # Esta seção é de SEGURANÇA, por enquanto não forçamos nada — a heuristica do
-    # _collect_pages_from_marker_table já captura o que consegue com segurança.
-
-    # ========== PASSO 4: pages_total NUNCA fica MENOR que o split real ==========
+    # 7.2 pages_total NUNCA MENOR que split real (pb + color)
     sum_real_split = pages_bw + pages_color
     if sum_real_split > pages_total:
         pages_total = sum_real_split
-    # pages_bw nunca pode ser 0 se temos total. Se split ainda é 0 por nao ter fontes,
-    # joga tudo para PB.
+    if pages_total <= 0 and sum_real_split > 0:
+        pages_total = sum_real_split
+    # 7.3 Nenhuma fonte deu? joga tudo em PB
     if pages_total > 0 and pages_bw <= 0 and pages_color <= 0:
         pages_bw = pages_total
         pages_color = 0
-
-    # ========== REGRA EXTRA: NUNCA DEIXA pages_color MAIOR QUE TOTAL! ==========
-    # (segurança extra contra qualquer bug de SNMP)
+    # 7.4 NUNCA deixa color > total, NUNCA bw > total
     if pages_total > 0 and pages_color > pages_total:
         pages_color = max(0, pages_total - pages_bw) if pages_bw > 0 else 0
-        if pages_color < 0: pages_color = 0
+        pages_color = max(0, pages_color)
     if pages_total > 0 and pages_bw > pages_total:
         pages_bw = pages_total
 
-    # Toners (PASSO 1.5 já coletamos acima! Reutilizamos!):
-    toner_black   = _t_black_percent
-    toner_cyan    = _t_cyan_percent
-    toner_magenta = _t_magenta_percent
-    toner_yellow  = _t_yellow_percent
+    # Toners (já coletamos NO PASSO 2 usando _collect_toner_by_manufacturer! Reutilizamos!):
+    # ========= PASSO 8: CORREÇÃO 2026-09-21: is_color = PROVA REAL (não dica de toner!) =========
+    #    Ricoh SP 4510SF e outras PB tem slot CMY "fantasma" em 0% ou vazio que
+    #    gerava has_color_toners=True FALSO. Agora só consideramos colorida SE:
+    #       1) Tem páginas coloridas REALMENTE impressas (pages_color > 0 E < total)
+    #       -- OU --
+    #       2) As 3 cores C+M+Y todas tem toners > 0% (nenhuma fantasma em 0%/None)
+    has_color_pages_real = bool(pages_color and 0 < pages_color < pages_total)
+    has_3_color_toners_all_ok = True
+    _count_ok = 0
+    for _t in (toner_cyan, toner_magenta, toner_yellow):
+        try:
+            _v = float(_t) if _t is not None else 0
+        except Exception:
+            _v = 0
+        if _v > 0:
+            _count_ok += 1
+    has_3_color_toners_all_ok = (_count_ok == 3)
 
+    is_color_printer = has_color_pages_real or has_3_color_toners_all_ok
+
+    # ⛔ Não é colorida? Zera tudo que é cor (NÃO manda dado mentiroso pro backend)
+    if not is_color_printer:
+        toner_cyan = None
+        toner_magenta = None
+        toner_yellow = None
+        pages_color = 0
+        if pages_total > 0:
+            pages_bw = pages_total
+        elif pages_bw > 0:
+            pages_total = pages_bw
+    else:
+        # É colorida mas ainda NÃO TEM SPLIT REAL? → NÃO INVENTA! Tudo PB, color = 0.
+        if pages_color <= 0 and pages_total > 0:
+            pages_bw = pages_total
+            pages_color = 0
+        if pages_bw + pages_color > pages_total:
+            pages_total = pages_bw + pages_color
+
+    # ========= PASSO 9: Monta PrinterData, alertas, log final =========
     data = PrinterData(
         ip_address=ip,
-        model=model.strip() if model else None,
-        manufacturer=_guess_manufacturer(sys_descr),
-        serial_number=serial.strip() if serial else None,
+        model=model or None,
+        manufacturer=manufacturer,
+        serial_number=serial or None,
         status="online",
-        pages_total=pages_total,
-        pages_bw=pages_bw,
-        pages_color=pages_color,
+        pages_total=max(0, pages_total),
+        pages_bw=max(0, pages_bw),
+        pages_color=max(0, pages_color),
         toner_black=toner_black,
         toner_cyan=toner_cyan,
         toner_magenta=toner_magenta,
         toner_yellow=toner_yellow,
     )
 
-    # Determina se a impressora é MONOCROMÁTICA (Preto & Branco)
-    # ⚠️ REGRA CRÍTICA ANTI-FALSO-POSITIVO (Julio pediu várias vezes!):
-    #   Muitas impressoras PB (ex: Ricoh SP 3710SF) reportam OID de ciano/magenta/amarelo
-    #   com VALOR 0 (não None) via SNMP! "Nenhum = 0"
-    #   ANTES: has_color_toners = any(t is not None) → interpretava 0 como "EXISTE" ❌
-    #   DEPOIS: has_color_toners = any(t is not None and float(t) > 0) → só >0 conta como EXISTE ✅
-    has_color_pages = bool(pages_color and pages_color > 0)
-    has_color_toners = False
-    for _t in (toner_cyan, toner_magenta, toner_yellow):
-        if _t is None:
-            continue
-        try:
-            if float(_t) > 0:
-                has_color_toners = True
-                break
-        except Exception:
-            continue
-    is_color_printer = has_color_pages or has_color_toners
-
-    # ⛔ IMPRESSORA PB CONFIRMADA: NÃO EXISTEM toners ciano/magenta/amarelo de verdade.
-    # Apaga QUALQUER valor reportado como 0 ou None → deixa None (nao manda dado mentiroso para o backend)
-    if not is_color_printer:
-        toner_cyan = None
-        toner_magenta = None
-        toner_yellow = None
-        data.toner_cyan = None
-        data.toner_magenta = None
-        data.toner_yellow = None
-        # PRETO & BRANCO (COBRANÇA SEGURA):
-        #   1 contador = TOTAL REAL DO SNMP (oid_total).
-        #   Não calcula, não divide, não inventa.
-        pages_color = 0
-        data.pages_color = 0
-        if pages_total > 0:
-            pages_bw = pages_total
-            data.pages_bw = pages_total
-        elif pages_bw > 0:
-            pages_total = pages_bw
-            data.pages_total = pages_total
-    else:
-        # ===== IMPRESSORA COLORIDA — JÁ COLETADA COM REGRAS SEGURAS ACIMA =====
-        # A coleta (PASSOS 1-4) já garantiu:
-        #   pages_color = 0 A MENOS QUE oid_color > 0 REAL OU marker_color > 0 REAL.
-        #   NÃO INVENTA pages_color = total - bw. NÃO há chutes.
-        # Só garantimos aqui a monotonicidade básica e salvamos.
-        # Se a impressora é colorida mas NÃO reportou split reais (color=0):
-        #   → NÃO cobramos por cor de qualquer jeito. pages_color = 0 e bw = total.
-        if pages_color <= 0 and pages_total > 0:
-            pages_bw = pages_total
-            pages_color = 0
-        if pages_bw + pages_color > pages_total:
-            pages_total = pages_bw + pages_color
-        data.pages_bw = pages_bw
-        data.pages_color = pages_color
-        data.pages_total = pages_total
-
-    # Alertas básicos de toner (SOMENTE para toners EXISTENTES CONFIRMADOS!)
+    # Alertas de toner (SÓ p/ toners que REALMENTE existem)
     alerts: list[str] = []
     toners_to_check: list[tuple[str, Optional[float]]] = [("preto", toner_black)]
     if is_color_printer:
@@ -1131,27 +1142,30 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Opt
             ("magenta", toner_magenta),
             ("amarelo", toner_yellow),
         ])
-
-    for color, pct in toners_to_check:
+    for c, pct in toners_to_check:
         if pct is None:
             continue
         if pct <= 5:
-            alerts.append(f"Toner {color} critico: {pct}%")
+            alerts.append(f"Toner {c} critico: {pct}%")
         elif pct <= 15:
-            alerts.append(f"Toner {color} baixo: {pct}%")
+            alerts.append(f"Toner {c} baixo: {pct}%")
     data.alerts = alerts
-
-    # Atualiza os dados no PrinterData (apos correcoes de PB acima)
     data.toner_cyan = toner_cyan
     data.toner_magenta = toner_magenta
     data.toner_yellow = toner_yellow
-    data.pages_bw = pages_bw
-    data.pages_color = pages_color
-    data.pages_total = pages_total
+    data.pages_total = max(0, pages_total)
+    data.pages_bw    = max(0, pages_bw)
+    data.pages_color = max(0, pages_color)
 
-    logger.info("Contadores %s: total=%d bw=%d color=%d is_color=%s",
-                data.model or data.ip_address, data.pages_total, data.pages_bw, data.pages_color, is_color_printer)
-
+    logger.info(
+        "%s %s %s | total=%d bw=%d color=%d | fonte=%s | is_color=%s",
+        ip,
+        f"[{manufacturer}]" if manufacturer else "[marca=?]",
+        model or "model=?",
+        data.pages_total, data.pages_bw, data.pages_color,
+        fonte_usada,
+        is_color_printer,
+    )
     return data
 
 
@@ -1166,6 +1180,17 @@ def scan_subnet(
     max_workers: int = 64,
 ) -> list[PrinterData]:
     results: list[PrinterData] = []
+
+    # ============= 🏆 BANNER: Coleta Segura de OIDs por Marca (2026-09-21) =============
+    logger.info("="*78)
+    logger.info(" PRINT COLLECT AGENT — Coleta Segura v6.9.12-OIDs-20260921  ")
+    logger.info(" OIDs privados Tier A/B ATIVOS: HP / Konica Minolta / Ricoh / Xerox / ")
+    logger.info("     Lexmark / Canon / Sharp — contadores PB e Color REAIS (NÃO INVENTADOS!)")
+    logger.info(" Heurística 'maior=preto' LIBERADA SÓ p/ EPSON EcoTank L3xxx whitelist.")
+    logger.info(" Demais impressoras: Color=0 (segurança) se não houver OID específico.")
+    logger.info("="*78)
+    # ==============================================================================
+
     try:
         network = ipaddress.ip_network(subnet, strict=False)
     except ValueError:
