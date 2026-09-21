@@ -777,15 +777,18 @@ def _collect_pages_vendor_specific(
                 items = sorted(pw_vals.values(), reverse=True)
                 best_pair_pw_sum = 0
                 best_pair_pw = None
+                pw_threshold_skip_total = pw_total * 0.95  # pula TOTAL GERAL (>= 95% do max)
                 for i in range(len(items)):
                     vi = items[i]
-                    if vi <= 0 or vi >= pw_total * 1.05:
+                    # REGRA CRITICA: se vi >= 95% do pw_total, é o TOTAL GERAL — NÃO COMBINA COM NINGUÉM!
+                    if vi <= 0 or vi >= pw_threshold_skip_total:
                         continue
                     for j in range(len(items)):
                         if i == j:
                             continue
                         vj = items[j]
-                        if vj <= 0:
+                        # REGRA CRITICA: vj TAMBÉM não pode ser >= 95% do total (evita combinar BW com TOTAL)
+                        if vj <= 0 or vj >= pw_threshold_skip_total:
                             continue
                         s = vi + vj
                         if (pw_total * 0.92 <= s <= pw_total * 1.08) and s > best_pair_pw_sum:
