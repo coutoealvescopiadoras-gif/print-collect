@@ -1032,6 +1032,19 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Opt
         pages_color = v_color
         pages_total = v_total
         fonte_usada = f"vendor:{manufacturer or '?'}"
+        # ========= PASSO 6B: FALLBACK ANTI-COLOR=0 RUIM (ex: Konica C308 firmware)! =========
+        # Se o vendor disse color=0, mas OIDs RFC FIXOS (genéricos) funcionam e TEM color REAL >0
+        # (ex: Konica firmware antigo só entrega Copy/Print BW mas OIDs RFC genéricos retornam color real):
+        # nós MESCLAMOS: mantemos o TOTAL do vendor (maior, mais confiável), mas usamos RFC color REAL
+        # e ajustamos bw = total - color, para não ter soma errada.
+        if pages_color == 0 and pages_total > 0 and (rfc_pb > 0 or rfc_color > 0):
+            rfc_sum = rfc_pb + rfc_color
+            rfc_color_rel_ok = (rfc_sum > 0) and (rfc_color > 0) and (rfc_sum >= pages_bw) and (rfc_sum <= pages_total * 2)
+            if rfc_color_rel_ok:
+                pages_total = max(pages_total, rfc_total) if rfc_total > 0 else pages_total
+                pages_color = rfc_color
+                pages_bw    = max(0, pages_total - pages_color)
+                fonte_usada = f"vendor:{manufacturer or '?'}+rfc-color-fallback"
     elif rfc_pb > 0 or rfc_color > 0:
         pages_bw    = rfc_pb
         pages_color = rfc_color
