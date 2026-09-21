@@ -700,6 +700,12 @@ def _collect_pages_vendor_specific(
     • HP/Konica/Xerox/Lexmark = leem escalares/WALK OFICIAL.
     • Ricoh = Total privado + WALK tabela .19 por LABEL (não folhas fixas!).
     • Qualquer dúvida = retorna 0,0,0 → quem chama usa fallback."""
+    # PATCH 6 (21/09): TRACE de entrada para diagnosticar POR QUE a Konica C308 retornava 0,0,0
+    logger.warning(
+        "[DIAG VENDOR ENTER] IP=%s manufacturer=[%s] model=[%s] TierD?=%s",
+        ip, manufacturer or "NONE", (model or "").strip()[:60],
+        manufacturer in MANUFACTURERS_TIER_D_ONLY_TOTAL if manufacturer else "n/a",
+    )
     total = 0
     bw = 0
     color = 0
@@ -709,6 +715,7 @@ def _collect_pages_vendor_specific(
         # Mesmo Epson LASER (não é EcoTank): só total.
         # EcoTank (L3250 etc) cai aqui mas Marker Table heurística permitida SÓ p/ eles lá embaixo.
         rfc_total = _parse_int(_snmp_get(ip, OID_PAGES_TOTAL, community, timeout)) or 0
+        logger.warning("[DIAG VENDOR TIERD] IP=%s manufacturer=%s rfc_total=%s -> retorna (t=%s,b=%s,c=0)", ip, manufacturer, rfc_total, rfc_total, rfc_total)
         if rfc_total > 0:
             return (rfc_total, rfc_total, 0)
         return (0, 0, 0)
@@ -723,6 +730,7 @@ def _collect_pages_vendor_specific(
                 total = max(total, hp_t, hp_b + hp_c)
                 bw    = hp_b
                 color = hp_c
+                logger.warning("[DIAG VENDOR RETURN] IP=%s src=HP t=%s b=%s c=%s", ip, total, bw, color)
                 return (total, bw, color)
 
         # ===== Konica Minolta (Tier A): Copy + Print somados (contador OFICIAL) =====
@@ -733,6 +741,7 @@ def _collect_pages_vendor_specific(
         #           1.3.6.1.4.1.18334.1.1.1.5.7.2.{0..20}.0 → essa árvore tem o TOTAL GERAL (índice 2 que já funciona!)
         #           e os outros índices (0, 1, 3..20) são Total Preto, Total Color, Duplex, A3 etc OFICIAIS!
         if manufacturer == "Konica Minolta":
+            logger.warning("[DIAG KONICA BLOCK ENTER] IP=%s model=%s -> EXECUTANDO SUPERBLOCO KONICA MINOLTA PATCH7 PRINTWAYY!", ip, (model or "")[:60])
             def _km_read(base_oid: str) -> int:
                 """Lê UM OID com até 10 variações de sufixo (0 a 9). Retorna PRIMEIRO valor >0 encontrado."""
                 for suffix in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9"):
@@ -740,6 +749,63 @@ def _collect_pages_vendor_specific(
                     if v > 0:
                         return v
                 return 0
+
+            # =====================================================================
+            # PATCH 7 (21/09 17h): ÁRVORE NOVA PRINTWAYY OFICIAL - EXTRAÍDA DE DLL .NET PAGO
+            #   OID base = 1.3.6.1.4.1.18334.1.1.2.1.5.7.20.1.1.9  (árvore DIFERENTE da velha 1.1.1!)
+            #   Essa é a árvore que realmente funciona na bizhub C308 cliente 117!
+            #   PrintWayy lê .9.1 (índice X=1 com sufixo? Ou .9.X onde X é tipo do contador?)
+            #   Fazemos varredura X=0..30 lendo .9.X, .9.X.0, .9.X.1 → encontra Total, BW, Color.
+            # =====================================================================
+            KM_PRINTWAYY_BASE = "1.3.6.1.4.1.18334.1.1.2.1.5.7.20.1.1.9"
+            pw_vals: dict[str, int] = {}  # key = sufixo lido ex: ".1.0", value = valor
+            pw_total = 0
+            pw_bw = 0
+            pw_clr = 0
+            pw_src = ""
+            for pw_x in range(0, 31):  # X de 0 a 30
+                for pw_suf in ("", ".0", ".1"):
+                    oid_full = f"{KM_PRINTWAYY_BASE}.{pw_x}{pw_suf}"
+                    v = _parse_int(_snmp_get(ip, oid_full, community, timeout)) or 0
+                    if v > 0:
+                        key = f".{pw_x}{pw_suf}"
+                        pw_vals[key] = v
+                        if v > pw_total:
+                            pw_total = v
+            # Tenta encontrar o par (menor + maior ≈ pw_total) → BW + Color
+            if pw_total > 0 and len(pw_vals) >= 2:
+                items = sorted(pw_vals.values(), reverse=True)
+                best_pair_pw_sum = 0
+                best_pair_pw = None
+                for i in range(len(items)):
+                    vi = items[i]
+                    if vi <= 0 or vi >= pw_total * 1.05:
+                        continue
+                    for j in range(len(items)):
+                        if i == j:
+                            continue
+                        vj = items[j]
+                        if vj <= 0:
+                            continue
+                        s = vi + vj
+                        if (pw_total * 0.92 <= s <= pw_total * 1.08) and s > best_pair_pw_sum:
+                            best_pair_pw_sum = s
+                            best_pair_pw = (vi, vj)
+                if best_pair_pw is not None:
+                    a, b = best_pair_pw
+                    if a <= b:
+                        pw_clr, pw_bw = a, b
+                    else:
+                        pw_clr, pw_bw = b, a
+                    pw_src = f"KM-PRINTWAYY(bw={pw_bw}+clr={pw_clr}≈{best_pair_pw_sum})"
+                elif pw_total > 0:
+                    # Sem par válido: só temos total → BW = total, Color = 0 (fallback conservador)
+                    pw_bw = pw_total
+                    pw_clr = 0
+                    pw_src = f"KM-PRINTWAYY(total-only={pw_total})"
+            pw_diag_str = " ".join(f"{k}={v}" for k, v in sorted(pw_vals.items())) if pw_vals else "EMPTY"
+            logger.warning("[DIAG KONICA PRINTWAYY] IP=%s base=%s vals=[%s] -> %s (t=%s b=%s c=%s)",
+                           ip, KM_PRINTWAYY_BASE, pw_diag_str, pw_src or "NONE", pw_total, pw_bw, pw_clr)
 
             # ===== PATCH 5b: VARREDURA GERAL CONTADORES KONICA (1.3.6.1.4.1.18334.1.1.1.5.7.2.{idx}.0) =====
             #   SABEMOS QUE idx=2 funciona (364477 / 429815)! Vamos ler idx 0..20 pra ver quais existem!
@@ -817,19 +883,28 @@ def _collect_pages_vendor_specific(
             rfc3805_for_km: Optional[tuple[int, int, int]] = None
 
             # ===== ESCOLHE QUAL CONJUNTO DE OIDs RETORNA O MELHOR RESULTADO =====
-            # Prioridade 0 (PATCH 5!): PRIMEIRO tenta CONTADORES GERAIS (árvore 7.2.*) se achou par!
+            # Prioridade -1 (PATCH 7 PRINTWAYY!): ÁRVORE NOVA 1.1.2.1.5.7.20.1.1.9 - MÁXIMA PRIORIDADE
             chosen_tot = 0
             chosen_bw  = 0
             chosen_clr = 0
             chosen_src = ""
-            if gen_counters_hint_bw > 0 and gen_counters_hint_clr > 0:
+            if pw_total > 0 or pw_bw > 0 or pw_clr > 0:
+                cand_tot = max(pw_total, pw_bw + pw_clr)
+                if cand_tot > 0:
+                    chosen_tot = cand_tot
+                    chosen_bw  = pw_bw
+                    chosen_clr = pw_clr
+                    chosen_src = pw_src or "KM-PRINTWAYY"
+            # Prioridade 0: CONTADORES GERAIS (árvore 7.2.*) se achou par E PRINTWAYY não deu COLOR>0
+            if gen_counters_hint_bw > 0 and gen_counters_hint_clr > 0 and chosen_clr == 0:
                 cand_tot = max(max_gen_total, gen_counters_hint_bw + gen_counters_hint_clr)
-                chosen_tot = cand_tot
-                chosen_bw  = gen_counters_hint_bw
-                chosen_clr = gen_counters_hint_clr
-                chosen_src = f"KM-GENERAL({gen_counters_hint_used})"
+                if cand_tot >= chosen_tot * 0.9 or chosen_tot == 0:
+                    chosen_tot = cand_tot
+                    chosen_bw  = gen_counters_hint_bw
+                    chosen_clr = gen_counters_hint_clr
+                    chosen_src = f"KM-GENERAL({gen_counters_hint_used})"
             # Prioridade 1: quem tiver COLOR REAL > 0 GANHA (independente de conjunto)
-            # Tenta Conjunto A (se tem color >0 ou total maior)
+            # Tenta Conjunto A (se tem color >0 ou total maior e PRINTWAYY/Gen não resolveram color)
             if (setA_clr > 0 and (setA_bw + setA_clr) > 0) or (setA_tot > 0 and not chosen_src):
                 cand_tot = max(setA_tot, setA_bw + setA_clr)
                 if (setA_clr > 0 and cand_tot >= chosen_tot * 0.9) or chosen_clr == 0:
@@ -856,6 +931,7 @@ def _collect_pages_vendor_specific(
             # Se nenhum conjunto retornou COLOR > 0, retorna o que tem o TOTAL MAIOR
             if chosen_clr == 0:
                 candidates = [
+                    (pw_total, pw_bw, pw_clr, pw_src or "KM-PRINTWAYY"),
                     (max(setA_tot, setA_bw + setA_clr), setA_bw, setA_clr, "KM-SetA(CopyPrint)"),
                     (max(setB_tot, setB_bw + setB_clr), setB_bw, setB_clr, "KM-SetB(TotalDireto)"),
                     (max(setC_tot, setC_bw + setC_clr), setC_bw, setC_clr, "KM-SetC(idx1)"),
@@ -880,11 +956,14 @@ def _collect_pages_vendor_specific(
             #   e a gente vê no retorno do backend / leitura da impressora.
             gen_str = " ".join(gen_counters_str_parts) if gen_counters_str_parts else "N/A"
             rfc_str = (f"tot={rfc3805_for_km[0]} bw={rfc3805_for_km[1]} clr={rfc3805_for_km[2]}") if rfc3805_for_km else "N/A"
+            pw_summary = f"src={pw_src or 'NONE'} vals=[{pw_diag_str}]"
             logger.warning(
-                "[DIAG KONICA %s] IP=%s SetA[tot=%s bw=%s(cp=%s+pr=%s) clr=%s(cp=%s+pr=%s)] "
+                "[DIAG KONICA %s] IP=%s PW[%s tot=%s bw=%s clr=%s] "
+                "SetA[tot=%s bw=%s(cp=%s+pr=%s) clr=%s(cp=%s+pr=%s)] "
                 "SetB[tot=%s bw=%s clr=%s] SetC[tot=%s bw=%s(cp=%s+pr=%s) clr=%s(cp=%s+pr=%s)] "
                 "GEN[%s] RFC3805=%s CHOSEN[src=%s tot=%s bw=%s clr=%s]",
                 (model or "").strip() or "?", ip,
+                pw_summary, pw_total, pw_bw, pw_clr,
                 setA_tot, setA_bw, setA_copy_b, setA_print_b, setA_clr, setA_copy_c, setA_print_c,
                 setB_tot, setB_bw, setB_clr,
                 setC_tot, setC_bw, setC_copy_b, setC_print_b, setC_clr, setC_copy_c, setC_print_c,
@@ -1008,9 +1087,11 @@ def _collect_pages_vendor_specific(
                 total = max(cn_t, cn_b + cn_c)
                 bw    = cn_b
                 color = cn_c
+                logger.warning("[DIAG VENDOR RETURN] IP=%s src=Canon-101/108/122/123 t=%s b=%s c=%s", ip, total, bw, color)
                 return (total, bw, color)
 
     except Exception as e_vendor:
+        logger.warning("[DIAG VENDOR EXCEPTION] IP=%s manufacturer=%s err=%s exc_type=%s", ip, manufacturer or "?", str(e_vendor)[:200], type(e_vendor).__name__)
         logger.debug("vendor_specific pages falhou %s (%s): %s", ip, manufacturer or "?", e_vendor)
 
     # 🔧 FALLBACK GLOBAL RFC 3805: Se nenhum OID privado respondeu (ou retornou zeros),
@@ -1018,11 +1099,14 @@ def _collect_pages_vendor_specific(
     try:
         rfc3805 = _collect_pages_printer_mib_rfc(ip, community, timeout)
         if rfc3805 and (rfc3805[0] > 0 or rfc3805[1] > 0 or rfc3805[2] > 0):
+            logger.warning("[DIAG VENDOR RETURN] IP=%s src=fallback_global_RFC3805 t=%s b=%s c=%s", ip, rfc3805[0], rfc3805[1], rfc3805[2])
             return rfc3805
     except Exception as exc:
+        logger.warning("[DIAG VENDOR RFC3805_EXCEPTION] IP=%s err=%s", ip, str(exc)[:200])
         logger.debug("fallback global RFC3805 exc %s: %s", ip, exc)
 
     # Nenhum OID privado respondeu → retorna zeros, quem chama usa fallback RFC
+    logger.warning("[DIAG VENDOR RETURN] IP=%s src=NONE (vendor+fallback RFC3805 ALL ZEROS) -> retorna 0,0,0 (Marker Table sera usada!)", ip)
     return (0, 0, 0)
 
 
@@ -1521,9 +1605,10 @@ def scan_subnet(
 
     # ============= 🏆 BANNER: Coleta Segura de OIDs por Marca (2026-09-21) =============
     logger.info("="*78)
-    logger.info(" PRINT COLLECT AGENT — Coleta Segura v6.9.12-OIDs-20260921-KM3SETS-DIAG-PATCH5-SUPERDIAG  ")
+    logger.info(" PRINT COLLECT AGENT — v6.9.12-KM-PRINTWAYY-OIDS-20260921-7  ")
     logger.info(" OIDs privados Tier A/B ATIVOS: HP / Konica Minolta / Ricoh / Xerox / ")
     logger.info("     Lexmark / Canon / Sharp — contadores PB e Color REAIS (NÃO INVENTADOS!)")
+    logger.info(" Konica Minolta: ÁRVORE NOVA PRINTWAYY 1.1.2.1.5.7.20.1.1.9 (PRIORIDADE!)")
     logger.info(" Heurística 'maior=preto' LIBERADA SÓ p/ EPSON EcoTank L3xxx whitelist.")
     logger.info(" Demais impressoras: Color=0 (segurança) se não houver OID específico.")
     logger.info("="*78)
