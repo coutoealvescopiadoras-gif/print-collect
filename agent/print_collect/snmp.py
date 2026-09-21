@@ -479,6 +479,67 @@ def _toner_percent(level: Optional[str], maximum: Optional[str]) -> Optional[flo
     return pct if 0 <= pct <= 100 else None
 
 
+def _collect_pages_printer_mib_rfc(ip: str, community: str, timeout: int) -> Optional[tuple[int, int, int]]:
+    """COLETA RFC 3805 DEFINITIVA: WALK tabela prtMarkerTable (Printer MIB) por ColorantIndex.
+
+    Soma PRETO (colorant=1) e CORES CMY (colorant=2..4+) de TODOS os hrDeviceIndex encontrados.
+    NÃO usa índices fixos! Funciona em Konica, Ricoh, HP, Xerox, Lexmark, Canon... tudo!
+
+    Returns: (total, bw, color) ou None se nenhum contador >0 for encontrado.
+    """
+    # prtMarkerTable = .1.3.6.1.2.1.43.10.2.1
+    #   Coluna 2 = prtMarkerColorantIndex (1=Preto, 2=Ciano, 3=Magenta, 4=Amarelo, 5+=outras)
+    #   Coluna 3 = prtMarkerCounterUnit (7 = pages/impressões)
+    #   Coluna 4 = prtMarkerLifeCount (contador real de páginas)
+    BASE_OID_PRINTER_MIB_MARKER = "1.3.6.1.2.1.43.10.2.1"
+    try:
+        raw = _snmp_walk_raw(ip, BASE_OID_PRINTER_MIB_MARKER, community, timeout)
+        if not raw:
+            return None
+        bw_sum  = 0
+        col_sum = 0
+        # Formato suffix: coluna.hrDeviceIndex.prtMarkerIndex (ex: "2.1.1" = col 2, device 1, marker 1)
+        # Agrupamos por (hrDeviceIndex, prtMarkerIndex) para pegar as 3 colunas da mesma linha
+        rows: dict[tuple[int, int], dict[int, int]] = {}
+        for suffix, val in raw.items():
+            parts = suffix.split(".")
+            if len(parts) < 3:
+                continue
+            try:
+                col    = int(parts[0])
+                hrdev  = int(parts[1])
+                marker = int(parts[2])
+            except ValueError:
+                continue
+            key = (hrdev, marker)
+            if key not in rows:
+                rows[key] = {}
+            rows[key][col] = _parse_int(val)
+
+        for key, row in rows.items():
+            colorant = row.get(2, 0)
+            unit     = row.get(3, 0)
+            life_cnt = row.get(4, 0)
+            if life_cnt <= 0:
+                continue
+            # unit 7 = pages; unit 8 = impressions (mesma coisa para contagem)
+            if unit not in (7, 8):
+                continue
+            if colorant == 1:
+                bw_sum += life_cnt
+            elif colorant >= 2 and colorant <= 32:
+                # 2=Ciano, 3=Magenta, 4=Amarelo, 5+=cores especiais (verniz etc) — todas contam como color
+                col_sum += life_cnt
+
+        if bw_sum > 0 or col_sum > 0:
+            total = bw_sum + col_sum
+            return (total, bw_sum, col_sum)
+        return None
+    except Exception as exc:
+        logger.debug("RFC 3805 marker walk exc %s: %s", ip, exc)
+        return None
+
+
 def _extract_pen(sys_object_id: Optional[str]) -> Optional[int]:
     """Extrai o PEN (Private Enterprise Number) do OID sysObjectID.
     Formato esperado: 1.3.6.1.4.1.PEN.resto_do_oid.
@@ -628,19 +689,38 @@ def _collect_pages_vendor_specific(
                 return (total, bw, color)
 
         # ===== Konica Minolta (Tier A): Copy + Print somados (contador OFICIAL) =====
+        #         Variação de firmware: alguns usam sufixo .0 (scalar), outros .1 / .2 (tabela)
         if manufacturer == "Konica Minolta":
-            km_t       = _parse_int(_snmp_get(ip, _OID_KM_TOTAL,       community, timeout)) or 0
-            km_copy_b  = _parse_int(_snmp_get(ip, _OID_KM_COPY_BW,     community, timeout)) or 0
-            km_print_b = _parse_int(_snmp_get(ip, _OID_KM_PRINT_BW,    community, timeout)) or 0
-            km_copy_c  = _parse_int(_snmp_get(ip, _OID_KM_COPY_COLOR,  community, timeout)) or 0
-            km_print_c = _parse_int(_snmp_get(ip, _OID_KM_PRINT_COLOR, community, timeout)) or 0
-            if (km_copy_b + km_print_b + km_copy_c + km_print_c) > 0 or km_t > 0:
-                km_bw    = km_copy_b + km_print_b
-                km_color = km_copy_c + km_print_c
-                total    = max(km_t, km_bw + km_color)
-                bw       = km_bw
-                color    = km_color
-                return (total, bw, color)
+            # Testa 3 variantes de sufixo para CADA um dos 5 OIDs Konica
+            def _km_get(base_oid: str) -> int:
+                """Tenta ler OID com sufixo .0, .1, .2 — retorna PRIMEIRO valor >0."""
+                for suffix in ("0", "1", "2"):
+                    v = _parse_int(_snmp_get(ip, f"{base_oid}.{suffix}", community, timeout)) or 0
+                    if v > 0:
+                        return v
+                return 0
+
+            km_t       = _km_get(_OID_KM_TOTAL.rsplit(".", 1)[0])
+            km_copy_b  = _km_get(_OID_KM_COPY_BW.rsplit(".", 1)[0])
+            km_print_b = _km_get(_OID_KM_PRINT_BW.rsplit(".", 1)[0])
+            km_copy_c  = _km_get(_OID_KM_COPY_COLOR.rsplit(".", 1)[0])
+            km_print_c = _km_get(_OID_KM_PRINT_COLOR.rsplit(".", 1)[0])
+
+            km_bw    = km_copy_b + km_print_b
+            km_color = km_copy_c + km_print_c
+            # Se os OIDs vendor NÃO retornaram colorido (>0), tenta RFC 3805 WALK definitivo
+            if km_color == 0 and (km_t > 0 or km_bw > 0):
+                rfc_alt = _collect_pages_printer_mib_rfc(ip, community, timeout)
+                if rfc_alt and rfc_alt[2] > 0:  # color > 0 via RFC = sucesso!
+                    rfc_total, rfc_bw, rfc_color = rfc_alt
+                    final_total = max(km_t, km_bw, rfc_total)
+                    final_color = rfc_color
+                    final_bw    = max(0, final_total - final_color)
+                    return (final_total, final_bw, final_color)
+            # Caso padrão (vendor OIDs funcionaram OU color continua 0 mesmo após RFC)
+            if (km_bw + km_color) > 0 or km_t > 0:
+                total = max(km_t, km_bw + km_color)
+                return (total, km_bw, km_color)
 
         # ===== Xerox (Tier A): 3 escalares diretos =====
         if manufacturer == "Xerox":
@@ -759,6 +839,15 @@ def _collect_pages_vendor_specific(
 
     except Exception as e_vendor:
         logger.debug("vendor_specific pages falhou %s (%s): %s", ip, manufacturer or "?", e_vendor)
+
+    # 🔧 FALLBACK GLOBAL RFC 3805: Se nenhum OID privado respondeu (ou retornou zeros),
+    #    tenta WALK tabela prtMarkerTable por ColorantIndex (funciona em QUALQUER impressora!)
+    try:
+        rfc3805 = _collect_pages_printer_mib_rfc(ip, community, timeout)
+        if rfc3805 and (rfc3805[0] > 0 or rfc3805[1] > 0 or rfc3805[2] > 0):
+            return rfc3805
+    except Exception as exc:
+        logger.debug("fallback global RFC3805 exc %s: %s", ip, exc)
 
     # Nenhum OID privado respondeu → retorna zeros, quem chama usa fallback RFC
     return (0, 0, 0)
@@ -976,10 +1065,28 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Opt
         ip, community, timeout, manufacturer, model=model,
     )
 
-    # ========= PASSO 4: 🥈 OIDs FIXOS RFC .1.1 / .1.2 / .1.3 (se marca não respondeu privado) =========
+    # ========= PASSO 4: 🥈 OIDs FIXOS RFC .1.1 / .1.2 / .1.3 (antigo, fallback retrocompatibilidade) =========
     rfc_total = _parse_int(_snmp_get(ip, OID_PAGES_TOTAL, community, timeout)) or 0
     rfc_pb    = _parse_int(_snmp_get(ip, OID_PAGES_BW,    community, timeout)) or 0
     rfc_color = _parse_int(_snmp_get(ip, OID_PAGES_COLOR, community, timeout)) or 0
+
+    # ========= PASSO 4.5: 🏆 MÉTODO RFC 3805 OFICIAL (WALK TABELA por ColorantIndex) =========
+    #         Esse é o MÉTODO MAIS CONFIÁVEL! Não usa índices fixos.
+    #         Lê TODAS as linhas da prtMarkerTable, identifica cor por prtMarkerColorantIndex:
+    #           colorant=1 → Preto, colorant=2..32 → Cores CMY (soma como coloridas)
+    #         Funciona em KONICA MINOLTA bizhub C308/C368/C258/C287 etc que não respondem
+    #         corretamente aos OIDs RFC com índices fixos .1.2 / .1.3!
+    rfc3805_total = 0
+    rfc3805_pb    = 0
+    rfc3805_color = 0
+    rfc3805_ok    = False
+    try:
+        _rfc3805 = _collect_pages_printer_mib_rfc(ip, community, timeout)
+        if _rfc3805 and (_rfc3805[0] > 0 or _rfc3805[1] > 0 or _rfc3805[2] > 0):
+            rfc3805_total, rfc3805_pb, rfc3805_color = _rfc3805
+            rfc3805_ok = True
+    except Exception as exc:
+        logger.debug("collect_printer RFC3805 exc %s: %s", ip, exc)
 
     # ========= PASSO 5: 🟣 Marker Table (preparação — rodaremos no bloco 3C) =========
     marker_pb = 0
@@ -1003,9 +1110,11 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Opt
         ))
         and has_color_toners_hint
     )
-    # Só roda Marker Table se NENHUM dos métodos acima (vendor / RFC) deu split REAL ainda
+    # Só roda Marker Table se NENHUM dos métodos acima (vendor / RFC / RFC3805) deu split REAL ainda
     nao_tem_split_real = not (
-        (v_bw > 0 or v_color > 0) or (rfc_pb > 0 or rfc_color > 0)
+        (v_bw > 0 or v_color > 0)
+        or (rfc_pb > 0 or rfc_color > 0)
+        or (rfc3805_ok and (rfc3805_pb > 0 or rfc3805_color > 0))
     )
     if nao_tem_split_real:
         # Dupla proteção: hint SÓ p/ EcoTank. Força disable p/ todo o resto!
@@ -1024,6 +1133,13 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Opt
             marker_color = 0
 
     # ========= PASSO 6: APLICA PRIORIDADE DAS FONTES (nunca inventa!) =========
+    # Ordem de PRIORIDADE (1 mais importante → 6 menos):
+    #   1) Vendor OID privado específico (Tier A/B Konica/HP/Xerox/Ricoh etc)
+    #        |— PASSO 6B: se vendor color=0, mas tem RFC 3805 NOVO color >0 REAL → mescla!
+    #   2) RFC 3805 OFICIAL (WALK por ColorantIndex) — método MAIS CONFIÁVEL GENÉRICO
+    #   3) OIDs RFC fixos (.1.1 / .1.2 / .1.3) — retrocompatibilidade
+    #   4) Marker Table (só Epson EcoTank)
+    #   5) RFC total-only (só OID_PAGES_TOTAL)
     pages_total = 0
     pages_bw    = 0
     pages_color = 0
@@ -1033,18 +1149,39 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Opt
         pages_total = v_total
         fonte_usada = f"vendor:{manufacturer or '?'}"
         # ========= PASSO 6B: FALLBACK ANTI-COLOR=0 RUIM (ex: Konica C308 firmware)! =========
-        # Se o vendor disse color=0, mas OIDs RFC FIXOS (genéricos) funcionam e TEM color REAL >0
-        # (ex: Konica firmware antigo só entrega Copy/Print BW mas OIDs RFC genéricos retornam color real):
-        # nós MESCLAMOS: mantemos o TOTAL do vendor (maior, mais confiável), mas usamos RFC color REAL
-        # e ajustamos bw = total - color, para não ter soma errada.
-        if pages_color == 0 and pages_total > 0 and (rfc_pb > 0 or rfc_color > 0):
-            rfc_sum = rfc_pb + rfc_color
-            rfc_color_rel_ok = (rfc_sum > 0) and (rfc_color > 0) and (rfc_sum >= pages_bw) and (rfc_sum <= pages_total * 2)
-            if rfc_color_rel_ok:
-                pages_total = max(pages_total, rfc_total) if rfc_total > 0 else pages_total
-                pages_color = rfc_color
-                pages_bw    = max(0, pages_total - pages_color)
-                fonte_usada = f"vendor:{manufacturer or '?'}+rfc-color-fallback"
+        #         Regra: se vendor disse color=0, mas temos color REAL >0 provado por método RFC:
+        #         PRIORIDADE -> PRIMEIRO TENTA O MÉTODO NOVO RFC 3805 (ColorantIndex WALK) [MAIS CONFIÁVEL]
+        #         SE NÃO TIVER, FALLBACK PARA OS OIDs RFC FIXOS ANTIGOS [retrocompatibilidade]
+        if pages_color == 0 and pages_total > 0:
+            # 🏆 PRIMEIRO: Usa o método NOVO RFC 3805 (ColorantIndex) — funciona em Konica C308!
+            if rfc3805_ok and (rfc3805_pb > 0 or rfc3805_color > 0) and rfc3805_color > 0:
+                rfc3805_sum = rfc3805_pb + rfc3805_color
+                rfc3805_ok_color = (
+                    rfc3805_sum > 0 and rfc3805_color > 0
+                    and rfc3805_sum >= pages_bw
+                    and rfc3805_sum <= pages_total * 2
+                )
+                if rfc3805_ok_color:
+                    pages_total = max(pages_total, rfc3805_total) if rfc3805_total > 0 else pages_total
+                    pages_color = rfc3805_color
+                    pages_bw    = max(0, pages_total - pages_color)
+                    fonte_usada = f"vendor:{manufacturer or '?'}+rfc3805-color-fallback"
+            # 🥈 SEGUNDO: Só se o RFC 3805 NÃO funcionou — usa OIDs RFC fixos antigos [.1.2/.1.3]
+            if pages_color == 0 and (rfc_pb > 0 or rfc_color > 0):
+                rfc_sum = rfc_pb + rfc_color
+                rfc_color_rel_ok = (rfc_sum > 0) and (rfc_color > 0) and (rfc_sum >= pages_bw) and (rfc_sum <= pages_total * 2)
+                if rfc_color_rel_ok:
+                    pages_total = max(pages_total, rfc_total) if rfc_total > 0 else pages_total
+                    pages_color = rfc_color
+                    pages_bw    = max(0, pages_total - pages_color)
+                    fonte_usada = f"vendor:{manufacturer or '?'}+rfc-color-fallback"
+    # ===== NÍVEL 2 de prioridade: MÉTODO RFC 3805 OFICIAL (ColorantIndex) =====
+    elif rfc3805_ok and (rfc3805_pb > 0 or rfc3805_color > 0):
+        pages_bw    = rfc3805_pb
+        pages_color = rfc3805_color
+        pages_total = rfc3805_total
+        fonte_usada = "rfc3805-official"
+    # ===== NÍVEL 3: Método RFC fixos antigos (retrocompatibilidade) =====
     elif rfc_pb > 0 or rfc_color > 0:
         pages_bw    = rfc_pb
         pages_color = rfc_color
