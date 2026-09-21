@@ -490,27 +490,36 @@ def _toner_percent(level: Optional[str], maximum: Optional[str]) -> Optional[flo
     return pct if 0 <= pct <= 100 else None
 
 
-def _collect_pages_printer_mib_rfc(ip: str, community: str, timeout: int) -> Optional[tuple[int, int, int]]:
+def _collect_pages_printer_mib_rfc(
+    ip: str,
+    community: str,
+    timeout: int,
+    diagnostic_mode: bool = False,
+) -> Optional[tuple[int, int, int]]:
     """COLETA RFC 3805 DEFINITIVA: WALK tabela prtMarkerTable (Printer MIB) por ColorantIndex.
 
     Soma PRETO (colorant=1) e CORES CMY (colorant=2..4+) de TODOS os hrDeviceIndex encontrados.
     NÃO usa índices fixos! Funciona em Konica, Ricoh, HP, Xerox, Lexmark, Canon... tudo!
 
+    Args:
+        diagnostic_mode: se True, loga TUDO (walk bruto, linhas descartadas) para debug Konica.
+
     Returns: (total, bw, color) ou None se nenhum contador >0 for encontrado.
     """
-    # prtMarkerTable = .1.3.6.1.2.1.43.10.2.1
-    #   Coluna 2 = prtMarkerColorantIndex (1=Preto, 2=Ciano, 3=Magenta, 4=Amarelo, 5+=outras)
-    #   Coluna 3 = prtMarkerCounterUnit (7 = pages/impressões)
-    #   Coluna 4 = prtMarkerLifeCount (contador real de páginas)
     BASE_OID_PRINTER_MIB_MARKER = "1.3.6.1.2.1.43.10.2.1"
     try:
         raw = _snmp_walk_raw(ip, BASE_OID_PRINTER_MIB_MARKER, community, timeout)
+        if diagnostic_mode:
+            logger.warning(
+                "[DIAG RFC3805 RAW %s] Qtd itens walk=%s | itens=%s",
+                ip,
+                len(raw) if isinstance(raw, dict) else 0,
+                (str(list(raw.items())[:60])[:1800] + ("..." if len(raw) > 60 else "")) if isinstance(raw, dict) else "None",
+            )
         if not raw:
             return None
         bw_sum  = 0
         col_sum = 0
-        # Formato suffix: coluna.hrDeviceIndex.prtMarkerIndex (ex: "2.1.1" = col 2, device 1, marker 1)
-        # Agrupamos por (hrDeviceIndex, prtMarkerIndex) para pegar as 3 colunas da mesma linha
         rows: dict[tuple[int, int], dict[int, int]] = {}
         for suffix, val in raw.items():
             parts = suffix.split(".")
@@ -527,20 +536,35 @@ def _collect_pages_printer_mib_rfc(ip: str, community: str, timeout: int) -> Opt
                 rows[key] = {}
             rows[key][col] = _parse_int(val)
 
+        if diagnostic_mode:
+            discarded_rows = []
+            used_rows = []
         for key, row in rows.items():
             colorant = row.get(2, 0)
             unit     = row.get(3, 0)
             life_cnt = row.get(4, 0)
-            if life_cnt <= 0:
-                continue
-            # unit 7 = pages; unit 8 = impressions (mesma coisa para contagem)
-            if unit not in (7, 8):
-                continue
-            if colorant == 1:
-                bw_sum += life_cnt
-            elif colorant >= 2 and colorant <= 32:
-                # 2=Ciano, 3=Magenta, 4=Amarelo, 5+=cores especiais (verniz etc) — todas contam como color
-                col_sum += life_cnt
+            is_usable = False
+            if life_cnt > 0 and unit in (7, 8):
+                if colorant == 1:
+                    bw_sum += life_cnt
+                    is_usable = True
+                elif colorant >= 2 and colorant <= 32:
+                    col_sum += life_cnt
+                    is_usable = True
+            if diagnostic_mode:
+                entry = f"hr={key[0]} mrk={key[1]} colidx={colorant} unit={unit} life={life_cnt}"
+                if is_usable:
+                    used_rows.append(entry)
+                else:
+                    discarded_rows.append(entry)
+
+        if diagnostic_mode:
+            logger.warning(
+                "[DIAG RFC3805 ROWS %s] USADAS[%s]=%s | DESCARTADAS[%s]=%s",
+                ip,
+                len(used_rows), ";".join(used_rows[:25]),
+                len(discarded_rows), ";".join(discarded_rows[:40]),
+            )
 
         if bw_sum > 0 or col_sum > 0:
             total = bw_sum + col_sum
@@ -548,6 +572,8 @@ def _collect_pages_printer_mib_rfc(ip: str, community: str, timeout: int) -> Opt
         return None
     except Exception as exc:
         logger.debug("RFC 3805 marker walk exc %s: %s", ip, exc)
+        if diagnostic_mode:
+            logger.warning("[DIAG RFC3805 EXC %s] %s", ip, exc)
         return None
 
 
@@ -703,6 +729,9 @@ def _collect_pages_vendor_specific(
         #         CASO ESPECIAL bizhub C308 (cliente 117): firmwares diferentes usam OIDs DIFERENTES!
         #         Tentamos 3 conjuntos (Original / Conjunto B Total direto / Conjunto C indice 1)
         #         + 10 sufixos de 0 a 9 (para cobrir índices de tabela)
+        #         PATCH 5 (21/09 16h): Adicionamos TAMBÉM varredura da ÁRVORE GERAL de Contadores KM:
+        #           1.3.6.1.4.1.18334.1.1.1.5.7.2.{0..20}.0 → essa árvore tem o TOTAL GERAL (índice 2 que já funciona!)
+        #           e os outros índices (0, 1, 3..20) são Total Preto, Total Color, Duplex, A3 etc OFICIAIS!
         if manufacturer == "Konica Minolta":
             def _km_read(base_oid: str) -> int:
                 """Lê UM OID com até 10 variações de sufixo (0 a 9). Retorna PRIMEIRO valor >0 encontrado."""
@@ -711,6 +740,54 @@ def _collect_pages_vendor_specific(
                     if v > 0:
                         return v
                 return 0
+
+            # ===== PATCH 5b: VARREDURA GERAL CONTADORES KONICA (1.3.6.1.4.1.18334.1.1.1.5.7.2.{idx}.0) =====
+            #   SABEMOS QUE idx=2 funciona (364477 / 429815)! Vamos ler idx 0..20 pra ver quais existem!
+            KM_GENERAL_COUNTERS_BASE = "1.3.6.1.4.1.18334.1.1.1.5.7.2"
+            gen_counters_vals: list[int] = []
+            gen_counters_str_parts: list[str] = []
+            for km_idx in range(0, 21):  # 0 a 20 inclusive
+                v = _parse_int(
+                    _snmp_get(ip, f"{KM_GENERAL_COUNTERS_BASE}.{km_idx}.0", community, timeout)
+                ) or 0
+                gen_counters_vals.append(v)
+                if v > 0:
+                    gen_counters_str_parts.append(f".{km_idx}.0={v}")
+            gen_counters_hint_best_bw = 0
+            gen_counters_hint_clr = 0
+            gen_counters_hint_used = ""
+            # Tenta encontrar o melhor par (idx_x, idx_y) tal que idx_x + idx_y ≈ maior_valor (total geral idx=2
+            max_gen_total = gen_counters_vals[2] if len(gen_counters_vals) > 2 else 0
+            if max_gen_total <= 0:
+                max_gen_total = max(gen_counters_vals) if gen_counters_vals else 0
+            if max_gen_total > 0:
+                    best_pair_sum = 0
+                    best_pair = None
+                    for i in range(len(gen_counters_vals)):
+                        vi = gen_counters_vals[i]
+                        if vi <= 0 or vi >= max_gen_total * 1.05:
+                            continue
+                        for j in range(len(gen_counters_vals)):
+                            if i == j:
+                                continue
+                            vj = gen_counters_vals[j]
+                            if vj <= 0:
+                                continue
+                            s = vi + vj
+                            if (max_gen_total * 0.92 <= s <= max_gen_total * 1.08) and s > best_pair_sum:
+                                best_pair_sum = s
+                                best_pair = (i, j)
+                    if best_pair is not None:
+                        # Assume MENOR = Color, MAIOR = BW (regra conservadora! Depois confirmamos com is_color)
+                        ia, ib = best_pair
+                        va, vb = gen_counters_vals[ia], gen_counters_vals[ib]
+                        if va <= vb:
+                            gen_counters_hint_clr, gen_counters_hint_bw = va, vb
+                            order = "cl={ia}+bw={ib}"
+                        else:
+                            gen_counters_hint_clr, gen_counters_hint_bw = vb, va
+                            order = f"bw={ib}+cl={ia}"
+                        gen_counters_hint_used = f"GENERAL[{order}={gen_counters_hint_bw}+{gen_counters_hint_clr}≈{best_pair_sum}"
 
             # Leitura de DIAGNÓSTICO (todas as 3 fontes + valores originais SEM fallback)
             # Conjunto A (original, Copy/Print BW/Color separados)
@@ -740,17 +817,26 @@ def _collect_pages_vendor_specific(
             rfc3805_for_km: Optional[tuple[int, int, int]] = None
 
             # ===== ESCOLHE QUAL CONJUNTO DE OIDs RETORNA O MELHOR RESULTADO =====
-            # Prioridade: quem tiver COLOR REAL > 0 GANHA (independente de conjunto)
+            # Prioridade 0 (PATCH 5!): PRIMEIRO tenta CONTADORES GERAIS (árvore 7.2.*) se achou par!
             chosen_tot = 0
             chosen_bw  = 0
             chosen_clr = 0
             chosen_src = ""
+            if gen_counters_hint_bw > 0 and gen_counters_hint_clr > 0:
+                cand_tot = max(max_gen_total, gen_counters_hint_bw + gen_counters_hint_clr)
+                chosen_tot = cand_tot
+                chosen_bw  = gen_counters_hint_bw
+                chosen_clr = gen_counters_hint_clr
+                chosen_src = f"KM-GENERAL({gen_counters_hint_used})"
+            # Prioridade 1: quem tiver COLOR REAL > 0 GANHA (independente de conjunto)
             # Tenta Conjunto A (se tem color >0 ou total maior)
             if (setA_clr > 0 and (setA_bw + setA_clr) > 0) or (setA_tot > 0 and not chosen_src):
-                chosen_tot = max(setA_tot, setA_bw + setA_clr)
-                chosen_bw  = setA_bw
-                chosen_clr = setA_clr
-                chosen_src = "KM-SetA(CopyPrint)"
+                cand_tot = max(setA_tot, setA_bw + setA_clr)
+                if (setA_clr > 0 and cand_tot >= chosen_tot * 0.9) or chosen_clr == 0:
+                    chosen_tot = cand_tot
+                    chosen_bw  = setA_bw
+                    chosen_clr = setA_clr
+                    chosen_src = "KM-SetA(CopyPrint)"
             # Tenta Conjunto B (se tem COLOR REAL > 0, SOBRESCREVE o A!)
             if setB_clr > 0 and (setB_bw + setB_clr) > 0:
                 cand_tot = max(setB_tot, setB_bw + setB_clr)
@@ -775,12 +861,13 @@ def _collect_pages_vendor_specific(
                     (max(setC_tot, setC_bw + setC_clr), setC_bw, setC_clr, "KM-SetC(idx1)"),
                 ]
                 candidates.sort(key=lambda x: x[0], reverse=True)
-                if candidates[0][0] > 0:
+                if candidates[0][0] > 0 and (not chosen_src or candidates[0][0] > chosen_tot * 1.05):
                     chosen_tot, chosen_bw, chosen_clr, chosen_src = candidates[0]
 
             # ===== FALLBACK RFC 3805 SE AINDA TIVER COLOR=0 =====
+            # PATCH 5: Chamamos com diagnostic_mode=True para logar TUDO (bruto!)
             if chosen_clr == 0 and chosen_tot > 0:
-                rfc3805_for_km = _collect_pages_printer_mib_rfc(ip, community, timeout)
+                rfc3805_for_km = _collect_pages_printer_mib_rfc(ip, community, timeout, diagnostic_mode=True)
                 if rfc3805_for_km and rfc3805_for_km[2] > 0:
                     rfc_t, rfc_b, rfc_c = rfc3805_for_km
                     chosen_tot = max(chosen_tot, rfc_t)
@@ -791,15 +878,17 @@ def _collect_pages_vendor_specific(
             # ===== LOG DE DIAGNÓSTICO AUTOMÁTICO (aparece SEMPRE em Konica!) =====
             #   O funcionário NÃO PRECISA FAZER NADA! O log já sai no coleta automática de 30/30 min,
             #   e a gente vê no retorno do backend / leitura da impressora.
+            gen_str = " ".join(gen_counters_str_parts) if gen_counters_str_parts else "N/A"
+            rfc_str = (f"tot={rfc3805_for_km[0]} bw={rfc3805_for_km[1]} clr={rfc3805_for_km[2]}") if rfc3805_for_km else "N/A"
             logger.warning(
                 "[DIAG KONICA %s] IP=%s SetA[tot=%s bw=%s(cp=%s+pr=%s) clr=%s(cp=%s+pr=%s)] "
                 "SetB[tot=%s bw=%s clr=%s] SetC[tot=%s bw=%s(cp=%s+pr=%s) clr=%s(cp=%s+pr=%s)] "
-                "RFC3805=%s CHOSEN[src=%s tot=%s bw=%s clr=%s]",
+                "GEN[%s] RFC3805=%s CHOSEN[src=%s tot=%s bw=%s clr=%s]",
                 (model or "").strip() or "?", ip,
                 setA_tot, setA_bw, setA_copy_b, setA_print_b, setA_clr, setA_copy_c, setA_print_c,
                 setB_tot, setB_bw, setB_clr,
                 setC_tot, setC_bw, setC_copy_b, setC_print_b, setC_clr, setC_copy_c, setC_print_c,
-                (f"tot={rfc3805_for_km[0]} bw={rfc3805_for_km[1]} clr={rfc3805_for_km[2]}" if rfc3805_for_km else "N/A"),
+                gen_str, rfc_str,
                 chosen_src or "NONE", chosen_tot, chosen_bw, chosen_clr,
             )
 
@@ -1432,7 +1521,7 @@ def scan_subnet(
 
     # ============= 🏆 BANNER: Coleta Segura de OIDs por Marca (2026-09-21) =============
     logger.info("="*78)
-    logger.info(" PRINT COLLECT AGENT — Coleta Segura v6.9.12-OIDs-20260921-KM3SETS-DIAG  ")
+    logger.info(" PRINT COLLECT AGENT — Coleta Segura v6.9.12-OIDs-20260921-KM3SETS-DIAG-PATCH5-SUPERDIAG  ")
     logger.info(" OIDs privados Tier A/B ATIVOS: HP / Konica Minolta / Ricoh / Xerox / ")
     logger.info("     Lexmark / Canon / Sharp — contadores PB e Color REAIS (NÃO INVENTADOS!)")
     logger.info(" Heurística 'maior=preto' LIBERADA SÓ p/ EPSON EcoTank L3xxx whitelist.")
