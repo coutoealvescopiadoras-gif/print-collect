@@ -1085,6 +1085,15 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Opt
     #       1) Tem páginas coloridas REALMENTE impressas (pages_color > 0 E < total)
     #       -- OU --
     #       2) As 3 cores C+M+Y todas tem toners > 0% (nenhuma fantasma em 0%/None)
+    #    🔥 FIX 21/09 vespertino KONICA C308: se a FONTE é vendor:* (OID privado Tier A/B
+    #       da marca - Xerox, Konica, HP, etc) e pages_color veio >0 REAL DESSE OID, CONSERVA
+    #       o pages_color REAL e marca is_color=True MESMO que os TONERS ainda nao tenham
+    #       sido detectados (slot vazio, leitura vazia primeira coleta etc). NUNCA ZERAMOS
+    #       um contador colorido que veio de OID PRIVADO OFICIAL da marca.
+    has_vendor_color_real = bool(
+        fonte_usada and fonte_usada.startswith("vendor:")
+        and pages_color and 0 < pages_color < pages_total
+    )
     has_color_pages_real = bool(pages_color and 0 < pages_color < pages_total)
     has_3_color_toners_all_ok = True
     _count_ok = 0
@@ -1097,21 +1106,27 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Opt
             _count_ok += 1
     has_3_color_toners_all_ok = (_count_ok == 3)
 
-    is_color_printer = has_color_pages_real or has_3_color_toners_all_ok
+    is_color_printer = has_vendor_color_real or has_color_pages_real or has_3_color_toners_all_ok
 
     # ⛔ Não é colorida? Zera tudo que é cor (NÃO manda dado mentiroso pro backend)
+    #    🔥 FIX KONICA C308: EXCEÇÃO - se pages_color REAL veio de vendor:Konica/vendor:HP/vendor:Xerox
+    #    etc (OID privado oficial Tier A/B), NUNCA ZERAMOS pages_color, pois ele é PROVA REAL
+    #    de páginas coloridas, mesmo que os toners ainda não tenham sido lidos direito!
     if not is_color_printer:
-        toner_cyan = None
-        toner_magenta = None
-        toner_yellow = None
-        pages_color = 0
-        if pages_total > 0:
-            pages_bw = pages_total
-        elif pages_bw > 0:
-            pages_total = pages_bw
+        if not has_vendor_color_real:
+            toner_cyan = None
+            toner_magenta = None
+            toner_yellow = None
+            pages_color = 0
+            if pages_total > 0:
+                pages_bw = pages_total
+            elif pages_bw > 0:
+                pages_total = pages_bw
     else:
         # É colorida mas ainda NÃO TEM SPLIT REAL? → NÃO INVENTA! Tudo PB, color = 0.
-        if pages_color <= 0 and pages_total > 0:
+        #    🔥 FIX 21/09: EXCEÇÃO - se já tem pages_color de vendor:* OID privado real,
+        #    NÃO ZERA (mantém como provou)!
+        if (pages_color <= 0 or not has_vendor_color_real) and pages_total > 0:
             pages_bw = pages_total
             pages_color = 0
         if pages_bw + pages_color > pages_total:
