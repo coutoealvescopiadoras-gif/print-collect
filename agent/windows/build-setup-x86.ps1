@@ -75,6 +75,7 @@ function Find-PythonX86 {
         }
     }
     $candidates = @(
+        "C:\Python312x86\python.exe",
         "C:\Program Files (x86)\Python312-32\python.exe",
         "C:\Program Files (x86)\Python311-32\python.exe",
         "C:\Program Files (x86)\Python310-32\python.exe"
@@ -165,20 +166,28 @@ try {
 }
 
 # =============================================================================
-# PASSO 3: Instalar PyInstaller
+# PASSO 3: PyInstaller — SEMPRE força VERSÃO EXATA 5.13.2 (OBRIGATÓRIO!)
+# ATENÇÃO (memória do projeto 2026-09-19 e 2026-09-21):
+#   PyInstaller 6.x → Setup fica ~55MB + QUEBRA SNMP UDP 161 → Ricoh cai em fallback USB 64.109!
+#   NUNCA usar >=6.0 — usar EXATAMENTE 5.13.2 + hooks 2023.8
 # =============================================================================
-Write-Step 3 "Verificando PyInstaller no .venv-x86"
-if (-not (Test-Path $PyInstaller)) {
-    Write-Host "  Instalando PyInstaller..."
-    Push-Location $AgentDir
-    try {
-        & $PipVenv install --disable-pip-version-check --retries 5 --timeout 300 --progress-bar off "pyinstaller>=6.0"
-        if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar PyInstaller (x86)" }
-    } finally {
-        Pop-Location
-    }
+Write-Step 3 "Garantindo PyInstaller EXATA 5.13.2 + setuptools<70 (pkg_resources) no .venv-x86"
+Write-Host "  (setuptools>=84 removeu pkg_resources que PyInstaller 5.13.2 precisa. Downgrade p/ 69.5.1...)"
+Write-Host "  (Se dentro da .venv-x86 tiver versoes erradas, --force-reinstall corrige TUDO...)"
+Push-Location $AgentDir
+try {
+    & $PipVenv install --disable-pip-version-check --retries 5 --timeout 300 --progress-bar off --force-reinstall --no-cache-dir "setuptools==69.5.1" "pyinstaller==5.13.2" "pyinstaller-hooks-contrib==2023.8"
+    if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar PyInstaller 5.13.2 + setuptools 69.5.1 (x86)" }
+} finally {
+    Pop-Location
 }
-Write-OK "PyInstaller x86 pronto em: $PyInstaller"
+# Verifica pós-instalação
+$postVer = & $PyInstaller --version 2>$null
+if ($LASTEXITCODE -ne 0 -or -not $postVer) { throw "PyInstaller (x86) nao responde apos instalacao" }
+if ($postVer -ne "5.13.2") {
+    throw "PyInstaller na .venv-x86 ficou com VERSAO ERRADA: $postVer ! Esperava EXATAMENTE 5.13.2. Abortando build para NAO quebrar SNMP."
+}
+Write-OK "PyInstaller x86 VERIFICADO: v$postVer (5.13.2 OBRIGATORIO) em: $PyInstaller"
 
 # =============================================================================
 # PASSO 4: Build PrintCollectAgent.exe x86

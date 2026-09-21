@@ -34,6 +34,99 @@ OID_TONER_MAGENTA_MAX = "1.3.6.1.2.1.43.11.1.1.8.1.3"
 OID_TONER_YELLOW_LEVEL = "1.3.6.1.2.1.43.11.1.1.9.1.4"
 OID_TONER_YELLOW_MAX = "1.3.6.1.2.1.43.11.1.1.8.1.4"
 
+# =====================================================================
+# 🔑 OIDs PRIVADOS POR MARCA (campo-validados: PrinterMS CC-BY-4.0 + MIBs oficiais)
+#    Tier A/B = split PB/Color REAL. Tier D = só Total, NÃO INVENTA cor.
+# =====================================================================
+# HP (PEN 11) - Tier A - escalares diretos 100% confiáveis
+_OID_HP_TOTAL = "1.3.6.1.4.1.11.2.3.9.4.2.1.4.1.2.5.0"
+_OID_HP_BW    = "1.3.6.1.4.1.11.2.3.9.4.2.1.4.1.2.6.0"
+_OID_HP_COLOR = "1.3.6.1.4.1.11.2.3.9.4.2.1.4.1.2.7.0"
+
+# Konica Minolta (PEN 18334) - Tier A - Copy + Print separados (soma = contador oficial)
+_OID_KM_TOTAL        = "1.3.6.1.4.1.18334.1.1.1.5.7.2.1.1.0"
+_OID_KM_COPY_BW      = "1.3.6.1.4.1.18334.1.1.1.5.1.1.0"
+_OID_KM_PRINT_BW     = "1.3.6.1.4.1.18334.1.1.1.5.1.2.0"
+_OID_KM_COPY_COLOR   = "1.3.6.1.4.1.18334.1.1.1.5.2.1.0"
+_OID_KM_PRINT_COLOR  = "1.3.6.1.4.1.18334.1.1.1.5.2.2.0"
+
+# Xerox (PEN 253) - Tier A - escalares diretos
+_OID_XEROX_TOTAL = "1.3.6.1.4.1.253.8.53.13.2.1.6.1.20.1"
+_OID_XEROX_BW    = "1.3.6.1.4.1.253.8.53.13.2.1.6.1.20.34"
+_OID_XEROX_COLOR = "1.3.6.1.4.1.253.8.53.13.2.1.6.1.20.33"
+
+# Ricoh (PEN 367) - Tier B - Total privado. PB/Color = WALK da tabela .19.X por LABEL
+_OID_RICOH_TOTAL = "1.3.6.1.4.1.367.3.2.1.2.19.1.0"
+_BASE_OID_RICOH_COUNTER_LABEL = "1.3.6.1.4.1.367.3.2.1.2.19.3"  # Nome do contador
+_BASE_OID_RICOH_COUNTER_VALUE = "1.3.6.1.4.1.367.3.2.1.2.19.5"  # Valor do contador
+
+# Lexmark (PEN 641) - Tier A - WALK por TYPE CODE (3=totalMono, 4=totalColor, 2=total)
+_BASE_OID_LEXMARK_COUNT = "1.3.6.1.4.1.641.6.4.2.1.1.4"
+
+# Canon (PEN 1602) - Tier B - WALK por TYPE CODE (101=total, 108=mono, 122+123=color)
+_BASE_OID_CANON_COUNT = "1.3.6.1.4.1.1602.1.11.1.3.1.3.1.4"
+
+# Sharp (PEN 2385) - Tier C - escalares fixos
+_OID_SHARP_BW    = "1.3.6.1.4.1.2385.1.1.19.2.1.3.5.4.61"
+_OID_SHARP_COLOR = "1.3.6.1.4.1.2385.1.1.19.2.1.3.5.4.63"
+
+# Ricoh Toner privado (367.3.2.1.2.24.1.1.5.{1=K,2=C,3=M,4=Y}) - Padrão retorna BOGUS
+_BASE_OID_RICOH_TONER_LEVEL = "1.3.6.1.4.1.367.3.2.1.2.24.1.1.5"
+_BASE_OID_RICOH_TONER_MAX   = "1.3.6.1.4.1.367.3.2.1.2.24.1.1.4"
+
+# =====================================================================
+# 🖨️ PEN (Private Enterprise Number) → nome da marca
+#    Extraímos o PEN do 4º campo do OID sysObjectID: 1.3.6.1.4.1.PEN.x.y.z...
+# =====================================================================
+PEN_TO_MANUFACTURER: dict[int, str] = {
+    11:    "HP",
+    18334: "Konica Minolta",
+    253:   "Xerox",
+    367:   "Ricoh",
+    641:   "Lexmark",
+    1602:  "Canon",
+    2385:  "Sharp",
+    2435:  "Brother",
+    1347:  "Kyocera",
+    1248:  "Epson",
+    1129:  "Toshiba",
+    2001:  "OKI",
+    40093: "Pantum",
+}
+
+# =====================================================================
+# 🎨 Ordem dos índices de toner CMYK (marca → (K, C, M, Y))
+#    Padrão RFC (.9.1.1 = preto, .9.1.2 = ciano etc) NÃO funciona p/ todas!
+#    Ex: Konica Minolta → 4=Preto, 1=Ciano, 2=Magenta, 3=Amarelo
+# =====================================================================
+TONER_INDEX_MAP: dict[str, tuple[int, int, int, int]] = {
+    # marca = (idx_preto, idx_ciano, idx_magenta, idx_amarelo)
+    "HP":             (1, 2, 3, 4),   # Padrão RFC
+    "Ricoh":          (1, 2, 3, 4),   # Usa OID privado .367.3.2.1.2.24 depois
+    "Xerox":          (1, 2, 3, 4),   # Padrão
+    "Lexmark":        (1, 2, 3, 4),   # Padrão
+    "Canon":          (1, 2, 3, 4),   # Padrão
+    "Sharp":          (1, 2, 3, 4),   # Padrão
+    "Brother":        (1, 2, 3, 4),   # (toner RFC é -2/-3, mas mapeamento é esse)
+    "Kyocera":        (1, 2, 3, 4),   # Padrão
+    "Epson":          (1, 2, 3, 4),   # Padrão (laser)
+    "Toshiba":        (1, 2, 3, 4),   # Padrão
+    "OKI":            (1, 2, 3, 4),   # Padrão
+    "Pantum":         (1, 2, 3, 4),   # Padrão
+    # ⬇️ INVERSÃO CONFIRMADA: N-able + campo Konica C258
+    "Konica Minolta": (4, 1, 2, 3),   # 4=K, 1=C, 2=M, 3=Y
+}
+
+# Marcas Tier D = NÃO EXISTE OID confirmado de split PB/Color → tudo vai para PB, NUNCA inventa cor
+MANUFACTURERS_TIER_D_ONLY_TOTAL: frozenset[str] = frozenset([
+    "Toshiba", "Epson", "OKI", "Pantum",
+])
+# Modelos onde a heurística "maior contador = preto" é SEGURA (única exceção)
+ALLOW_HEURISTIC_LARGEST_BLACK_MODELS: tuple[str, ...] = (
+    "L3150", "L3250", "L3210", "L5190", "L5290", "L4260", "L4160",  # EPSON EcoTank
+    "ET-2810", "ET-2850", "ET-3850", "ET-4750", "ET-4850",
+)
+
 PRINTER_KEYWORDS = (
     "printer", "laserjet", "impressora", "mfp", "copier", "multifunction",
     "brother", "canon", "epson", "xerox", "ricoh", "hp ", "hewlett",
@@ -381,6 +474,23 @@ def _toner_percent(level: Optional[str], maximum: Optional[str]) -> Optional[flo
     return pct if 0 <= pct <= 100 else None
 
 
+def _extract_pen(sys_object_id: Optional[str]) -> Optional[int]:
+    """Extrai o PEN (Private Enterprise Number) do OID sysObjectID.
+    Formato esperado: 1.3.6.1.4.1.PEN.resto_do_oid.
+    Ex: '1.3.6.1.4.1.11.2.3.9.1' → PEN=11 (HP).
+    Usado para CONFIRMAR marca, sem depender só de texto em sysDescr."""
+    if not sys_object_id:
+        return None
+    parts = str(sys_object_id).strip().strip(".").split(".")
+    # Índices: 0=1, 1=3, 2=6, 3=1, 4=4, 5=1, 6=PEN
+    if len(parts) >= 7 and parts[0:6] == ["1", "3", "6", "1", "4", "1"]:
+        try:
+            return int(parts[6])
+        except (ValueError, IndexError):
+            return None
+    return None
+
+
 def _guess_manufacturer(sys_descr: Optional[str]) -> Optional[str]:
     text = (sys_descr or "").lower()
     mapping = {
@@ -402,6 +512,251 @@ def _guess_manufacturer(sys_descr: Optional[str]) -> Optional[str]:
         if key in text:
             return name
     return None
+
+
+def _detect_manufacturer_real(
+    sys_descr: Optional[str],
+    sys_object_id: Optional[str] = None,
+) -> Optional[str]:
+    """Detecção REAL de marca: PRIORIDADE 1 = PEN do OID oficial,
+    PRIORIDADE 2 = heurística sysDescr (fallback).
+    Nunca mais erra marca por texto ambíguo."""
+    pen = _extract_pen(sys_object_id)
+    if pen and pen in PEN_TO_MANUFACTURER:
+        return PEN_TO_MANUFACTURER[pen]
+    return _guess_manufacturer(sys_descr)
+
+
+def _collect_toner_by_manufacturer(
+    ip: str,
+    community: str,
+    timeout: int,
+    manufacturer: Optional[str],
+) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+    """Coleta toner NA ORDEM CERTA da marca (corrige Konica 4=Preto etc).
+    Retorna tuple: (preto_%, ciano_%, magenta_%, amarelo_%)
+    Ricoh usa OID privado porque a tabela RFC padrão retorna BOGUS (alerta PrinterMS)."""
+    black_pct: Optional[float] = None
+    cyan_pct: Optional[float] = None
+    magenta_pct: Optional[float] = None
+    yellow_pct: Optional[float] = None
+
+    # Caso especial RICOH: OID privado .367.3.2.1.2.24.1.1.X
+    # Tabela RFC padrão retorna valores falsos (PrinterMS Tier B)
+    if manufacturer == "Ricoh":
+        try:
+            oid_map = [("_b", 1), ("_c", 2), ("_m", 3), ("_y", 4)]
+            levels: dict[str, Optional[str]] = {}
+            maxs: dict[str, Optional[str]] = {}
+            for suf, idx in oid_map:
+                levels[suf] = _snmp_get(ip, f"{_BASE_OID_RICOH_TONER_LEVEL}.{idx}", community, timeout)
+                maxs[suf]   = _snmp_get(ip, f"{_BASE_OID_RICOH_TONER_MAX}.{idx}",   community, timeout)
+            black_pct   = _toner_percent(levels["_b"], maxs["_b"])
+            cyan_pct    = _toner_percent(levels["_c"], maxs["_c"])
+            magenta_pct = _toner_percent(levels["_m"], maxs["_m"])
+            yellow_pct  = _toner_percent(levels["_y"], maxs["_y"])
+            return black_pct, cyan_pct, magenta_pct, yellow_pct
+        except Exception:
+            # Fallthrough para método padrão se OID Ricoh privado não responder
+            pass
+
+    # Método padrão RFC 43.11 — com ÍNDICES CORRETOS por marca
+    idx_k, idx_c, idx_m, idx_y = (1, 2, 3, 4)  # default RFC
+    if manufacturer and manufacturer in TONER_INDEX_MAP:
+        idx_k, idx_c, idx_m, idx_y = TONER_INDEX_MAP[manufacturer]
+
+    _lvl_k = _snmp_get(ip, f"1.3.6.1.2.1.43.11.1.1.9.1.{idx_k}", community, timeout)
+    _max_k = _snmp_get(ip, f"1.3.6.1.2.1.43.11.1.1.8.1.{idx_k}", community, timeout)
+    _lvl_c = _snmp_get(ip, f"1.3.6.1.2.1.43.11.1.1.9.1.{idx_c}", community, timeout)
+    _max_c = _snmp_get(ip, f"1.3.6.1.2.1.43.11.1.1.8.1.{idx_c}", community, timeout)
+    _lvl_m = _snmp_get(ip, f"1.3.6.1.2.1.43.11.1.1.9.1.{idx_m}", community, timeout)
+    _max_m = _snmp_get(ip, f"1.3.6.1.2.1.43.11.1.1.8.1.{idx_m}", community, timeout)
+    _lvl_y = _snmp_get(ip, f"1.3.6.1.2.1.43.11.1.1.9.1.{idx_y}", community, timeout)
+    _max_y = _snmp_get(ip, f"1.3.6.1.2.1.43.11.1.1.8.1.{idx_y}", community, timeout)
+
+    black_pct   = _toner_percent(_lvl_k, _max_k)
+    cyan_pct    = _toner_percent(_lvl_c, _max_c)
+    magenta_pct = _toner_percent(_lvl_m, _max_m)
+    yellow_pct  = _toner_percent(_lvl_y, _max_y)
+    return black_pct, cyan_pct, magenta_pct, yellow_pct
+
+
+def _collect_pages_vendor_specific(
+    ip: str,
+    community: str,
+    timeout: int,
+    manufacturer: Optional[str],
+    model: Optional[str] = None,
+) -> tuple[int, int, int]:
+    """Tenta COLETA SEGURA usando OIDs PRIVADOS da marca (Tier A/B).
+    Retorna tuple (total, bw, color). Zeros = não encontrou OID específico,
+    então quem chama cai para o fallback RFC / Marker table.
+
+    ⛔ REGRAS DE COBRANÇA SEGURA (NUNCA INVENTA):
+    • TIER D (Toshiba/Epson laser/OKI/Pantum) = SÓ TOTAL → (total, total, 0)
+    • HP/Konica/Xerox/Lexmark = leem escalares/WALK OFICIAL.
+    • Ricoh = Total privado + WALK tabela .19 por LABEL (não folhas fixas!).
+    • Qualquer dúvida = retorna 0,0,0 → quem chama usa fallback."""
+    total = 0
+    bw = 0
+    color = 0
+
+    # ===== TIER D: SÓ EXISTE TOTAL CONFIRMADO → NUNCA INVENTA COLORIDO =====
+    if manufacturer in MANUFACTURERS_TIER_D_ONLY_TOTAL:
+        # Mesmo Epson LASER (não é EcoTank): só total.
+        # EcoTank (L3250 etc) cai aqui mas Marker Table heurística permitida SÓ p/ eles lá embaixo.
+        rfc_total = _parse_int(_snmp_get(ip, OID_PAGES_TOTAL, community, timeout)) or 0
+        if rfc_total > 0:
+            return (rfc_total, rfc_total, 0)
+        return (0, 0, 0)
+
+    try:
+        # ===== HP (Tier A): 3 escalares diretos 100% confiáveis =====
+        if manufacturer == "HP":
+            hp_t = _parse_int(_snmp_get(ip, _OID_HP_TOTAL, community, timeout)) or 0
+            hp_b = _parse_int(_snmp_get(ip, _OID_HP_BW,    community, timeout)) or 0
+            hp_c = _parse_int(_snmp_get(ip, _OID_HP_COLOR, community, timeout)) or 0
+            if hp_t > 0 or hp_b > 0 or hp_c > 0:
+                total = max(total, hp_t, hp_b + hp_c)
+                bw    = hp_b
+                color = hp_c
+                return (total, bw, color)
+
+        # ===== Konica Minolta (Tier A): Copy + Print somados (contador OFICIAL) =====
+        if manufacturer == "Konica Minolta":
+            km_t       = _parse_int(_snmp_get(ip, _OID_KM_TOTAL,       community, timeout)) or 0
+            km_copy_b  = _parse_int(_snmp_get(ip, _OID_KM_COPY_BW,     community, timeout)) or 0
+            km_print_b = _parse_int(_snmp_get(ip, _OID_KM_PRINT_BW,    community, timeout)) or 0
+            km_copy_c  = _parse_int(_snmp_get(ip, _OID_KM_COPY_COLOR,  community, timeout)) or 0
+            km_print_c = _parse_int(_snmp_get(ip, _OID_KM_PRINT_COLOR, community, timeout)) or 0
+            if (km_copy_b + km_print_b + km_copy_c + km_print_c) > 0 or km_t > 0:
+                km_bw    = km_copy_b + km_print_b
+                km_color = km_copy_c + km_print_c
+                total    = max(km_t, km_bw + km_color)
+                bw       = km_bw
+                color    = km_color
+                return (total, bw, color)
+
+        # ===== Xerox (Tier A): 3 escalares diretos =====
+        if manufacturer == "Xerox":
+            xe_t = _parse_int(_snmp_get(ip, _OID_XEROX_TOTAL, community, timeout)) or 0
+            xe_b = _parse_int(_snmp_get(ip, _OID_XEROX_BW,    community, timeout)) or 0
+            xe_c = _parse_int(_snmp_get(ip, _OID_XEROX_COLOR, community, timeout)) or 0
+            if xe_t > 0 or xe_b > 0 or xe_c > 0:
+                total = max(xe_t, xe_b + xe_c)
+                bw    = xe_b
+                color = xe_c
+                return (total, bw, color)
+
+        # ===== Sharp (Tier C): escalares PB/Color fixos =====
+        if manufacturer == "Sharp":
+            sh_b = _parse_int(_snmp_get(ip, _OID_SHARP_BW,    community, timeout)) or 0
+            sh_c = _parse_int(_snmp_get(ip, _OID_SHARP_COLOR, community, timeout)) or 0
+            if sh_b > 0 or sh_c > 0:
+                rfc_t = _parse_int(_snmp_get(ip, OID_PAGES_TOTAL, community, timeout)) or 0
+                total = max(rfc_t, sh_b + sh_c)
+                bw    = sh_b
+                color = sh_c
+                return (total, bw, color)
+
+        # ===== Ricoh (Tier B): WALK tabela .19.X, resolve PB/Color POR LABEL =====
+        #        (PrinterMS alerta: NÃO USAR folhas fixas .9.22/.9.21 — refutadas em campo!)
+        if manufacturer == "Ricoh":
+            ric_total_priv = _parse_int(_snmp_get(ip, _OID_RICOH_TOTAL, community, timeout)) or 0
+            try:
+                labels = _snmp_walk_table_raw_strings(ip, _BASE_OID_RICOH_COUNTER_LABEL, community, timeout)
+                values = _snmp_walk_table(ip, _BASE_OID_RICOH_COUNTER_VALUE, community, timeout)
+                r_bw = 0
+                r_col = 0
+                for k, val in values.items():
+                    lbl_raw = labels.get(k, "")
+                    if not lbl_raw:
+                        continue
+                    lbl_low = str(lbl_raw).lower()
+                    # PALAVRAS QUE DEFINEM PRETO & BRANCO no painel Ricoh
+                    is_bw = (
+                        "black" in lbl_low or "mono" in lbl_low or "monochrome" in lbl_low
+                        or "b&w" in lbl_low or "bw" in lbl_low or "preto" in lbl_low
+                        or "pb" in lbl_low or "p&b" in lbl_low
+                        or ("copier" in lbl_low and "color" not in lbl_low and "full" not in lbl_low)
+                    )
+                    # PALAVRAS QUE DEFINEM COLORIDO
+                    is_col = (
+                        "color" in lbl_low or "colour" in lbl_low
+                        or "full" in lbl_low and "color" in lbl_low
+                        or "colorido" in lbl_low or "cor" in lbl_low
+                    )
+                    # Ignora contadores de duplex, A3, scanner, fax, economia etc.
+                    only_side = any(w in lbl_low for w in (
+                        "side", "face", "duplex", "a3", "a4", "letter", "legal",
+                        "sheet", "faxes", "fax", "scanner", "scan", "send",
+                        "economy", "econ", "low cov", "coverage", "mid cov", "high cov",
+                    )) and not ("bw" in lbl_low or "black" in lbl_low or "color" in lbl_low or "copy" in lbl_low or "print" in lbl_low or "total" in lbl_low)
+                    if only_side:
+                        continue
+                    if is_col:
+                        r_col += val
+                    elif is_bw:
+                        r_bw += val
+                    # labels ambíguas (só "copy" sem bw/color) = soma em PB (segurança)
+                    elif any(w in lbl_low for w in ("total", "copy", "print", "printer")):
+                        # Contador "Total Geral", "Printer Total", "Copier Total" etc = PB (segurança, não inventa cor)
+                        pass  # não usa, pois temos total privado separado
+                if r_bw > 0 or r_col > 0:
+                    total = max(ric_total_priv, r_bw + r_col)
+                    bw    = r_bw
+                    color = r_col
+                    return (total, bw, color)
+                elif ric_total_priv > 0:
+                    # Tem total, mas não conseguiu split por label → só total, fallback PB
+                    return (ric_total_priv, ric_total_priv, 0)
+            except Exception:
+                if ric_total_priv > 0:
+                    return (ric_total_priv, ric_total_priv, 0)
+
+        # ===== Lexmark (Tier A): WALK type codes — 3=totalMono, 4=totalColor, 2=total =====
+        if manufacturer == "Lexmark":
+            lex_walk = _snmp_walk_table(ip, _BASE_OID_LEXMARK_COUNT, community, timeout)
+            # Formato walk: key = "1.TYPECODE" ou "TYPECODE" direto
+            lx: dict[int, int] = {}
+            for k, v in lex_walk.items():
+                try:
+                    t = int(k.split(".")[-1])
+                    if t > 0 and v > 0:
+                        lx[t] = lx.get(t, 0) + v
+                except Exception:
+                    continue
+            if 2 in lx or 3 in lx or 4 in lx:
+                total = max(lx.get(2, 0), lx.get(3, 0) + lx.get(4, 0))
+                bw    = lx.get(3, 0)
+                color = lx.get(4, 0)
+                return (total, bw, color)
+
+        # ===== Canon (Tier B): WALK type codes — 101=total, 108=mono, 122+123=color =====
+        if manufacturer == "Canon":
+            cn_walk = _snmp_walk_table(ip, _BASE_OID_CANON_COUNT, community, timeout)
+            cn: dict[int, int] = {}
+            for k, v in cn_walk.items():
+                try:
+                    t = int(k.split(".")[-1])
+                    if t > 0 and v > 0:
+                        cn[t] = cn.get(t, 0) + v
+                except Exception:
+                    continue
+            if 101 in cn or 108 in cn or 122 in cn or 123 in cn:
+                cn_t = cn.get(101, 0)
+                cn_b = cn.get(108, 0)
+                cn_c = cn.get(122, 0) + cn.get(123, 0)
+                total = max(cn_t, cn_b + cn_c)
+                bw    = cn_b
+                color = cn_c
+                return (total, bw, color)
+
+    except Exception as e_vendor:
+        logger.debug("vendor_specific pages falhou %s (%s): %s", ip, manufacturer or "?", e_vendor)
+
+    # Nenhum OID privado respondeu → retorna zeros, quem chama usa fallback RFC
+    return (0, 0, 0)
 
 
 def _looks_like_printer(sys_descr: str) -> bool:
