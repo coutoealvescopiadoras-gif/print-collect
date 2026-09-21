@@ -43,12 +43,23 @@ _OID_HP_TOTAL = "1.3.6.1.4.1.11.2.3.9.4.2.1.4.1.2.5.0"
 _OID_HP_BW    = "1.3.6.1.4.1.11.2.3.9.4.2.1.4.1.2.6.0"
 _OID_HP_COLOR = "1.3.6.1.4.1.11.2.3.9.4.2.1.4.1.2.7.0"
 
-# Konica Minolta (PEN 18334) - Tier A - Copy + Print separados (soma = contador oficial)
+# Konica Minolta (PEN 18334) - Tier A - Copy + Print separados (soma = contador OFICIAL)
 _OID_KM_TOTAL        = "1.3.6.1.4.1.18334.1.1.1.5.7.2.1.1.0"
 _OID_KM_COPY_BW      = "1.3.6.1.4.1.18334.1.1.1.5.1.1.0"
 _OID_KM_PRINT_BW     = "1.3.6.1.4.1.18334.1.1.1.5.1.2.0"
 _OID_KM_COPY_COLOR   = "1.3.6.1.4.1.18334.1.1.1.5.2.1.0"
 _OID_KM_PRINT_COLOR  = "1.3.6.1.4.1.18334.1.1.1.5.2.2.0"
+# Konica Minolta: OIDs ALTERNATIVOS (PrinterMS oficial C368/C258/C308 firmwares mais antigas / mais novas)
+#   Conjunto B: contadores "Total Counter" split BW/Color direto (não Copy/Print)
+_KM_ALT_B_TOTAL_BW   = "1.3.6.1.4.1.18334.1.1.1.5.7.2.0"
+_KM_ALT_B_TOTAL_CLR  = "1.3.6.1.4.1.18334.1.1.1.5.7.1.0"
+_KM_ALT_B_TOTAL_TOT  = "1.3.6.1.4.1.18334.1.1.1.5.7.3.0"
+#   Conjunto C: bizhub C308 firmware 2020+ MIBs (índice .1 em vez de .0)
+_KM_ALT_C_COPY_BW    = "1.3.6.1.4.1.18334.1.1.1.5.1.1.1"
+_KM_ALT_C_PRINT_BW   = "1.3.6.1.4.1.18334.1.1.1.5.1.2.1"
+_KM_ALT_C_COPY_CLR   = "1.3.6.1.4.1.18334.1.1.1.5.2.1.1"
+_KM_ALT_C_PRINT_CLR  = "1.3.6.1.4.1.18334.1.1.1.5.2.2.1"
+_KM_ALT_C_TOTAL      = "1.3.6.1.4.1.18334.1.1.1.5.7.2.1.1.1"
 
 # Xerox (PEN 253) - Tier A - escalares diretos
 _OID_XEROX_TOTAL = "1.3.6.1.4.1.253.8.53.13.2.1.6.1.20.1"
@@ -689,38 +700,111 @@ def _collect_pages_vendor_specific(
                 return (total, bw, color)
 
         # ===== Konica Minolta (Tier A): Copy + Print somados (contador OFICIAL) =====
-        #         Variação de firmware: alguns usam sufixo .0 (scalar), outros .1 / .2 (tabela)
+        #         CASO ESPECIAL bizhub C308 (cliente 117): firmwares diferentes usam OIDs DIFERENTES!
+        #         Tentamos 3 conjuntos (Original / Conjunto B Total direto / Conjunto C indice 1)
+        #         + 10 sufixos de 0 a 9 (para cobrir índices de tabela)
         if manufacturer == "Konica Minolta":
-            # Testa 3 variantes de sufixo para CADA um dos 5 OIDs Konica
-            def _km_get(base_oid: str) -> int:
-                """Tenta ler OID com sufixo .0, .1, .2 — retorna PRIMEIRO valor >0."""
-                for suffix in ("0", "1", "2"):
+            def _km_read(base_oid: str) -> int:
+                """Lê UM OID com até 10 variações de sufixo (0 a 9). Retorna PRIMEIRO valor >0 encontrado."""
+                for suffix in ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9"):
                     v = _parse_int(_snmp_get(ip, f"{base_oid}.{suffix}", community, timeout)) or 0
                     if v > 0:
                         return v
                 return 0
 
-            km_t       = _km_get(_OID_KM_TOTAL.rsplit(".", 1)[0])
-            km_copy_b  = _km_get(_OID_KM_COPY_BW.rsplit(".", 1)[0])
-            km_print_b = _km_get(_OID_KM_PRINT_BW.rsplit(".", 1)[0])
-            km_copy_c  = _km_get(_OID_KM_COPY_COLOR.rsplit(".", 1)[0])
-            km_print_c = _km_get(_OID_KM_PRINT_COLOR.rsplit(".", 1)[0])
+            # Leitura de DIAGNÓSTICO (todas as 3 fontes + valores originais SEM fallback)
+            # Conjunto A (original, Copy/Print BW/Color separados)
+            setA_copy_b  = _km_read(_OID_KM_COPY_BW.rsplit(".", 1)[0])
+            setA_print_b = _km_read(_OID_KM_PRINT_BW.rsplit(".", 1)[0])
+            setA_copy_c  = _km_read(_OID_KM_COPY_COLOR.rsplit(".", 1)[0])
+            setA_print_c = _km_read(_OID_KM_PRINT_COLOR.rsplit(".", 1)[0])
+            setA_tot     = _km_read(_OID_KM_TOTAL.rsplit(".", 1)[0])
+            setA_bw      = setA_copy_b + setA_print_b
+            setA_clr     = setA_copy_c + setA_print_c
 
-            km_bw    = km_copy_b + km_print_b
-            km_color = km_copy_c + km_print_c
-            # Se os OIDs vendor NÃO retornaram colorido (>0), tenta RFC 3805 WALK definitivo
-            if km_color == 0 and (km_t > 0 or km_bw > 0):
-                rfc_alt = _collect_pages_printer_mib_rfc(ip, community, timeout)
-                if rfc_alt and rfc_alt[2] > 0:  # color > 0 via RFC = sucesso!
-                    rfc_total, rfc_bw, rfc_color = rfc_alt
-                    final_total = max(km_t, km_bw, rfc_total)
-                    final_color = rfc_color
-                    final_bw    = max(0, final_total - final_color)
-                    return (final_total, final_bw, final_color)
-            # Caso padrão (vendor OIDs funcionaram OU color continua 0 mesmo após RFC)
-            if (km_bw + km_color) > 0 or km_t > 0:
-                total = max(km_t, km_bw + km_color)
-                return (total, km_bw, km_color)
+            # Conjunto B (Total Counter BW/Color/TOT direto — Conjunto PrinterMS C368)
+            setB_bw      = _km_read(_KM_ALT_B_TOTAL_BW.rsplit(".", 1)[0])
+            setB_clr     = _km_read(_KM_ALT_B_TOTAL_CLR.rsplit(".", 1)[0])
+            setB_tot     = _km_read(_KM_ALT_B_TOTAL_TOT.rsplit(".", 1)[0])
+
+            # Conjunto C (índice .1 — bizhub C308 firmware 2020+)
+            setC_copy_b  = _km_read(_KM_ALT_C_COPY_BW.rsplit(".", 1)[0])
+            setC_print_b = _km_read(_KM_ALT_C_PRINT_BW.rsplit(".", 1)[0])
+            setC_copy_c  = _km_read(_KM_ALT_C_COPY_CLR.rsplit(".", 1)[0])
+            setC_print_c = _km_read(_KM_ALT_C_PRINT_CLR.rsplit(".", 1)[0])
+            setC_tot     = _km_read(_KM_ALT_C_TOTAL.rsplit(".", 1)[0])
+            setC_bw      = setC_copy_b + setC_print_b
+            setC_clr     = setC_copy_c + setC_print_c
+
+            # Diagnóstico: pega o RESULTADO do RFC 3805 já calculado (para loggar se >0)
+            rfc3805_for_km: Optional[tuple[int, int, int]] = None
+
+            # ===== ESCOLHE QUAL CONJUNTO DE OIDs RETORNA O MELHOR RESULTADO =====
+            # Prioridade: quem tiver COLOR REAL > 0 GANHA (independente de conjunto)
+            chosen_tot = 0
+            chosen_bw  = 0
+            chosen_clr = 0
+            chosen_src = ""
+            # Tenta Conjunto A (se tem color >0 ou total maior)
+            if (setA_clr > 0 and (setA_bw + setA_clr) > 0) or (setA_tot > 0 and not chosen_src):
+                chosen_tot = max(setA_tot, setA_bw + setA_clr)
+                chosen_bw  = setA_bw
+                chosen_clr = setA_clr
+                chosen_src = "KM-SetA(CopyPrint)"
+            # Tenta Conjunto B (se tem COLOR REAL > 0, SOBRESCREVE o A!)
+            if setB_clr > 0 and (setB_bw + setB_clr) > 0:
+                cand_tot = max(setB_tot, setB_bw + setB_clr)
+                if cand_tot >= chosen_tot * 0.9 or chosen_clr == 0:
+                    chosen_tot = cand_tot
+                    chosen_bw  = setB_bw
+                    chosen_clr = setB_clr
+                    chosen_src = "KM-SetB(TotalDireto)"
+            # Tenta Conjunto C (se tem COLOR REAL > 0, SOBRESCREVE!)
+            if setC_clr > 0 and (setC_bw + setC_clr) > 0:
+                cand_tot = max(setC_tot, setC_bw + setC_clr)
+                if cand_tot >= chosen_tot * 0.9 or chosen_clr == 0:
+                    chosen_tot = cand_tot
+                    chosen_bw  = setC_bw
+                    chosen_clr = setC_clr
+                    chosen_src = "KM-SetC(idx1)"
+            # Se nenhum conjunto retornou COLOR > 0, retorna o que tem o TOTAL MAIOR
+            if chosen_clr == 0:
+                candidates = [
+                    (max(setA_tot, setA_bw + setA_clr), setA_bw, setA_clr, "KM-SetA(CopyPrint)"),
+                    (max(setB_tot, setB_bw + setB_clr), setB_bw, setB_clr, "KM-SetB(TotalDireto)"),
+                    (max(setC_tot, setC_bw + setC_clr), setC_bw, setC_clr, "KM-SetC(idx1)"),
+                ]
+                candidates.sort(key=lambda x: x[0], reverse=True)
+                if candidates[0][0] > 0:
+                    chosen_tot, chosen_bw, chosen_clr, chosen_src = candidates[0]
+
+            # ===== FALLBACK RFC 3805 SE AINDA TIVER COLOR=0 =====
+            if chosen_clr == 0 and chosen_tot > 0:
+                rfc3805_for_km = _collect_pages_printer_mib_rfc(ip, community, timeout)
+                if rfc3805_for_km and rfc3805_for_km[2] > 0:
+                    rfc_t, rfc_b, rfc_c = rfc3805_for_km
+                    chosen_tot = max(chosen_tot, rfc_t)
+                    chosen_clr = rfc_c
+                    chosen_bw  = max(0, chosen_tot - chosen_clr)
+                    chosen_src = f"{chosen_src}+RFC3805"
+
+            # ===== LOG DE DIAGNÓSTICO AUTOMÁTICO (aparece SEMPRE em Konica!) =====
+            #   O funcionário NÃO PRECISA FAZER NADA! O log já sai no coleta automática de 30/30 min,
+            #   e a gente vê no retorno do backend / leitura da impressora.
+            logger.warning(
+                "[DIAG KONICA %s] IP=%s SetA[tot=%s bw=%s(cp=%s+pr=%s) clr=%s(cp=%s+pr=%s)] "
+                "SetB[tot=%s bw=%s clr=%s] SetC[tot=%s bw=%s(cp=%s+pr=%s) clr=%s(cp=%s+pr=%s)] "
+                "RFC3805=%s CHOSEN[src=%s tot=%s bw=%s clr=%s]",
+                (model or "").strip() or "?", ip,
+                setA_tot, setA_bw, setA_copy_b, setA_print_b, setA_clr, setA_copy_c, setA_print_c,
+                setB_tot, setB_bw, setB_clr,
+                setC_tot, setC_bw, setC_copy_b, setC_print_b, setC_clr, setC_copy_c, setC_print_c,
+                (f"tot={rfc3805_for_km[0]} bw={rfc3805_for_km[1]} clr={rfc3805_for_km[2]}" if rfc3805_for_km else "N/A"),
+                chosen_src or "NONE", chosen_tot, chosen_bw, chosen_clr,
+            )
+
+            if chosen_tot > 0 or chosen_bw > 0 or chosen_clr > 0:
+                return (chosen_tot, chosen_bw, chosen_clr)
 
         # ===== Xerox (Tier A): 3 escalares diretos =====
         if manufacturer == "Xerox":
@@ -1348,7 +1432,7 @@ def scan_subnet(
 
     # ============= 🏆 BANNER: Coleta Segura de OIDs por Marca (2026-09-21) =============
     logger.info("="*78)
-    logger.info(" PRINT COLLECT AGENT — Coleta Segura v6.9.12-OIDs-20260921  ")
+    logger.info(" PRINT COLLECT AGENT — Coleta Segura v6.9.12-OIDs-20260921-KM3SETS-DIAG  ")
     logger.info(" OIDs privados Tier A/B ATIVOS: HP / Konica Minolta / Ricoh / Xerox / ")
     logger.info("     Lexmark / Canon / Sharp — contadores PB e Color REAIS (NÃO INVENTADOS!)")
     logger.info(" Heurística 'maior=preto' LIBERADA SÓ p/ EPSON EcoTank L3xxx whitelist.")
