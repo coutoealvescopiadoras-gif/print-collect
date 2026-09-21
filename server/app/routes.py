@@ -2288,7 +2288,7 @@ def list_alerts(resolved: Optional[bool] = None, db: Session = Depends(get_db), 
         _cleanup_false_color_alerts(db, client_id=_required_client_id(current_user))
     db.commit()
 
-    query = db.query(Alert).join(Printer).filter(Printer.ignored == False)
+    query = db.query(Alert).join(Printer).filter(Printer.ignored == False, Printer.deleted_at.is_(None))
     if _is_partner(current_user):
         query = query.join(Client, Client.id == Printer.client_id).filter(Client.partner_id == _required_partner_id(current_user))
     elif not _is_superadmin(current_user):
@@ -2319,7 +2319,7 @@ def list_alerts(resolved: Optional[bool] = None, db: Session = Depends(get_db), 
     if all_printer_ids:
         try:
             pid_list = list(all_printer_ids)
-            printers = db.query(Printer).filter(Printer.id.in_(pid_list)).all()
+            printers = db.query(Printer).filter(Printer.id.in_(pid_list), Printer.deleted_at.is_(None)).all()
             for p in printers or []:
                 try:
                     printer_cache[int(p.id)] = p
@@ -3594,7 +3594,7 @@ def _sync_client_offline_3days_and_alerts(db: Session, client_id: int) -> int:
         cutoff = ts - timedelta(days=OFFLINE_DAYS)
         all_printers = (
             db.query(Printer)
-            .filter(Printer.client_id == client_id, Printer.ignored == False)
+            .filter(Printer.client_id == client_id, Printer.ignored == False, Printer.deleted_at.is_(None))
             .all()
         )
         for p in all_printers or []:
