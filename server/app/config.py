@@ -79,6 +79,20 @@ class Settings(BaseSettings):
     # - AUTO = Se detectar localhost (sqlite) = DESENVOLVIMENTO, LIBERA automaticamente.
     allow_admin_endpoints_prod: bool = os.getenv("ALLOW_ADMIN_ENDPOINTS_PROD", "false").strip().lower() in ("1", "true", "yes", "sim", "s")
 
+    # --------------------------
+    # INSTALADOR: Dados do card (ENV VARs no Render!)
+    # Declarados EXPLICITAMENTE para Pydantic BaseSettings LER as ENV VARs.
+    # Julio seta estas ENV VARs no painel Render depois de cada build novo:
+    #   INSTALLER_DOWNLOAD_URL       = https://www.printcollect.com.br/PrintCollectSetup.exe
+    #   INSTALLER_VERSION            = 6.9.12-is_color-fix-20260921
+    #   INSTALLER_FILE_SIZE_BYTES    = 18812615
+    #   INSTALLER_SHA256             = 3bb3cfc7881b5b741c480049d91af82fa80f0d2d71f744916e6d296eae483409
+    # --------------------------
+    installer_download_url: Optional[str] = os.getenv("INSTALLER_DOWNLOAD_URL", None)
+    installer_version: Optional[str] = os.getenv("INSTALLER_VERSION", None)
+    installer_file_size_bytes: Optional[int] = int(os.getenv("INSTALLER_FILE_SIZE_BYTES", "0") or 0) or None
+    installer_sha256: Optional[str] = os.getenv("INSTALLER_SHA256", None)
+
     @property
     def is_development(self) -> bool:
         """Retorna TRUE se estamos em ambiente LOCALHOST de desenvolvimento (sqlite)."""
