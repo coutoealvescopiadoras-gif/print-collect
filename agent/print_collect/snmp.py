@@ -543,16 +543,37 @@ def _collect_pages_printer_mib_rfc(
             colorant = row.get(2, 0)
             unit     = row.get(3, 0)
             life_cnt = row.get(4, 0)
+            role_raw = row.get(8, b"")
+            role_str = ""
+            if isinstance(role_raw, bytes):
+                try:
+                    role_str = role_raw.decode("utf-8", errors="ignore").lower()
+                except Exception:
+                    role_str = ""
+            elif isinstance(role_raw, str):
+                role_str = role_raw.lower()
             is_usable = False
-            if life_cnt > 0 and unit in (7, 8):
+            unit_ok = life_cnt > 0 and (unit in (7, 8, 19, 1, 3, 13, 14))
+            if unit_ok:
+                is_black = False
+                is_color = False
                 if colorant == 1:
+                    is_black = True
+                elif colorant >= 2 and colorant <= 32:
+                    is_color = True
+                if not is_black and not is_color and role_str:
+                    if "black" in role_str:
+                        is_black = True
+                    elif any(c in role_str for c in ("cyan", "magenta", "yellow", "red", "green", "blue", "color")):
+                        is_color = True
+                if is_black:
                     bw_sum += life_cnt
                     is_usable = True
-                elif colorant >= 2 and colorant <= 32:
+                elif is_color:
                     col_sum += life_cnt
                     is_usable = True
             if diagnostic_mode:
-                entry = f"hr={key[0]} mrk={key[1]} colidx={colorant} unit={unit} life={life_cnt}"
+                entry = f"hr={key[0]} mrk={key[1]} colidx={colorant} unit={unit} life={life_cnt} role={role_str}"
                 if is_usable:
                     used_rows.append(entry)
                 else:
