@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "6.9.12"
+  #define MyAppVersion "6.9.12-boot-coleta-forcada-20260922-7.4"
 #endif
 
 #define MyAppName "Print Collect Agent"
@@ -49,10 +49,12 @@ Name: "{commonappdata}\PrintCollect"; Permissions: authusers-modify; Flags: unin
 ; (NAO usa cmd.exe, NAO usa aspas, NAO da erro de aspas / fechar sozinho! Abre SEMPRE!)
 Name: "{autoprograms}\Print Collect Agent\1. Parear Agora (Wizard)"; Filename: "{app}\WizardPareamento.exe"; IconFilename: "{app}\WizardPareamento.exe"
 Name: "{autoprograms}\Print Collect Agent\Wizard de pareamento"; Filename: "{app}\WizardPareamento.exe"; IconFilename: "{app}\WizardPareamento.exe"
+; === (NOVO 7.4!) FORCAR COLETA AGORA — Julio pediu: clica, espera rede, coleta + envia. MANTEM JANELA ABERTA p/ tecnico! ===
+Name: "{autoprograms}\Print Collect Agent\2. Forcar Coleta AGORA (atualizar painel)"; Filename: "{app}\forcar-coleta-agora.bat"
 ; === PROCURAR IMPRESSORAS: EXE NATIVO SearchPrinters.exe (nao fecha sozinho!) ===
 Name: "{autoprograms}\Print Collect Agent\Procurar impressoras"; Filename: "{app}\SearchPrinters.exe"; IconFilename: "{app}\SearchPrinters.exe"
 Name: "{autoprograms}\Print Collect Agent\Testar conexao"; Filename: "{app}\test-agent.bat"
-Name: "{autoprograms}\Print Collect Agent\Executar coleta unica"; Filename: "{app}\run-once.bat"
+Name: "{autoprograms}\Print Collect Agent\Executar coleta unica (invisivel)"; Filename: "{app}\run-once.bat"
 Name: "{autoprograms}\Print Collect Agent\Editar configuracao"; Filename: "{app}\open-config.bat"
 Name: "{autoprograms}\Print Collect Agent\Reinstalar inicializacao"; Filename: "{app}\register-startup-task.bat"
 Name: "{autoprograms}\Print Collect Agent\Diagnosticar agendamento (v6)"; Filename: "{app}\diagnosticar-agendamento-completo.bat"

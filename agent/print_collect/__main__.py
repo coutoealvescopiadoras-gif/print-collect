@@ -161,7 +161,7 @@ def _pair_and_save(server_url: str, code: str, config_path: Path,
     print(f"[1/4] Contatando servidor: {server_url}")
     pairing = PairingClient(server_url.rstrip("/"))
     hostname = platform.node() or None
-    version = "0.3.0"
+    version = "6.9.12-boot-coleta-forcada-20260922-7.4"
     print(f"[2/4] Validando CÓDIGO DO CLIENTE: {code.upper()} (hostname: {hostname})")
     mode, result = pairing.exchange_smart(code=code, hostname=hostname, version=version)
 
@@ -275,15 +275,15 @@ def cmd_scan(args: argparse.Namespace, _return_list: bool = False) -> int | list
     # BANNER VERSAO (Validacao tecnico em campo!)
     # Atualizar SEMPRE que mudar logica de coleta / OIDs Konica / etc
     # ========================================================================
-    AGENT_VERSION_BANNER = "v6.9.12-KM-EQUALS-PRINTWAYY-FINAL-20260921-7.3"
+    AGENT_VERSION_BANNER = "v6.9.12-BOOT-COLETA-FORCADA-20260922-7.4"
     try:
-        W = 66
+        W = 68
         print("=" * W)
         lb = " PRINT COLLECT AGENTE | " + AGENT_VERSION_BANNER + " "
         pad_left = max(1, (W - len(lb) - 2) // 2)
         pad_right = max(1, W - 2 - len(lb) - pad_left)
         print("=" + (" " * pad_left) + lb + (" " * pad_right) + "=")
-        hb = " Konica Minolta: X3 Color Direto + Soma Trava P&B+Color "
+        hb = " Boot+Logon: delay 60s + 5x30s rede. Konica: X3Color Direto + Soma Trava "
         pad_lh = max(1, (W - len(hb) - 2) // 2)
         pad_rh = max(1, W - 2 - len(hb) - pad_lh)
         print("=" + (" " * pad_lh) + hb + (" " * pad_rh) + "=")
@@ -479,15 +479,20 @@ def _windows_relaunch_self_as_admin(args: argparse.Namespace | None = None) -> N
         return
 
 
-def _ensure_windows_bat_wrappers(exe_dir: Path) -> tuple[Path, Path]:
-    """v6.4 NOVO! Cria/Atualiza run-once.bat e run-watchdog.bat na pasta do agente,
+def _ensure_windows_bat_wrappers(exe_dir: Path) -> tuple[Path, Path, Path]:
+    """v6.4 NOVO! Cria/Atualiza run-once.bat + run-watchdog.bat NA PASTA DO AGENTE,
     com conteúdo 100% correto (CRLF + ANSI CP1252), SEM wrapper inline.
     Solucao DEFITIVA para o bug de aspas aninhadas do schtasks /TR que causava
     erro -2147024894 (arquivo nao encontrado) e tarefas nao disparavam.
-    Retorna (bat_once_path, bat_watchdog_path)
+
+    v7.4 (22/09 Julio!) +3 wrapper: run-once-bootlogon-delay.bat
+      (para tarefas ONSTART/ONLOGON: espera 60s + ate 5x 30s rede, pois notebook
+      demora ~45s para conectar Wi-Fi apos o login!)
+    Retorna (bat_once_path, bat_watchdog_path, bat_boot_delay_path)
     """
     bat_once = exe_dir / "run-once.bat"
-    bat_wd = exe_dir / "run-watchdog.bat"
+    bat_wd   = exe_dir / "run-watchdog.bat"
+    bat_boot = exe_dir / "run-once-bootlogon-delay.bat"   # <==== NOVO v7.4!
     pd = os.environ.get("PROGRAMDATA") or r"C:\ProgramData"
 
     # Modelo: ja tem EXE_DIR = pasta do agente via %~dp0, WorkingDirectory garantido!
@@ -519,13 +524,62 @@ def _ensure_windows_bat_wrappers(exe_dir: Path) -> tuple[Path, Path]:
         "\"%EXE%\" --config \"%CFG%\" watchdog\r\n"
         "exit /b 0\r\n"
     )
+    # ====================================================================
+    # v7.4 NOVO (Julio - notebook Ricoh 4510SF Wi-Fi!): Boot / Logon DELAY
+    # Espera 60s apos boot (janela + programas abrindo) + depois tenta 5x
+    # 30s esperando INTERNET (ping 8.8.8.8) antes de rodar a coleta.
+    # Nao tem timeout /t (schtasks /RU SYSTEM nao tem janela de console)
+    # entao usamos ping localhost = delay preciso.
+    # ====================================================================
+    boot_delay_template = (
+        "@echo off\r\n"
+        "chcp 65001 >nul\r\n"
+        "setlocal EnableExtensions\r\n"
+        "set \"EXE_DIR=%~dp0\"\r\n"
+        "cd /d \"%~dp0\"\r\n"
+        f"if \"%PROGRAMDATA%\"==\"\" set \"PROGRAMDATA={pd}\"\r\n"
+        "set \"CFG_DIR=%PROGRAMDATA%\\PrintCollect\"\r\n"
+        "set \"CFG=%CFG_DIR%\\config.yaml\"\r\n"
+        "set \"EXE=%EXE_DIR%PrintCollectAgent.exe\"\r\n"
+        "set \"LOG=%TEMP%\\print-collect-boot-coleta.log\"\r\n"
+        "if not exist \"%CFG_DIR%\" mkdir \"%CFG_DIR%\" >nul 2>&1\r\n"
+        # Limita log pra 512KB
+        "if exist \"%LOG%\" for %%F in (\"%LOG%\") do if %%~zF GEQ 524288 del /F /Q \"%LOG%\" >nul 2>&1\r\n"
+        "echo [%date% %time%] BOOT/LOGON: Rotina coleta com delay (60s + 5x30s rede) iniciando... >> \"%LOG%\"\r\n"
+        # ==== 60s DELAY inicial (ping localhost = 1s/pkt => 61 pacotes = 60s) ====
+        "ping -n 61 127.0.0.1 >nul 2>&1\r\n"
+        # ==== Espera rede: 5 tentativas 30s ====
+        "set MAX_TENT=5\r\n"
+        "set TENT=0\r\n"
+        ":LOOP_REDE_BOOT_DELAY\r\n"
+        "set /a TENT+=1\r\n"
+        "ping -n 1 8.8.8.8 -w 1500 >nul 2>&1\r\n"
+        "if %ERRORLEVEL% EQU 0 (\r\n"
+        "  echo [%date% %time%]   rede OK na tentativa %TENT%. >> \"%LOG%\"\r\n"
+        "  goto :COLETA_BOOT_DELAY\r\n"
+        ")\r\n"
+        "if %TENT% GEQ %MAX_TENT% (\r\n"
+        "  echo [%date% %time%]   SEM REDE apos %MAX_TENT% tentativas, tenta USB mesmo assim. >> \"%LOG%\"\r\n"
+        "  goto :COLETA_BOOT_DELAY\r\n"
+        ")\r\n"
+        "echo [%date% %time%]   aguardando rede %TENT%/%MAX_TENT% (30s...) >> \"%LOG%\"\r\n"
+        "ping -n 31 127.0.0.1 >nul 2>&1\r\n"
+        "goto :LOOP_REDE_BOOT_DELAY\r\n"
+        ":COLETA_BOOT_DELAY\r\n"
+        "\"%EXE%\" --config \"%CFG%\" once >nul 2>&1\r\n"
+        "set RC=%ERRORLEVEL%\r\n"
+        "echo [%date% %time%]   coleta terminou RC=%RC%. >> \"%LOG%\"\r\n"
+        "exit /b %RC%\r\n"
+    )
     # Escreve com CP1252 (ANSI pt-BR) + CRLF = cmd.exe nativo 100%
     import codecs
     with codecs.open(str(bat_once), "w", encoding="cp1252", errors="replace") as f:
         f.write(once_template)
     with codecs.open(str(bat_wd), "w", encoding="cp1252", errors="replace") as f:
         f.write(wd_template)
-    return bat_once, bat_wd
+    with codecs.open(str(bat_boot), "w", encoding="cp1252", errors="replace") as f:
+        f.write(boot_delay_template)
+    return bat_once, bat_wd, bat_boot
 
 
 def cmd_install(args: argparse.Namespace) -> int:
@@ -568,11 +622,13 @@ def cmd_install(args: argparse.Namespace) -> int:
         cfg_str = str(config_path)
         wd_str = str(exe.parent)
 
-        # v6.4 NOVO! GARANTE run-once.bat / run-watchdog.bat na pasta do agente
+        # v6.4 NOVO! GARANTE run-once.bat / run-watchdog.bat NA pasta do agente
         # (ANTES de qualquer tarefa ser criada!)
-        bat_once_path, bat_wd_path = _ensure_windows_bat_wrappers(exe.parent)
+        # v7.4 Julio (22/09/2026): +3 wrapper (boot delay!)
+        bat_once_path, bat_wd_path, bat_boot_path = _ensure_windows_bat_wrappers(exe.parent)
         bat_once_str = str(bat_once_path)
-        bat_wd_str = str(bat_wd_path)
+        bat_wd_str   = str(bat_wd_path)
+        bat_boot_str = str(bat_boot_path)
 
         # Garante ProgramData/PrintCollect existe
         pd = os.environ.get("PROGRAMDATA") or r"C:\ProgramData"
@@ -645,27 +701,35 @@ def cmd_install(args: argparse.Namespace) -> int:
         # v6.4 CORRECAO DEFITIVA: Usa BATs SEPARADOS (sem wrapper inline) + /RU SYSTEM invisivel!
         # =====================================================================
         def _native_schtasks_ps_create_6_tasks() -> int:
-            print("\n[CAMADA 2/3] FALLBACK NATIVO v6.4 (schtasks/PowerShell Python): CRIANDO 6 CAMADAS DE TAREFAS...")
-            # Lista de tarefas SUPERV6 v6.4:
-            #   (nome, schtasks args [menos /TN /TR], dispararRun?, run_as_system?)
+            print("\n[CAMADA 2/3] FALLBACK NATIVO v7.4 (schtasks/PowerShell Python): CRIANDO 6 CAMADAS DE TAREFAS...")
+            # Lista de tarefas SUPERV6 v7.4:
+            #   (nome, schtasks args [menos /TN /TR], dispararRun?, run_as_system?, TIPO_TAREFA?)
+            #   TIPO = "once" (bat normal, instantaneo /RU SYSTEM invisivel)
+            #          "wd"   (watchdog)
+            #          "boot" (boot/logon: delay 60s + espera rede, invisivel!)
             tasks = [
                 ("Print Collect Agent - 30 Minutos",
-                 ["/SC", "MINUTE", "/MO", "30"], True, True),
+                 ["/SC", "MINUTE", "/MO", "30"], True, True, "once"),
                 ("Print Collect Agent - Watchdog",
-                 ["/SC", "MINUTE", "/MO", "10"], True, True),
+                 ["/SC", "MINUTE", "/MO", "10"], True, True, "wd"),
                 ("Print Collect Agent - Diario Repeticao",
-                 ["/SC", "DAILY", "/MO", "1", "/RI", "60", "/DU", "9999:00", "/K"], True, True),
+                 ["/SC", "DAILY", "/MO", "1", "/RI", "60", "/DU", "9999:00", "/K"], True, True, "once"),
+                # ============ v7.4 Julio! Boot / Logon COM DELAY para esperar Wi-Fi! ============
                 ("Print Collect Agent - Ao Iniciar",
-                 ["/SC", "ONSTART"], False, False),
+                 ["/SC", "ONSTART"], False, False, "boot"),
                 ("Print Collect Agent - Ao Logar",
-                 ["/SC", "ONLOGON"], False, False),
+                 ["/SC", "ONLOGON"], False, False, "boot"),
             ]
 
             # === CORRECAO V6.4: _tr() APENAS aponta para o .bat (1 nivel de aspas só!) ===
-            #   NÃO usa mais wrapper cmd.exe inline — ACABA o bug -2147024894!
-            #   Regra schtasks /TR: aspas INTERNAS escapadas com \, aspas EXTERNAS obrigatorias.
-            def _tr(sub: str) -> str:
-                bat_path = bat_wd_str if sub == "watchdog" else bat_once_str
+            #   v7.4 Julio: 3 wrappers. "boot" usa o delay (invisivel, espera rede!).
+            def _tr(kind: str) -> str:
+                if kind == "wd":
+                    bat_path = bat_wd_str
+                elif kind == "boot":
+                    bat_path = bat_boot_str
+                else:
+                    bat_path = bat_once_str
                 escaped = bat_path.replace('"', '\\"')
                 return f'"{escaped}"'
 
@@ -685,9 +749,9 @@ def cmd_install(args: argparse.Namespace) -> int:
 
             rc_all = 0
             # CAMADA 1/3 schtasks simples (30min, watchdog, diario, onstart, onlogon)
-            for i, (tn, sch_args, run_now, run_as_system) in enumerate(tasks, 2):
-                sub = "watchdog" if "Watchdog" in tn else "once"
-                tr = _tr(sub)
+            # v7.4 Julio: agora as tasks tem 5 campos (inclui TIPO = once/wd/boot!)
+            for i, (tn, sch_args, run_now, run_as_system, kind) in enumerate(tasks, 2):
+                tr = _tr(kind)
                 # v6.4 NOVO: /RU "SYSTEM" = roda invisivel em 2o plano SEM tela preta!
                 system_args = ["/RL", "HIGHEST", "/RU", "SYSTEM"] if run_as_system else []
                 cmdline = ["schtasks","/Create","/F","/TN",tn,*sch_args,*system_args,"/TR",tr]
