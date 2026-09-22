@@ -968,7 +968,7 @@ def _collect_pages_vendor_specific(
                 gen_counters_vals.append(v)
                 if v > 0:
                     gen_counters_str_parts.append(f".{km_idx}.0={v}")
-            gen_counters_hint_best_bw = 0
+            gen_counters_hint_bw = 0
             gen_counters_hint_clr = 0
             gen_counters_hint_used = ""
             # Tenta encontrar o melhor par (idx_x, idx_y) tal que idx_x + idx_y ≈ maior_valor (total geral idx=2
@@ -1033,17 +1033,18 @@ def _collect_pages_vendor_specific(
 
             # ===== ESCOLHE QUAL CONJUNTO DE OIDs RETORNA O MELHOR RESULTADO =====
             # Prioridade -1 (PATCH 7 PRINTWAYY!): ÁRVORE NOVA 1.1.2.1.5.7.20.1.1.9 - MÁXIMA PRIORIDADE
+            # ⚠️ AJUSTE 7.4b CLIENTE 117 ATUALIZAÇÃO FIRMWARE: SE pw_total < 1000 É MODELO/SERIAL, NÃO É CONTADOR!
             chosen_tot = 0
             chosen_bw  = 0
             chosen_clr = 0
             chosen_src = ""
-            if pw_total > 0 or pw_bw > 0 or pw_clr > 0:
-                cand_tot = max(pw_total, pw_bw + pw_clr)
-                if cand_tot > 0:
-                    chosen_tot = cand_tot
-                    chosen_bw  = pw_bw
-                    chosen_clr = pw_clr
-                    chosen_src = pw_src or "KM-PRINTWAYY"
+            pw_cand_total = max(pw_total, pw_bw + pw_clr)
+            pw_is_real_counter = pw_cand_total >= 1000 and (pw_clr > 0 or pw_bw > 0)
+            if pw_is_real_counter:
+                chosen_tot = pw_cand_total
+                chosen_bw  = pw_bw
+                chosen_clr = pw_clr
+                chosen_src = pw_src or "KM-PRINTWAYY"
             # Prioridade 0: CONTADORES GERAIS (árvore 7.2.*) se achou par E PRINTWAYY não deu COLOR>0
             if gen_counters_hint_bw > 0 and gen_counters_hint_clr > 0 and chosen_clr == 0:
                 cand_tot = max(max_gen_total, gen_counters_hint_bw + gen_counters_hint_clr)
