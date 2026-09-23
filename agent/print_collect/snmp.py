@@ -508,7 +508,7 @@ def _collect_pages_printer_mib_rfc(
     """
     BASE_OID_PRINTER_MIB_MARKER = "1.3.6.1.2.1.43.10.2.1"
     try:
-        raw = _snmp_walk_raw(ip, BASE_OID_PRINTER_MIB_MARKER, community, timeout)
+        raw = _snmp_walk_table_raw_strings(ip, BASE_OID_PRINTER_MIB_MARKER, community, timeout)
         if diagnostic_mode:
             logger.warning(
                 "[DIAG RFC3805 RAW %s] Qtd itens walk=%s | itens=%s",
@@ -1127,7 +1127,7 @@ def _collect_pages_vendor_specific(
             #   e a gente vê no retorno do backend / leitura da impressora.
             gen_str = " ".join(gen_counters_str_parts) if gen_counters_str_parts else "N/A"
             rfc_str = (f"tot={rfc3805_for_km[0]} bw={rfc3805_for_km[1]} clr={rfc3805_for_km[2]}") if rfc3805_for_km else "N/A"
-            pw_summary = f"src={pw_src or 'NONE'} vals=[{pw_diag_str}]"
+            pw_summary = f"src={pw_src or 'NONE'} vals=[{pw_pairs_diag}]"
             logger.warning(
                 "[DIAG KONICA %s] IP=%s PW[%s tot=%s bw=%s clr=%s] "
                 "SetA[tot=%s bw=%s(cp=%s+pr=%s) clr=%s(cp=%s+pr=%s)] "
