@@ -17,6 +17,11 @@ cd /d "%~dp0"
 set "EXE=%~dp0PrintCollectAgent.exe"
 set "BAT_ONCE=%~dp0run-once.bat"
 set "BAT_WD=%~dp0run-watchdog.bat"
+REM ============== v7.4 Julio (22/09/2026) - Boot/Logon Delay ==============
+REM Tarefas Ao Iniciar/Ao Logar usam ESSE BAT (espera 60s + 5x 30s rede!)
+REM para NAO rodar a coleta antes do Wi-Fi se conectar (notebook Ricoh 4510!)
+set "BAT_BOOT=%~dp0run-once-bootlogon-delay.bat"
+REM =========================================================================
 if "%PROGRAMDATA%"=="" set "PROGRAMDATA=C:\ProgramData"
 set "CFG_DIR=%PROGRAMDATA%\PrintCollect"
 set "CFG=%CFG_DIR%\config.yaml"
@@ -27,11 +32,12 @@ REM === LIMPA LOG se passar de 1MB ===
 if exist "%LOG%" for %%F in ("%LOG%") do if %%~zF GEQ 1048576 del /F /Q "%LOG%"
 
 echo ================================================================================ >> "%LOG%"
-echo [%date% %time%] PRINT COLLECT v6.4 - INSTALAR AGENDAMENTO (6 CAMADAS) - INICIO >> "%LOG%"
-echo [%date% %time%] EXE     = %EXE% >> "%LOG%"
-echo [%date% %time%] BAT_ONCE= %BAT_ONCE% >> "%LOG%"
-echo [%date% %time%] BAT_WD  = %BAT_WD% >> "%LOG%"
-echo [%date% %time%] CFG     = %CFG% >> "%LOG%"
+echo [%date% %time%] PRINT COLLECT v7.4 - INSTALAR AGENDAMENTO (6 CAMADAS + BOOT DELAY!) - INICIO >> "%LOG%"
+echo [%date% %time%] EXE      = %EXE% >> "%LOG%"
+echo [%date% %time%] BAT_ONCE = %BAT_ONCE% >> "%LOG%"
+echo [%date% %time%] BAT_WD   = %BAT_WD% >> "%LOG%"
+echo [%date% %time%] BAT_BOOT = %BAT_BOOT% (Ao Iniciar/Ao Logar com delay!) >> "%LOG%"
+echo [%date% %time%] CFG      = %CFG% >> "%LOG%"
 echo ================================================================================ >> "%LOG%"
 
 if not exist "%EXE%" (
@@ -58,9 +64,10 @@ setx PRINTCOLLECT_DISABLE_USB "" /M >nul 2>&1
 echo [%date% %time%]   (limpa PRINTCOLLECT_DISABLE_USB se existia - garantia total)  >> "%LOG%"
 
 REM =============================================================================
-REM PASSO 0: GARANTE QUE run-once.bat E run-watchdog.bat EXISTEM (escritos corretamente!)
+REM PASSO 0: GARANTE QUE run-once.bat E run-watchdog.bat E BAT_BOOT EXISTEM (escritos corretamente!)
+REM v7.4 Julio: +3 wrapper boot delay!
 REM =============================================================================
-echo [%date% %time%] PASSO 0: Garantindo wrappers run-once.bat / run-watchdog.bat ... >> "%LOG%"
+echo [%date% %time%] PASSO 0: Garantindo wrappers run-once.bat / run-watchdog.bat / run-once-bootlogon-delay.bat ... >> "%LOG%"
 (
 echo @echo off
 echo chcp 65001 ^>nul
@@ -89,8 +96,46 @@ echo if not exist "%%CFG_DIR%%" mkdir "%%CFG_DIR%%" ^>nul 2^>^&1
 echo "%%EXE%%" --config "%%CFG%%" watchdog
 echo exit /b 0
 ) > "%BAT_WD%" 2>>"%LOG%"
+REM ================ v7.4 Julio - BAT BOOT COM DELAY! (invisivel, so log em arquivo!) ================
+(
+echo @echo off
+echo chcp 65001 ^>nul
+echo setlocal EnableExtensions
+echo set "EXE_DIR=%%~dp0"
+echo cd /d "%%~dp0"
+echo if "%%PROGRAMDATA%%"=="" set "PROGRAMDATA=C:\ProgramData"
+echo set "CFG_DIR=%%PROGRAMDATA%%\PrintCollect"
+echo set "CFG=%%CFG_DIR%%\config.yaml"
+echo set "EXE=%%EXE_DIR%%PrintCollectAgent.exe"
+echo set "LOG=%%TEMP%%\print-collect-boot-coleta.log"
+echo if not exist "%%CFG_DIR%%" mkdir "%%CFG_DIR%%" ^>nul 2^>^&1
+echo if exist "%%LOG%%" for %%%%F in ("%%LOG%%") do if %%%%~zF GEQ 524288 del /F /Q "%%LOG%%" ^>nul 2^>^&1
+echo echo [%%date%% %%%%time%%%%] BOOT/LOGON: Rotina coleta delay (60s+5x30s rede) iniciando... ^>^> "%%LOG%%"
+echo ping -n 61 127.0.0.1 ^>nul 2^>^&1
+echo set MAX_TENT=5
+echo set TENT=0
+echo :LOOP_REDE_BOOT_DELAY
+echo set /a TENT+=1
+echo ping -n 1 8.8.8.8 -w 1500 ^>nul 2^>^&1
+echo if %%ERRORLEVEL%% EQU 0 (
+echo   echo [%%date%% %%%%time%%%%]   rede OK na tentativa %%%%TENT%%. ^>^> "%%LOG%%"
+echo   goto :COLETA_BOOT_DELAY
+echo )
+echo if %%%%TENT%% GEQ %%%%MAX_TENT%% (
+echo   echo [%%date%% %%%%time%%%%]   SEM REDE apos %%%%MAX_TENT%% tentativas, tenta USB mesmo assim. ^>^> "%%LOG%%"
+echo   goto :COLETA_BOOT_DELAY
+echo )
+echo echo [%%date%% %%%%time%%%%]   aguardando rede %%%%TENT%%%%/%%%%MAX_TENT%%%% (30s...) ^>^> "%%LOG%%"
+echo ping -n 31 127.0.0.1 ^>nul 2^>^&1
+echo goto :LOOP_REDE_BOOT_DELAY
+echo :COLETA_BOOT_DELAY
+echo "%%EXE%%" --config "%%CFG%%" once ^>nul 2^>^&1
+echo set RC=%%ERRORLEVEL%%
+echo echo [%%date%% %%%%time%%%%]   coleta terminou RC=%%RC%%. ^>^> "%%LOG%%"
+echo exit /b %%RC%%
+) > "%BAT_BOOT%" 2>>"%LOG%"
 REM Ajusta line endings CRLF + ANSI (garante compatibilidade CMD pt-BR)
-for %%f in ("%BAT_ONCE%" "%BAT_WD%") do (
+for %%f in ("%BAT_ONCE%" "%BAT_WD%" "%BAT_BOOT%") do (
     if exist "%%f" (
         powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$c=Get-Content -LiteralPath '%%~ff'; $enc=[System.Text.Encoding]::GetEncoding(1252); [System.IO.File]::WriteAllLines('%%~ff', $c, $enc)" 2>>"%LOG%"
     )
@@ -121,9 +166,11 @@ echo [%date% %time%]   OK: Limpas. >> "%LOG%"
 
 REM ===========================================================
 REM ESCAPE PATHS FOR SCHTASKS /TR: usa CAMINHO COMPLETO dos BATs (sem wrapper inline!)
+REM v7.4 Julio: +TR_BOOT (BAT com delay 60s + espera rede!)
 REM ===========================================================
 set "TR_ONCE=\"%BAT_ONCE%\""
 set "TR_WD=\"%BAT_WD%\""
+set "TR_BOOT=\"%BAT_BOOT%\""
 
 REM Data/hora fallback:
 for /f "tokens=1-3 delims=/ " %%a in ("%date%") do set _SD=%%a/%%b/%%c
@@ -228,26 +275,26 @@ if %RC% EQU 0 (
 if %RC% NEQ 0 set RC_ALL=%RC%
 
 REM =============================================================================
-REM CAMADA 4: AO INICIAR (OnBoot / Startup do Windows)  ? NAO usa SYSTEM (precisa rede apos boot!)
+REM CAMADA 4: AO INICIAR (OnBoot / Startup do Windows) - v7.4 Julio - USA BAT BOOT DELAY!
 REM =============================================================================
 set TASK_NAME=Print Collect Agent - Ao Iniciar
-echo [%date% %time%] PASSO 5/7: CAMADA 4 ? Ao iniciar (boot)... >> "%LOG%"
-schtasks /Create /F /RL HIGHEST /TN "%TASK_NAME%" /SC ONSTART /TR "%TR_ONCE%" >nul 2>> "%LOG%"
+echo [%date% %time%] PASSO 5/7: CAMADA 4 ? Ao iniciar (boot) com delay rede ... >> "%LOG%"
+schtasks /Create /F /RL HIGHEST /TN "%TASK_NAME%" /SC ONSTART /TR "%TR_BOOT%" >nul 2>> "%LOG%"
 set RC=%ERRORLEVEL%
-echo [%date% %time%]   schtasks ONSTART RC=%RC% >> "%LOG%"
+echo [%date% %time%]   schtasks ONSTART (BAT_BOOT delay 60s+5x30s) RC=%RC% >> "%LOG%"
 if %RC% NEQ 0 set RC_ALL=%RC%
 
 REM =============================================================================
-REM CAMADA 5: AO LOGAR (OnLogon ? usuario faz login em qualquer conta)
+REM CAMADA 5: AO LOGAR (OnLogon ? usuario faz login em qualquer conta) - v7.4 Julio - USA BAT BOOT DELAY!
 REM =============================================================================
 set TASK_NAME=Print Collect Agent - Ao Logar
-echo [%date% %time%] PASSO 6/7: CAMADA 5 ? Ao Logar ... >> "%LOG%"
-schtasks /Create /F /RL HIGHEST /TN "%TASK_NAME%" /SC ONLOGON /TR "%TR_ONCE%" >nul 2>> "%LOG%"
+echo [%date% %time%] PASSO 6/7: CAMADA 5 ? Ao Logar com delay rede ... >> "%LOG%"
+schtasks /Create /F /RL HIGHEST /TN "%TASK_NAME%" /SC ONLOGON /TR "%TR_BOOT%" >nul 2>> "%LOG%"
 set RC=%ERRORLEVEL%
 if %RC% NEQ 0 (
   powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ^
     "$ErrorActionPreference='Stop';" ^
-    "$bat='%BAT_ONCE:'='%';" ^
+    "$bat='%BAT_BOOT:'='%';" ^
     "$taskName='%TASK_NAME:'='%';" ^
     "$wd='%~dp0';" ^
     "$uid=$env:USERNAME;" ^
@@ -256,7 +303,7 @@ if %RC% NEQ 0 (
     "$set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 1);" ^
     "Register-ScheduledTask -TaskName $taskName -Action $act -Trigger $trg -Settings $set -Force | Out-Null;" >nul 2>> "%LOG%"
   set RC=%ERRORLEVEL%
-  echo [%date% %time%]   PowerShell AtLogOn -User $env:USERNAME RC=%RC% >> "%LOG%"
+  echo [%date% %time%]   PowerShell AtLogOn BAT_BOOT delay -User $env:USERNAME RC=%RC% >> "%LOG%"
 )
 if %RC% NEQ 0 set RC_ALL=%RC%
 

@@ -161,7 +161,7 @@ def _pair_and_save(server_url: str, code: str, config_path: Path,
     print(f"[1/4] Contatando servidor: {server_url}")
     pairing = PairingClient(server_url.rstrip("/"))
     hostname = platform.node() or None
-    version = "6.9.12-boot-coleta-forcada-20260922-7.6"
+    version = "6.9.12-boot-coleta-forcada-20260923-7.7"
     print(f"[2/4] Validando CÓDIGO DO CLIENTE: {code.upper()} (hostname: {hostname})")
     mode, result = pairing.exchange_smart(code=code, hostname=hostname, version=version)
 
@@ -275,7 +275,7 @@ def cmd_scan(args: argparse.Namespace, _return_list: bool = False) -> int | list
     # BANNER VERSAO (Validacao tecnico em campo!)
     # Atualizar SEMPRE que mudar logica de coleta / OIDs Konica / etc
     # ========================================================================
-    AGENT_VERSION_BANNER = "v6.9.12-BOOT-COLETA-FORCADA-20260922-7.6"
+    AGENT_VERSION_BANNER = "v6.9.12-BOOT-COLETA-FORCADA-20260923-7.7"
     try:
         W = 68
         print("=" * W)
@@ -283,7 +283,7 @@ def cmd_scan(args: argparse.Namespace, _return_list: bool = False) -> int | list
         pad_left = max(1, (W - len(lb) - 2) // 2)
         pad_right = max(1, W - 2 - len(lb) - pad_left)
         print("=" + (" " * pad_left) + lb + (" " * pad_right) + "=")
-        hb = " Konica 7.6: RFC3805 DEFINITIVA (role+unit amplo). Boot delay 60s invis. "
+        hb = " Konica 7.7: 2 NameErrors corrigidos. RFC3805+Superbloco OK. "
         pad_lh = max(1, (W - len(hb) - 2) // 2)
         pad_rh = max(1, W - 2 - len(hb) - pad_lh)
         print("=" + (" " * pad_lh) + hb + (" " * pad_rh) + "=")
