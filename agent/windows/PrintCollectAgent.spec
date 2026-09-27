@@ -35,6 +35,7 @@ hiddenimports = sorted(
             "print_collect.__main__",
             "print_collect.collector",
             "print_collect.config",
+            "print_collect.km_color_fix",
             "print_collect.sender",
             "print_collect.snmp",
             "print_collect.usb",

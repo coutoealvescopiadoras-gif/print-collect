@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "6.9.12-boot-coleta-forcada-20260923-7.8"
+  #define MyAppVersion "6.9.13-km-color-20260927"
 #endif
 
 #define MyAppName "Print Collect Agent"

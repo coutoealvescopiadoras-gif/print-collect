@@ -161,7 +161,7 @@ def _pair_and_save(server_url: str, code: str, config_path: Path,
     print(f"[1/4] Contatando servidor: {server_url}")
     pairing = PairingClient(server_url.rstrip("/"))
     hostname = platform.node() or None
-    version = "6.9.12-boot-coleta-forcada-20260923-7.8"
+    version = "6.9.13-km-color-20260927"
     print(f"[2/4] Validando CÓDIGO DO CLIENTE: {code.upper()} (hostname: {hostname})")
     mode, result = pairing.exchange_smart(code=code, hostname=hostname, version=version)
 
@@ -254,11 +254,14 @@ def cmd_scan(args: argparse.Namespace, _return_list: bool = False) -> int | list
 
     from print_collect.collector import setup_logging
     from print_collect.config import default_log_file_path
+    from print_collect.km_color_fix import apply as apply_km_color_fix
     from print_collect.snmp import (
         collect_targets,
         discover_local_subnets,
         scan_subnet,
     )
+
+    apply_km_color_fix()
 
     # SEMPRE grava log em arquivo (mesmo em scan) para diagnosticar se tarefa agendada ou atalho tiver erro
     try:
@@ -275,7 +278,7 @@ def cmd_scan(args: argparse.Namespace, _return_list: bool = False) -> int | list
     # BANNER VERSAO (Validacao tecnico em campo!)
     # Atualizar SEMPRE que mudar logica de coleta / OIDs Konica / etc
     # ========================================================================
-    AGENT_VERSION_BANNER = "v6.9.12-BOOT-COLETA-FORCADA-20260923-7.8"
+    AGENT_VERSION_BANNER = "v6.9.13-KM-COLOR-20260927"
     try:
         W = 68
         print("=" * W)
@@ -283,7 +286,7 @@ def cmd_scan(args: argparse.Namespace, _return_list: bool = False) -> int | list
         pad_left = max(1, (W - len(lb) - 2) // 2)
         pad_right = max(1, W - 2 - len(lb) - pad_left)
         print("=" + (" " * pad_left) + lb + (" " * pad_right) + "=")
-        hb = " Konica 7.8: 2 NameErrors PROVADOS corrigidos. C308 COLOR=270k OK. "
+        hb = " Konica C308: contador colorido direto nos OIDs PrintWayy. Coleta 30 min. "
         pad_lh = max(1, (W - len(hb) - 2) // 2)
         pad_rh = max(1, W - 2 - len(hb) - pad_lh)
         print("=" + (" " * pad_lh) + hb + (" " * pad_rh) + "=")
