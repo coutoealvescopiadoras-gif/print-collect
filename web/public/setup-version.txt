@@ -1,1 +1,1 @@
-﻿6.9.13-km-color-20260927 | 2026-09-27 09:46 | contador colorido Konica C308
+6.9.14-contadores-reais-20260927 | 2026-09-27 10:53 | contadores reais de preto e cor

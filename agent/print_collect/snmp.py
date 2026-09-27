@@ -260,7 +260,7 @@ def _snmp_walk_table(ip: str, base_oid: str, community: str, timeout: int) -> di
                             results[suffix] = value_int
                     if not got_any_in_base:
                         break
-                    var_binds = vb_list
+                    var_binds = vb_list[-1] if isinstance(vb_list, (list, tuple)) and vb_list else vb_list
             except Exception as exc:
                 logger.debug("SNMP walk falhou %s %s: %s", ip, base_oid, exc)
 
@@ -273,12 +273,25 @@ def _snmp_walk_table(ip: str, base_oid: str, community: str, timeout: int) -> di
 # Chaves de cor para detectar PB/Color na tabela prtMarkerColorantRole 43.12.1.1.4
 COLORANT_BLACK_KEYWORDS = ("black", "preto", "processblack", "markerdark", "mono", "monochrome")
 COLORANT_COLOR_KEYWORDS = (
+    "color", "colour", "colorido", "cores",
     "cyan", "magenta", "yellow", "ciano", "amarelo",
     "processcyan", "processmagenta", "processyellow",
     "red", "green", "blue", "lightcyan", "lightmagenta",
 )
 BASE_OID_MARKER_LIFE_COUNT = "1.3.6.1.2.1.43.10.2.1.4"
 BASE_OID_MARKER_COLORANT_ROLE = "1.3.6.1.2.1.43.12.1.1.4"
+
+
+def _colorant_kind(text: str) -> Optional[str]:
+    """black ou color so quando o texto do equipamento diz isso."""
+    low = str(text or "").lower().strip().strip('"').strip("'")
+    if not low or low in ("nosuchobject", "nosuchinstance", "null", "none"):
+        return None
+    if any(k in low for k in COLORANT_BLACK_KEYWORDS):
+        return "black"
+    if any(k in low for k in COLORANT_COLOR_KEYWORDS):
+        return "color"
+    return None
 
 
 def _collect_pages_from_marker_table(
@@ -288,106 +301,71 @@ def _collect_pages_from_marker_table(
     has_color_toners_hint: bool = False,
     force_largest_heuristic_disabled: bool = False,
 ) -> tuple[int, int]:
-    """Fallback PODEROSO para impressoras que NAO USAM OIDs fixos 1.2/1.3
-    (ex: Konica Minolta bizhub C258, Ricoh, Kyocera, Xerox, Samsung, EPSON EcoTank coloridas etc).
+    """Le prtMarkerLifeCount e so separa preto/colorido pelo nome do colorante.
 
-    Faz WALK na tabela prtMarkerLifeCount + prtMarkerColorantRole,
-    identifica contadores PB / Color por indice, soma tudo.
-
-    PARAMETROS v6.9.x (coleta segura):
-      has_color_toners_hint = True/False (vem da deteccao dos toners CMY > 0% no SNMP)
-        Se True = impressora E colorida (tem toners coloridos instalados)
-        => HEURISTICA NOVA: nao tem roles de cor? nao joga tudo no PB!
-           Split: maior contador = PB, soma dos outros 2/3 = COLORIDO.
-        Se False = impressora provavelmente PB => tudo PB, como antes (100% seguro).
-
-      force_largest_heuristic_disabled = True/False (DEFESA EM PROFUNDIDADE 2026-09-21)
-        Se True = DESATIVA a heuristica "maior contador = preto", independente de has_color_toners_hint.
-        Usado quando o modelo NAO esta na whitelist EPSON EcoTank. NUNCA MAIS inventa paginas coloridas.
-
-    Retorna tuple (pages_bw_total, pages_color_total)."""
+    Um unico contador, com toner preto e colorido na mesma maquina, e o total.
+    Ele nao vira preto. Contador sem nome nao entra na cobranca.
+    Retorna (pages_bw, pages_color)."""
+    _ = (has_color_toners_hint, force_largest_heuristic_disabled)
     try:
         life_counts = _snmp_walk_table(ip, BASE_OID_MARKER_LIFE_COUNT, community, timeout)
         if not life_counts:
             return 0, 0
 
-        colorant_roles = _snmp_walk_table_raw_strings(ip, BASE_OID_MARKER_COLORANT_ROLE, community, timeout)
+        colorant_roles: dict[str, str] = {}
+        for _name_oid in (
+            BASE_OID_MARKER_COLORANT_ROLE,
+            "1.3.6.1.2.1.43.12.1.1.3",
+        ):
+            for _suf, _raw in _snmp_walk_table_raw_strings(ip, _name_oid, community, timeout).items():
+                if _colorant_kind(_raw) and _suf not in colorant_roles:
+                    colorant_roles[_suf] = _raw
 
-        pages_bw_sum = 0
-        pages_color_sum = 0
-        used = set()
-
-        # 1) Prioridade 1: tabela COLORANT ROLE exatamente combinando marker index
-        #    Formato OID 43.10.2.1.4.HRDEV.MARKER  → corresponde 43.12.1.1.4.HRDEV.COLORANT
+        by_dev_life: dict[str, list[tuple[int, int]]] = {}
         for lc_suffix, val in life_counts.items():
-            # marker_suffix exemplo: "1.1" (hrDeviceIndex=1, markerIndex=1)
             parts = lc_suffix.split(".")
             if len(parts) < 2:
                 continue
-            hr_dev = parts[0]
-            marker_idx = parts[-1]
-            # Tenta combinações do colorant index igual ou diferente
-            matched_role_str: Optional[str] = None
-            for col_suffix, role_raw in colorant_roles.items():
-                col_parts = col_suffix.split(".")
-                if len(col_parts) < 2:
-                    continue
-                if col_parts[0] == hr_dev and (col_parts[-1] == marker_idx or col_parts[-1] == str(int(marker_idx) - 1) or col_parts[-1] == str(int(marker_idx) + 1)):
-                    matched_role_str = role_raw
-                    break
-            if matched_role_str is None:
-                # Heuristica 2: se tem role, combina. Se NAO TEM role (EPSON L3250 etc),
-                # NAO soma nada aqui — vai para "remaining" logo abaixo (onde a nova heuristica de cor brilha!).
+            try:
+                marker_idx = int(parts[-1])
+            except ValueError:
                 continue
+            by_dev_life.setdefault(parts[0], []).append((marker_idx, val))
 
-            role_low = str(matched_role_str).lower().strip().strip('"').strip("'")
-            if not role_low:
+        by_dev_names: dict[str, list[tuple[int, str]]] = {}
+        for col_suffix, role_raw in colorant_roles.items():
+            parts = col_suffix.split(".")
+            if len(parts) < 2:
                 continue
-            if any(k in role_low for k in COLORANT_BLACK_KEYWORDS):
-                pages_bw_sum += val
-                used.add(lc_suffix)
-            elif any(k in role_low for k in COLORANT_COLOR_KEYWORDS):
-                pages_color_sum += val
-                used.add(lc_suffix)
+            kind = _colorant_kind(role_raw)
+            if not kind:
+                continue
+            try:
+                colorant_idx = int(parts[-1])
+            except ValueError:
+                continue
+            by_dev_names.setdefault(parts[0], []).append((colorant_idx, kind))
 
-        # ==================================================================
-        # 2) HEURISTICA NOVA v6.9.1 — SEM ROLES DE COR MAS IMPRESSORA COLORIDA!
-        #    (EPSON EcoTank L3250 / L3150 / L5290 / etc!)
-        # ==================================================================
-        # Se temos has_color_toners_hint = True (toners C/M/Y > 0% coletados!)
-        # E ainda sobraram indices NAO-usados pq a tabela de roles nao existe ou
-        # nao tem valores reconheciveis, entao:
-        #   - ORDENA os remaining por valor DECRESCENTE.
-        #   - SE tivermos 2+ indices:
-        #       * 1º maior = PRETO (P&B)
-        #       * SOMA de todos os outros restantes = COLORIDO
-        #   - SE tivermos apenas 1 indice: vai para PB (seguranca)
-        #
-        # (Regra de SEGURANCA MAXIMA: se has_color_toners_hint = False = PB provavel,
-        #  mantemos o comportamento antigo: SOMA TUDO EM PB!)
-        # ==================================================================
-        remaining = [(suf, v) for suf, v in life_counts.items() if suf not in used]
-
-        if has_color_toners_hint and not force_largest_heuristic_disabled and len(remaining) >= 2:
-            # Ordena: MAIOR valor primeiro (maior contador = preto, normalmente)
-            remaining_sorted = sorted(remaining, key=lambda t: t[1], reverse=True)
-            for i, (_, v) in enumerate(remaining_sorted):
-                if i == 0:
-                    # Primeiro da lista (maior valor) → Preto / P&B
-                    pages_bw_sum += v
-                else:
-                    # Todos os outros → assumidos Coloridos (heuristica SEGURA pq TEM toner color!)
-                    pages_color_sum += v
-        else:
-            # HEURISTICA ANTIGA (manter 100% compat):
-            # indices que sobraram sem role = PEB, duplex, alimentador etc → TUDO PB!
-            def sort_key(tup):
-                parts = tup[0].split(".")
-                return tuple(int(p) for p in parts if p.isdigit())
-            remaining_sorted = sorted(remaining, key=sort_key)
-            for _, v in remaining_sorted:
-                pages_bw_sum += v
-
+        pages_bw_sum = 0
+        pages_color_sum = 0
+        for hr_dev, lives in by_dev_life.items():
+            named = by_dev_names.get(hr_dev, [])
+            kinds = {kind for _, kind in named}
+            if len(lives) == 1 and "black" in kinds and "color" in kinds:
+                continue
+            name_by_idx: dict[int, str] = {}
+            for colorant_idx, kind in named:
+                prev = name_by_idx.get(colorant_idx)
+                if prev is None:
+                    name_by_idx[colorant_idx] = kind
+                elif prev != kind:
+                    name_by_idx[colorant_idx] = "conflict"
+            for marker_idx, val in lives:
+                kind = name_by_idx.get(marker_idx)
+                if kind == "black":
+                    pages_bw_sum += val
+                elif kind == "color":
+                    pages_color_sum += val
         return max(0, pages_bw_sum), max(0, pages_color_sum)
     except Exception as exc:
         logger.debug("collect_pages_from_marker_table exc %s: %s", ip, exc)
@@ -441,7 +419,7 @@ def _snmp_walk_table_raw_strings(ip: str, base_oid: str, community: str, timeout
                         results[suffix] = str(var_bind[1])
                     if not got_any:
                         break
-                    var_binds = vb_list
+                    var_binds = vb_list[-1] if isinstance(vb_list, (list, tuple)) and vb_list else vb_list
             except Exception as exc:
                 logger.debug("walk raw exc %s %s: %s", ip, base_oid, exc)
 
@@ -506,90 +484,16 @@ def _collect_pages_printer_mib_rfc(
 
     Returns: (total, bw, color) ou None se nenhum contador >0 for encontrado.
     """
-    BASE_OID_PRINTER_MIB_MARKER = "1.3.6.1.2.1.43.10.2.1"
     try:
-        raw = _snmp_walk_table_raw_strings(ip, BASE_OID_PRINTER_MIB_MARKER, community, timeout)
+        bw_sum, col_sum = _collect_pages_from_marker_table(
+            ip, community, timeout,
+            has_color_toners_hint=False,
+            force_largest_heuristic_disabled=True,
+        )
         if diagnostic_mode:
-            logger.warning(
-                "[DIAG RFC3805 RAW %s] Qtd itens walk=%s | itens=%s",
-                ip,
-                len(raw) if isinstance(raw, dict) else 0,
-                (str(list(raw.items())[:60])[:1800] + ("..." if len(raw) > 60 else "")) if isinstance(raw, dict) else "None",
-            )
-        if not raw:
-            return None
-        bw_sum  = 0
-        col_sum = 0
-        rows: dict[tuple[int, int], dict[int, int]] = {}
-        for suffix, val in raw.items():
-            parts = suffix.split(".")
-            if len(parts) < 3:
-                continue
-            try:
-                col    = int(parts[0])
-                hrdev  = int(parts[1])
-                marker = int(parts[2])
-            except ValueError:
-                continue
-            key = (hrdev, marker)
-            if key not in rows:
-                rows[key] = {}
-            rows[key][col] = _parse_int(val)
-
-        if diagnostic_mode:
-            discarded_rows = []
-            used_rows = []
-        for key, row in rows.items():
-            colorant = row.get(2, 0)
-            unit     = row.get(3, 0)
-            life_cnt = row.get(4, 0)
-            role_raw = row.get(8, b"")
-            role_str = ""
-            if isinstance(role_raw, bytes):
-                try:
-                    role_str = role_raw.decode("utf-8", errors="ignore").lower()
-                except Exception:
-                    role_str = ""
-            elif isinstance(role_raw, str):
-                role_str = role_raw.lower()
-            is_usable = False
-            unit_ok = life_cnt > 0 and (unit in (7, 8, 19, 1, 3, 13, 14))
-            if unit_ok:
-                is_black = False
-                is_color = False
-                if colorant == 1:
-                    is_black = True
-                elif colorant >= 2 and colorant <= 32:
-                    is_color = True
-                if not is_black and not is_color and role_str:
-                    if "black" in role_str:
-                        is_black = True
-                    elif any(c in role_str for c in ("cyan", "magenta", "yellow", "red", "green", "blue", "color")):
-                        is_color = True
-                if is_black:
-                    bw_sum += life_cnt
-                    is_usable = True
-                elif is_color:
-                    col_sum += life_cnt
-                    is_usable = True
-            if diagnostic_mode:
-                entry = f"hr={key[0]} mrk={key[1]} colidx={colorant} unit={unit} life={life_cnt} role={role_str}"
-                if is_usable:
-                    used_rows.append(entry)
-                else:
-                    discarded_rows.append(entry)
-
-        if diagnostic_mode:
-            logger.warning(
-                "[DIAG RFC3805 ROWS %s] USADAS[%s]=%s | DESCARTADAS[%s]=%s",
-                ip,
-                len(used_rows), ";".join(used_rows[:25]),
-                len(discarded_rows), ";".join(discarded_rows[:40]),
-            )
-
+            logger.warning("[DIAG RFC3805 %s] bw=%s color=%s", ip, bw_sum, col_sum)
         if bw_sum > 0 or col_sum > 0:
-            total = bw_sum + col_sum
-            return (total, bw_sum, col_sum)
+            return (bw_sum + col_sum, bw_sum, col_sum)
         return None
     except Exception as exc:
         logger.debug("RFC 3805 marker walk exc %s: %s", ip, exc)
@@ -738,7 +642,7 @@ def _collect_pages_vendor_specific(
         rfc_total = _parse_int(_snmp_get(ip, OID_PAGES_TOTAL, community, timeout)) or 0
         logger.warning("[DIAG VENDOR TIERD] IP=%s manufacturer=%s rfc_total=%s -> retorna (t=%s,b=%s,c=0)", ip, manufacturer, rfc_total, rfc_total, rfc_total)
         if rfc_total > 0:
-            return (rfc_total, rfc_total, 0)
+            return (rfc_total, 0, 0)
         return (0, 0, 0)
 
     try:
@@ -857,32 +761,6 @@ def _collect_pages_vendor_specific(
                 break
             if not fixed_pair_found:
                 # ==============================================================
-                # TÁTICA #0B (FALLBACK SE X=3 = 0 OU QUEBROU):
-                # AÍ SIM USA A DIFERENÇA (Total - P&B) pra não perder colorido!
-                # ==============================================================
-                for suf1 in SUFS:
-                    k_total = f".1{suf1}"
-                    kbw     = f".2{suf1}"
-                    kclr    = f".3{suf1}"
-                    vt = pw_vals.get(k_total, 0)
-                    vb = pw_vals.get(kbw, 0)
-                    if vt <= 0 or vb <= 0:
-                        continue
-                    if vb > vt:
-                        continue
-                    vc_calc = vt - vb
-                    if vc_calc < 0:
-                        continue
-                    # Aceita se a soma fecha (sempre fecha por construção!)
-                    pw_total = max(pw_total, vt)
-                    pw_bw    = vb
-                    pw_clr   = vc_calc
-                    pw_src   = (f"KM-PRINTWAYY-DIF-FALLBACK"
-                               f"(X3=0→USOU-DIF={vt}-{vb}=COLOR={vc_calc})")
-                    fixed_pair_found = True
-                    break
-            if not fixed_pair_found:
-                # ==============================================================
                 # TÁTICA #1 (FALLBACK SE DIF JULIO NAO FUNCIONAR):
                 # X=2 SEMPRE BW / X=3 SEMPRE COLOR, como confirmado na PrintWayy
                 # ==============================================================
@@ -908,58 +786,7 @@ def _collect_pages_vendor_specific(
                                    f"SOMA={s}≈{pw_check})")
                         fixed_pair_found = True
                         break
-            if not fixed_pair_found and pw_total > 0 and len(pw_vals) >= 2:
-                # ==============================================================
-                # TATICA #2 (FALLBACK SEGURO - APENAS SE FIXEDIDX NÃO BATER!)
-                # NOVA REGRA FALLBACK: busca QUALQUER PAR DE X (a,b) que some ≈ total
-                # SEM INVERTER A ORDEM DOS ÍNDICES (sempre X menor = BW, X maior = Color)
-                # Baseado no padrão Konica (índice baixo = BW / índice alto = Color)
-                # ==============================================================
-                items_kv = sorted(pw_vals.items(),
-                                  key=lambda kv: tuple(int(p) for p in kv[0].strip('.').split('.') if p))
-                best_pair_pw_sum = 0
-                best_pair_pw_kv = None
-                pw_threshold_skip_total = pw_total * 0.95
-                for i in range(len(items_kv)):
-                    ki, vi = items_kv[i]
-                    if vi <= 0 or vi >= pw_threshold_skip_total:
-                        continue
-                    for j in range(len(items_kv)):
-                        if i == j: continue
-                        kj, vj = items_kv[j]
-                        # ORDEM DOS ÍNDICES (padrão Konica): ki vem ANTES que kj?
-                        #   → vi = BW  (menor índice)
-                        #   → vj = CLR (maior índice)
-                        # SE NÃO ESTIVEREM EM ORDEM, PULA (evita inverter!)
-                        parts_i = tuple(int(p) for p in ki.strip('.').split('.') if p)
-                        parts_j = tuple(int(p) for p in kj.strip('.').split('.') if p)
-                        if parts_i >= parts_j:
-                            continue
-                        if vj <= 0 or vj >= pw_threshold_skip_total:
-                            continue
-                        s = vi + vj
-                        if (pw_total * 0.92 <= s <= pw_total * 1.08) and s > best_pair_pw_sum:
-                            best_pair_pw_sum = s
-                            best_pair_pw_kv = ((ki, vi), (kj, vj))
-                if best_pair_pw_kv is not None:
-                    (ki, vi), (kj, vj) = best_pair_pw_kv
-                    diff_ratio = (max(vi, vj) - min(vi, vj)) / pw_total if pw_total > 0 else 99
-                    if diff_ratio < 0.20:
-                        pw_bw = pw_total
-                        pw_clr = 0
-                        pw_src = f"KM-PRINTWAYY(INCONCLUSIVE-same-magnitude→{ki}={vi}|{kj}={vj}→total-only)"
-                    else:
-                        # ORDEM KONICA (índice baixo = BW, índice alto = Color) NÃO INVERTE!
-                        pw_bw, pw_clr = vi, vj
-                        pw_src  = (f"KM-PRINTWAYY-FALLBACK-IDX-ORDER"
-                                   f"({ki}=BW={vi},{kj}=CLR={vj},SOMA={best_pair_pw_sum}≈{pw_total})")
-                elif pw_total > 0:
-                    pw_bw = pw_total
-                    pw_clr = 0
-                    pw_src = f"KM-PRINTWAYY(total-only={pw_total})"
             if pw_total > 0 and pw_bw == 0 and pw_clr == 0:
-                pw_bw = pw_total
-                pw_clr = 0
                 pw_src = f"KM-PRINTWAYY(total-only={pw_total})"
             # ================================================================
             # SUPER LOG DIAGNOSTICO (TODOS OS VALORES, NA MESMA LINHA!)
@@ -1067,59 +894,68 @@ def _collect_pages_vendor_specific(
                 chosen_clr = pw_clr
                 chosen_src = pw_src or "KM-PRINTWAYY"
             # Prioridade 0: CONTADORES GERAIS (árvore 7.2.*) se achou par E PRINTWAYY não deu COLOR>0
-            if gen_counters_hint_bw > 0 and gen_counters_hint_clr > 0 and chosen_clr == 0:
+            # Par "menor = cor" nao e o contador fisico. Nao entra na cobranca.
+            if False and gen_counters_hint_bw > 0 and gen_counters_hint_clr > 0 and chosen_clr == 0:
                 cand_tot = max(max_gen_total, gen_counters_hint_bw + gen_counters_hint_clr)
                 if cand_tot >= chosen_tot * 0.9 or chosen_tot == 0:
                     chosen_tot = cand_tot
                     chosen_bw  = gen_counters_hint_bw
                     chosen_clr = gen_counters_hint_clr
                     chosen_src = f"KM-GENERAL({gen_counters_hint_used})"
-            # Prioridade 1: quem tiver COLOR REAL > 0 GANHA (independente de conjunto)
-            # Tenta Conjunto A (se tem color >0 ou total maior e PRINTWAYY/Gen não resolveram color)
-            if (setA_clr > 0 and (setA_bw + setA_clr) > 0) or (setA_tot > 0 and not chosen_src):
-                cand_tot = max(setA_tot, setA_bw + setA_clr)
-                if (setA_clr > 0 and cand_tot >= chosen_tot * 0.9) or chosen_clr == 0:
-                    chosen_tot = cand_tot
-                    chosen_bw  = setA_bw
-                    chosen_clr = setA_clr
-                    chosen_src = "KM-SetA(CopyPrint)"
-            # Tenta Conjunto B (se tem COLOR REAL > 0, SOBRESCREVE o A!)
-            if setB_clr > 0 and (setB_bw + setB_clr) > 0:
-                cand_tot = max(setB_tot, setB_bw + setB_clr)
-                if cand_tot >= chosen_tot * 0.9 or chosen_clr == 0:
-                    chosen_tot = cand_tot
-                    chosen_bw  = setB_bw
-                    chosen_clr = setB_clr
-                    chosen_src = "KM-SetB(TotalDireto)"
-            # Tenta Conjunto C (se tem COLOR REAL > 0, SOBRESCREVE!)
-            if setC_clr > 0 and (setC_bw + setC_clr) > 0:
-                cand_tot = max(setC_tot, setC_bw + setC_clr)
-                if cand_tot >= chosen_tot * 0.9 or chosen_clr == 0:
-                    chosen_tot = cand_tot
-                    chosen_bw  = setC_bw
-                    chosen_clr = setC_clr
-                    chosen_src = "KM-SetC(idx1)"
-            # Se nenhum conjunto retornou COLOR > 0, retorna o que tem o TOTAL MAIOR
-            if chosen_clr == 0:
-                candidates = [
-                    (pw_total, pw_bw, pw_clr, pw_src or "KM-PRINTWAYY"),
-                    (max(setA_tot, setA_bw + setA_clr), setA_bw, setA_clr, "KM-SetA(CopyPrint)"),
-                    (max(setB_tot, setB_bw + setB_clr), setB_bw, setB_clr, "KM-SetB(TotalDireto)"),
-                    (max(setC_tot, setC_bw + setC_clr), setC_bw, setC_clr, "KM-SetC(idx1)"),
-                ]
-                candidates.sort(key=lambda x: x[0], reverse=True)
-                if candidates[0][0] > 0 and (not chosen_src or candidates[0][0] > chosen_tot * 1.05):
-                    chosen_tot, chosen_bw, chosen_clr, chosen_src = candidates[0]
+            def _km_pair_closes(tot: int, bw: int, clr: int) -> bool:
+                if bw <= 0 or clr <= 0:
+                    return False
+                base = tot if tot > 0 else bw + clr
+                if base <= 0:
+                    return False
+                return abs((bw + clr) - base) / base <= 0.15
+
+            # Conjunto A/B/C so entra se o PrintWayy nao trouxe preto e colorido.
+            # E so se preto+colorido fecha o total. Nao substitui o par do painel.
+            if not (chosen_bw > 0 and chosen_clr > 0):
+                for label, tot, bw, clr in (
+                    ("KM-SetA(CopyPrint)", setA_tot, setA_bw, setA_clr),
+                    ("KM-SetB(TotalDireto)", setB_tot, setB_bw, setB_clr),
+                    ("KM-SetC(idx1)", setC_tot, setC_bw, setC_clr),
+                ):
+                    if _km_pair_closes(tot, bw, clr):
+                        chosen_tot = max(tot, bw + clr)
+                        chosen_bw = bw
+                        chosen_clr = clr
+                        chosen_src = label
+                        break
+            if chosen_clr <= 0 and chosen_bw <= 0:
+                best_bw = 0
+                best_tot = 0
+                best_src = chosen_src
+                for tot, bw, src in (
+                    (max(setA_tot, setA_bw), setA_bw, "KM-SetA(CopyPrint)"),
+                    (max(setB_tot, setB_bw), setB_bw, "KM-SetB(TotalDireto)"),
+                    (max(setC_tot, setC_bw), setC_bw, "KM-SetC(idx1)"),
+                    (pw_total, pw_bw, pw_src or "KM-PRINTWAYY"),
+                ):
+                    if bw > best_bw:
+                        best_bw = bw
+                        best_tot = max(tot, bw)
+                        best_src = src
+                    elif best_bw <= 0 and tot > best_tot:
+                        best_tot = tot
+                        best_src = src
+                if best_bw > 0 or best_tot > 0:
+                    chosen_bw = best_bw
+                    chosen_clr = 0
+                    chosen_tot = max(chosen_tot, best_tot, best_bw)
+                    chosen_src = best_src
 
             # ===== FALLBACK RFC 3805 SE AINDA TIVER COLOR=0 =====
             # PATCH 5: Chamamos com diagnostic_mode=True para logar TUDO (bruto!)
             if chosen_clr == 0 and chosen_tot > 0:
                 rfc3805_for_km = _collect_pages_printer_mib_rfc(ip, community, timeout, diagnostic_mode=True)
-                if rfc3805_for_km and rfc3805_for_km[2] > 0:
+                if rfc3805_for_km and rfc3805_for_km[2] > 0 and rfc3805_for_km[1] > 0:
                     rfc_t, rfc_b, rfc_c = rfc3805_for_km
-                    chosen_tot = max(chosen_tot, rfc_t)
+                    chosen_bw = rfc_b
                     chosen_clr = rfc_c
-                    chosen_bw  = max(0, chosen_tot - chosen_clr)
+                    chosen_tot = max(chosen_tot, rfc_t, rfc_b + rfc_c)
                     chosen_src = f"{chosen_src}+RFC3805"
 
             # ===== LOG DE DIAGNÓSTICO AUTOMÁTICO (aparece SEMPRE em Konica!) =====
@@ -1182,17 +1018,17 @@ def _collect_pages_vendor_specific(
                         continue
                     lbl_low = str(lbl_raw).lower()
                     # PALAVRAS QUE DEFINEM PRETO & BRANCO no painel Ricoh
+                    tokens = [
+                        tok for tok in lbl_low.replace("&", " ").replace("/", " ").replace("-", " ").split()
+                        if tok
+                    ]
                     is_bw = (
-                        "black" in lbl_low or "mono" in lbl_low or "monochrome" in lbl_low
-                        or "b&w" in lbl_low or "bw" in lbl_low or "preto" in lbl_low
-                        or "pb" in lbl_low or "p&b" in lbl_low
-                        or ("copier" in lbl_low and "color" not in lbl_low and "full" not in lbl_low)
+                        "black" in lbl_low or "monochrome" in lbl_low or "preto" in lbl_low
+                        or "b&w" in lbl_low or "p&b" in lbl_low
+                        or "bw" in tokens or "pb" in tokens or "mono" in tokens
                     )
-                    # PALAVRAS QUE DEFINEM COLORIDO
                     is_col = (
-                        "color" in lbl_low or "colour" in lbl_low
-                        or "full" in lbl_low and "color" in lbl_low
-                        or "colorido" in lbl_low or "cor" in lbl_low
+                        "color" in lbl_low or "colour" in lbl_low or "colorido" in lbl_low
                     )
                     # Ignora contadores de duplex, A3, scanner, fax, economia etc.
                     only_side = any(w in lbl_low for w in (
@@ -1217,10 +1053,10 @@ def _collect_pages_vendor_specific(
                     return (total, bw, color)
                 elif ric_total_priv > 0:
                     # Tem total, mas não conseguiu split por label → só total, fallback PB
-                    return (ric_total_priv, ric_total_priv, 0)
+                    return (ric_total_priv, 0, 0)
             except Exception:
                 if ric_total_priv > 0:
-                    return (ric_total_priv, ric_total_priv, 0)
+                    return (ric_total_priv, 0, 0)
 
         # ===== Lexmark (Tier A): WALK type codes — 3=totalMono, 4=totalColor, 2=total =====
         if manufacturer == "Lexmark":
@@ -1545,20 +1381,13 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Opt
         or (rfc3805_ok and (rfc3805_pb > 0 or rfc3805_color > 0))
     )
     if nao_tem_split_real:
-        # Dupla proteção: hint SÓ p/ EcoTank. Força disable p/ todo o resto!
-        marker_table_hint = has_color_toners_hint if allow_largest_heuristic else False
-        force_disable_heur = not allow_largest_heuristic
         marker_pb, marker_color = _collect_pages_from_marker_table(
             ip, community, timeout,
-            has_color_toners_hint=marker_table_hint,
-            force_largest_heuristic_disabled=force_disable_heur,
+            has_color_toners_hint=False,
+            force_largest_heuristic_disabled=True,
         )
         marker_pb    = marker_pb    or 0
         marker_color = marker_color or 0
-        if not allow_largest_heuristic and marker_color > 0 and has_color_toners_hint:
-            # Reverte por segurança caso alguma condição interna ainda deixou passar heurística
-            marker_pb = marker_pb + marker_color
-            marker_color = 0
 
     # ========= PASSO 6: APLICA PRIORIDADE DAS FONTES (nunca inventa!) =========
     # Ordem de PRIORIDADE (1 mais importante → 6 menos):
@@ -1581,28 +1410,20 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Opt
         #         PRIORIDADE -> PRIMEIRO TENTA O MÉTODO NOVO RFC 3805 (ColorantIndex WALK) [MAIS CONFIÁVEL]
         #         SE NÃO TIVER, FALLBACK PARA OS OIDs RFC FIXOS ANTIGOS [retrocompatibilidade]
         if pages_color == 0 and pages_total > 0:
-            # 🏆 PRIMEIRO: Usa o método NOVO RFC 3805 (ColorantIndex) — funciona em Konica C308!
-            if rfc3805_ok and (rfc3805_pb > 0 or rfc3805_color > 0) and rfc3805_color > 0:
-                rfc3805_sum = rfc3805_pb + rfc3805_color
-                rfc3805_ok_color = (
-                    rfc3805_sum > 0 and rfc3805_color > 0
-                    and rfc3805_sum >= pages_bw
-                    and rfc3805_sum <= pages_total * 2
-                )
-                if rfc3805_ok_color:
-                    pages_total = max(pages_total, rfc3805_total) if rfc3805_total > 0 else pages_total
-                    pages_color = rfc3805_color
-                    pages_bw    = max(0, pages_total - pages_color)
-                    fonte_usada = f"vendor:{manufacturer or '?'}+rfc3805-color-fallback"
-            # 🥈 SEGUNDO: Só se o RFC 3805 NÃO funcionou — usa OIDs RFC fixos antigos [.1.2/.1.3]
-            if pages_color == 0 and (rfc_pb > 0 or rfc_color > 0):
-                rfc_sum = rfc_pb + rfc_color
-                rfc_color_rel_ok = (rfc_sum > 0) and (rfc_color > 0) and (rfc_sum >= pages_bw) and (rfc_sum <= pages_total * 2)
-                if rfc_color_rel_ok:
-                    pages_total = max(pages_total, rfc_total) if rfc_total > 0 else pages_total
-                    pages_color = rfc_color
-                    pages_bw    = max(0, pages_total - pages_color)
-                    fonte_usada = f"vendor:{manufacturer or '?'}+rfc-color-fallback"
+            if rfc3805_ok and rfc3805_pb > 0 and rfc3805_color > 0:
+                pages_bw = rfc3805_pb
+                pages_color = rfc3805_color
+                pages_total = max(pages_total, rfc3805_total, rfc3805_pb + rfc3805_color)
+                fonte_usada = f"vendor:{manufacturer or '?'}+rfc3805-color-fallback"
+            if pages_color == 0 and rfc_pb > 0 and rfc_color > 0:
+                pages_bw = rfc_pb
+                pages_color = rfc_color
+                pages_total = max(pages_total, rfc_total, rfc_pb + rfc_color)
+            if pages_color == 0 and marker_pb > 0 and marker_color > 0:
+                pages_bw = marker_pb
+                pages_color = marker_color
+                pages_total = max(pages_total, marker_pb + marker_color)
+                fonte_usada = f"vendor:{manufacturer or '?'}+marker-nome"
     # ===== NÍVEL 2 de prioridade: MÉTODO RFC 3805 OFICIAL (ColorantIndex) =====
     elif rfc3805_ok and (rfc3805_pb > 0 or rfc3805_color > 0):
         pages_bw    = rfc3805_pb
@@ -1610,10 +1431,10 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Opt
         pages_total = rfc3805_total
         fonte_usada = "rfc3805-official"
     # ===== NÍVEL 3: Método RFC fixos antigos (retrocompatibilidade) =====
-    elif rfc_pb > 0 or rfc_color > 0:
+    elif rfc_pb > 0 and rfc_color > 0:
         pages_bw    = rfc_pb
         pages_color = rfc_color
-        pages_total = rfc_total
+        pages_total = max(rfc_total, rfc_pb + rfc_color)
         fonte_usada = "rfc-fixed"
     elif marker_pb > 0 or marker_color > 0:
         pages_bw    = marker_pb
@@ -1621,7 +1442,7 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Opt
         pages_total = marker_pb + marker_color
         fonte_usada = "marker-table"
     elif rfc_total > 0:
-        pages_bw    = rfc_total
+        pages_bw    = 0
         pages_color = 0
         pages_total = rfc_total
         fonte_usada = "rfc-total-only"
@@ -1631,30 +1452,19 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Opt
         pages_color = 0
         fonte_usada = "nenhuma"
 
-    # ========= PASSO 7: VALIDAÇÕES DE SEGURANÇA MÁXIMA (anti-cobrança errada) =========
-    # 7.1 TIER D (Toshiba, Epson laser, OKI, Pantum) → Color = 0 OBRIGATÓRIO!
-    if manufacturer in MANUFACTURERS_TIER_D_ONLY_TOTAL:
-        is_ecotank_exception = (
-            manufacturer == "Epson" and marker_color > 0 and allow_largest_heuristic
-        )
-        if not is_ecotank_exception:
-            pages_color = 0
-    # 7.2 pages_total NUNCA MENOR que split real (pb + color)
+    # Contador colorido lido do equipamento permanece, em qualquer marca.
+    # 7.2 pages_total acompanha a soma dos contadores reais
     sum_real_split = pages_bw + pages_color
     if sum_real_split > pages_total:
         pages_total = sum_real_split
     if pages_total <= 0 and sum_real_split > 0:
         pages_total = sum_real_split
-    # 7.3 Nenhuma fonte deu? joga tudo em PB
-    if pages_total > 0 and pages_bw <= 0 and pages_color <= 0:
+    # So o equipamento sem toner colorido: o unico contador e o preto fisico.
+    if pages_total > 0 and pages_bw <= 0 and pages_color <= 0 and not has_color_toners_hint:
         pages_bw = pages_total
         pages_color = 0
-    # 7.4 NUNCA deixa color > total, NUNCA bw > total
-    if pages_total > 0 and pages_color > pages_total:
-        pages_color = max(0, pages_total - pages_bw) if pages_bw > 0 else 0
-        pages_color = max(0, pages_color)
-    if pages_total > 0 and pages_bw > pages_total:
-        pages_bw = pages_total
+    if pages_bw + pages_color > pages_total:
+        pages_total = pages_bw + pages_color
 
     # Toners (já coletamos NO PASSO 2 usando _collect_toner_by_manufacturer! Reutilizamos!):
     # ========= PASSO 8: CORREÇÃO 2026-09-21: is_color = PROVA REAL (não dica de toner!) =========
@@ -1690,25 +1500,17 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Opt
     #    🔥 FIX KONICA C308: EXCEÇÃO - se pages_color REAL veio de vendor:Konica/vendor:HP/vendor:Xerox
     #    etc (OID privado oficial Tier A/B), NUNCA ZERAMOS pages_color, pois ele é PROVA REAL
     #    de páginas coloridas, mesmo que os toners ainda não tenham sido lidos direito!
-    if not is_color_printer:
-        if not has_vendor_color_real:
-            toner_cyan = None
-            toner_magenta = None
-            toner_yellow = None
-            pages_color = 0
-            if pages_total > 0:
-                pages_bw = pages_total
-            elif pages_bw > 0:
-                pages_total = pages_bw
-    else:
-        # É colorida mas ainda NÃO TEM SPLIT REAL? → NÃO INVENTA! Tudo PB, color = 0.
-        #    🔥 FIX 21/09: EXCEÇÃO - se já tem pages_color de vendor:* OID privado real,
-        #    NÃO ZERA (mantém como provou)!
-        if (pages_color <= 0 or not has_vendor_color_real) and pages_total > 0:
+    if pages_color <= 0:
+        toner_cyan = None
+        toner_magenta = None
+        toner_yellow = None
+        pages_color = 0
+        if pages_total > 0 and pages_bw <= 0 and not has_color_toners_hint:
             pages_bw = pages_total
-            pages_color = 0
-        if pages_bw + pages_color > pages_total:
-            pages_total = pages_bw + pages_color
+        elif pages_bw > 0 and pages_total <= 0:
+            pages_total = pages_bw
+    elif pages_bw + pages_color > pages_total:
+        pages_total = pages_bw + pages_color
 
     # ========= PASSO 9: Monta PrinterData, alertas, log final =========
     data = PrinterData(

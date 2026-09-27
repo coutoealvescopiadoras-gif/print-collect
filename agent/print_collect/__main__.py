@@ -161,7 +161,7 @@ def _pair_and_save(server_url: str, code: str, config_path: Path,
     print(f"[1/4] Contatando servidor: {server_url}")
     pairing = PairingClient(server_url.rstrip("/"))
     hostname = platform.node() or None
-    version = "6.9.13-km-color-20260927"
+    version = "6.9.14-contadores-reais-20260927"
     print(f"[2/4] Validando CÓDIGO DO CLIENTE: {code.upper()} (hostname: {hostname})")
     mode, result = pairing.exchange_smart(code=code, hostname=hostname, version=version)
 
@@ -278,7 +278,7 @@ def cmd_scan(args: argparse.Namespace, _return_list: bool = False) -> int | list
     # BANNER VERSAO (Validacao tecnico em campo!)
     # Atualizar SEMPRE que mudar logica de coleta / OIDs Konica / etc
     # ========================================================================
-    AGENT_VERSION_BANNER = "v6.9.13-KM-COLOR-20260927"
+    AGENT_VERSION_BANNER = "v6.9.14-CONTADORES-REAIS-20260927"
     try:
         W = 68
         print("=" * W)
@@ -286,7 +286,7 @@ def cmd_scan(args: argparse.Namespace, _return_list: bool = False) -> int | list
         pad_left = max(1, (W - len(lb) - 2) // 2)
         pad_right = max(1, W - 2 - len(lb) - pad_left)
         print("=" + (" " * pad_left) + lb + (" " * pad_right) + "=")
-        hb = " Konica C308: contador colorido direto nos OIDs PrintWayy. Coleta 30 min. "
+        hb = " Contadores reais de preto e cor. Coleta a cada 30 min. "
         pad_lh = max(1, (W - len(hb) - 2) // 2)
         pad_rh = max(1, W - 2 - len(hb) - pad_lh)
         print("=" + (" " * pad_lh) + hb + (" " * pad_rh) + "=")

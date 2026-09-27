@@ -76,16 +76,7 @@ def choose_counters(groups: list[tuple[str, int, int, int]]) -> tuple[int, int, 
             best_gap = gap
     if best is not None:
         return best
-    best_dif: tuple[int, int, int, str] | None = None
-    for label, total, bw, color in groups:
-        if color > 0 or total <= bw or bw <= 0:
-            continue
-        derived = total - bw
-        if derived <= 0:
-            continue
-        if best_dif is None or total > best_dif[0]:
-            best_dif = (total, bw, derived, f"{label}-dif")
-    return best_dif
+    return None
 
 
 def _read_km_color(snmp_mod, ip: str, community: str, timeout: int) -> tuple[int, int, int, str] | None:
@@ -149,8 +140,6 @@ def apply() -> None:
                     ip, src, total, bw, color,
                 )
                 return (total, bw, color)
-            logger.info("Konica %s sem trio PB/cor nos OIDs diretos; segue fallback.", ip)
-            return (0, 0, 0)
         return original_vendor(ip, community, timeout, manufacturer, model=model)
 
     def collect_printer(ip, community="public", timeout=5):
