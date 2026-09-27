@@ -609,6 +609,11 @@ def _collect_toner_by_manufacturer(
     return black_pct, cyan_pct, magenta_pct, yellow_pct
 
 
+def _looks_konica(manufacturer: Optional[str], model: Optional[str]) -> bool:
+    text = f"{manufacturer or ''} {model or ''}".lower()
+    return any(token in text for token in ("konica", "minolta", "bizhub", "c308"))
+
+
 def _collect_pages_vendor_specific(
     ip: str,
     community: str,
@@ -665,7 +670,7 @@ def _collect_pages_vendor_specific(
         #         PATCH 5 (21/09 16h): Adicionamos TAMBÉM varredura da ÁRVORE GERAL de Contadores KM:
         #           1.3.6.1.4.1.18334.1.1.1.5.7.2.{0..20}.0 → essa árvore tem o TOTAL GERAL (índice 2 que já funciona!)
         #           e os outros índices (0, 1, 3..20) são Total Preto, Total Color, Duplex, A3 etc OFICIAIS!
-        if manufacturer == "Konica Minolta":
+        if manufacturer == "Konica Minolta" or _looks_konica(manufacturer, model):
             logger.warning("[DIAG KONICA BLOCK ENTER] IP=%s model=%s -> EXECUTANDO SUPERBLOCO KONICA MINOLTA PATCH7 PRINTWAYY!", ip, (model or "")[:60])
             def _km_read(base_oid: str) -> int:
                 """Lê UM OID com até 10 variações de sufixo (0 a 9). Retorna PRIMEIRO valor >0 encontrado."""
@@ -694,8 +699,58 @@ def _collect_pages_vendor_specific(
             pw_clr = 0
             pw_src = ""
             SUFS = ("", ".0", ".1", ".2", ".3", ".4", ".5", ".6", ".7", ".8", ".9")
+            trio_closed = False
+            # Trio oficial primeiro (.1 total, .2 preto, .3 colorido): 3 GET.
+            # Se preto + colorido fecha o total, a varredura de 341 nao comeca.
+            for pw_x in (1, 2, 3):
+                oid_full = f"{KM_PRINTWAYY_BASE}.{pw_x}"
+                v = _parse_int(_snmp_get(ip, oid_full, community, timeout)) or 0
+                if v > 0:
+                    pw_vals[f".{pw_x}"] = v
+                    if v > pw_total:
+                        pw_total = v
+            vt = pw_vals.get(".1", 0)
+            vb = pw_vals.get(".2", 0)
+            vc = pw_vals.get(".3", 0)
+            soma = vb + vc
+            # Igualdade estrita. A C308 fica ~10 paginas abaixo (2 cores);
+            # a mesma faixa de 0,5% da tatica #0 tambem encerra em 3 GET
+            # e grava o total como a soma, igual ao PrintWayy.
+            if vt > 0 and vb > 0 and vc > 0 and (
+                soma == vt or (vt * 0.995 <= soma <= vt * 1.005)
+            ):
+                pw_total = soma
+                pw_bw = vb
+                pw_clr = vc
+                pw_src = (
+                    f"KM-PRINTWAYY-TRIO-3GET(X1={vt},X2={vb},X3={vc},SOMA={soma})"
+                )
+                trio_closed = True
+                logger.warning(
+                    "[DIAG KONICA PRINTWAYY TRIO-3GET] IP=%s t=%s b=%s c=%s soma=%s",
+                    ip, vt, vb, vc, soma,
+                )
+                return (pw_total, pw_bw, pw_clr)
+            # Firmware que publica a folha em .1.0, .1.1 ou .1.1.0.
+            # So roda se o trio .1/.2/.3 nao fechou.
+            for km_tail in (".1.0", ".1.1", ".1.1.0"):
+                t_tail = _parse_int(_snmp_get(ip, f"{KM_PRINTWAYY_BASE}.1{km_tail}", community, timeout)) or 0
+                b_tail = _parse_int(_snmp_get(ip, f"{KM_PRINTWAYY_BASE}.2{km_tail}", community, timeout)) or 0
+                c_tail = _parse_int(_snmp_get(ip, f"{KM_PRINTWAYY_BASE}.3{km_tail}", community, timeout)) or 0
+                soma_tail = b_tail + c_tail
+                if t_tail > 0 and b_tail > 0 and c_tail > 0 and (
+                    soma_tail == t_tail or (t_tail * 0.995 <= soma_tail <= t_tail * 1.005)
+                ):
+                    logger.warning(
+                        "[DIAG KONICA PRINTWAYY TRIO-TAIL] IP=%s tail=%s t=%s b=%s c=%s",
+                        ip, km_tail, t_tail, b_tail, c_tail,
+                    )
+                    return (soma_tail, b_tail, c_tail)
             for pw_x in range(0, 31):  # X de 0 a 30
+                abort_scan = False
                 for pw_suf in SUFS:
+                    if pw_x in (1, 2, 3) and pw_suf == "":
+                        continue
                     oid_full = f"{KM_PRINTWAYY_BASE}.{pw_x}{pw_suf}"
                     v = _parse_int(_snmp_get(ip, oid_full, community, timeout)) or 0
                     if v > 0:
@@ -703,6 +758,24 @@ def _collect_pages_vendor_specific(
                         pw_vals[key] = v
                         if v > pw_total:
                             pw_total = v
+                    t_suf = pw_vals.get(f".1{pw_suf}", 0)
+                    b_suf = pw_vals.get(f".2{pw_suf}", 0)
+                    c_suf = pw_vals.get(f".3{pw_suf}", 0)
+                    if t_suf > 0 and b_suf > 0 and c_suf > 0 and (b_suf + c_suf == t_suf):
+                        pw_total = t_suf
+                        pw_bw = b_suf
+                        pw_clr = c_suf
+                        pw_src = (
+                            f"KM-PRINTWAYY-TRIO-3GET"
+                            f"(X1={t_suf},X2={b_suf},X3={c_suf},suf={pw_suf or 'folha'})"
+                        )
+                        trio_closed = True
+                        abort_scan = True
+                        break
+                if abort_scan or trio_closed:
+                    break
+            if trio_closed:
+                return (pw_total, pw_bw, pw_clr)
             # ==================================================================
             # TÁTICA #0 (PRIORIDADE MÁXIMA! 100% IGUAL O PRINTWAYY!)
             # USA X=3 (Geral cor total) DIRETO como valor de colorido!
@@ -876,6 +949,12 @@ def _collect_pages_vendor_specific(
             setC_bw      = setC_copy_b + setC_print_b
             setC_clr     = setC_copy_c + setC_print_c
 
+            # Tabela antiga de contadores (total / preto / cor em folhas fixas).
+            _KM_COUNTER_TABLE = "1.3.6.1.4.1.18334.1.1.1.5.7.2.2.1.5.1"
+            setD_tot = _parse_int(_snmp_get(ip, f"{_KM_COUNTER_TABLE}.1", community, timeout)) or 0
+            setD_bw  = _parse_int(_snmp_get(ip, f"{_KM_COUNTER_TABLE}.2", community, timeout)) or 0
+            setD_clr = _parse_int(_snmp_get(ip, f"{_KM_COUNTER_TABLE}.3", community, timeout)) or 0
+
             # Diagnóstico: pega o RESULTADO do RFC 3805 já calculado (para loggar se >0)
             rfc3805_for_km: Optional[tuple[int, int, int]] = None
 
@@ -917,6 +996,7 @@ def _collect_pages_vendor_specific(
                     ("KM-SetA(CopyPrint)", setA_tot, setA_bw, setA_clr),
                     ("KM-SetB(TotalDireto)", setB_tot, setB_bw, setB_clr),
                     ("KM-SetC(idx1)", setC_tot, setC_bw, setC_clr),
+                    ("KM-CounterTable", setD_tot, setD_bw, setD_clr),
                 ):
                     if _km_pair_closes(tot, bw, clr):
                         chosen_tot = max(tot, bw + clr)
@@ -932,6 +1012,7 @@ def _collect_pages_vendor_specific(
                     (max(setA_tot, setA_bw), setA_bw, "KM-SetA(CopyPrint)"),
                     (max(setB_tot, setB_bw), setB_bw, "KM-SetB(TotalDireto)"),
                     (max(setC_tot, setC_bw), setC_bw, "KM-SetC(idx1)"),
+                    (max(setD_tot, setD_bw), setD_bw, "KM-CounterTable"),
                     (pw_total, pw_bw, pw_src or "KM-PRINTWAYY"),
                 ):
                     if bw > best_bw:
@@ -1328,29 +1409,28 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Opt
     v_total, v_bw, v_color = _collect_pages_vendor_specific(
         ip, community, timeout, manufacturer, model=model,
     )
+    if not manufacturer and _looks_konica(manufacturer, model):
+        manufacturer = "Konica Minolta"
 
-    # ========= PASSO 4: 🥈 OIDs FIXOS RFC .1.1 / .1.2 / .1.3 (antigo, fallback retrocompatibilidade) =========
-    rfc_total = _parse_int(_snmp_get(ip, OID_PAGES_TOTAL, community, timeout)) or 0
-    rfc_pb    = _parse_int(_snmp_get(ip, OID_PAGES_BW,    community, timeout)) or 0
-    rfc_color = _parse_int(_snmp_get(ip, OID_PAGES_COLOR, community, timeout)) or 0
-
-    # ========= PASSO 4.5: 🏆 MÉTODO RFC 3805 OFICIAL (WALK TABELA por ColorantIndex) =========
-    #         Esse é o MÉTODO MAIS CONFIÁVEL! Não usa índices fixos.
-    #         Lê TODAS as linhas da prtMarkerTable, identifica cor por prtMarkerColorantIndex:
-    #           colorant=1 → Preto, colorant=2..32 → Cores CMY (soma como coloridas)
-    #         Funciona em KONICA MINOLTA bizhub C308/C368/C258/C287 etc que não respondem
-    #         corretamente aos OIDs RFC com índices fixos .1.2 / .1.3!
     rfc3805_total = 0
-    rfc3805_pb    = 0
+    rfc3805_pb = 0
     rfc3805_color = 0
-    rfc3805_ok    = False
-    try:
-        _rfc3805 = _collect_pages_printer_mib_rfc(ip, community, timeout)
-        if _rfc3805 and (_rfc3805[0] > 0 or _rfc3805[1] > 0 or _rfc3805[2] > 0):
-            rfc3805_total, rfc3805_pb, rfc3805_color = _rfc3805
-            rfc3805_ok = True
-    except Exception as exc:
-        logger.debug("collect_printer RFC3805 exc %s: %s", ip, exc)
+    rfc3805_ok = False
+    # Contador preto e colorido ja vieram da marca: nao dispara RFC nem walk.
+    if not (v_bw > 0 and v_color > 0):
+        # ========= PASSO 4: OIDs FIXOS RFC .1.1 / .1.2 / .1.3 =========
+        rfc_total = _parse_int(_snmp_get(ip, OID_PAGES_TOTAL, community, timeout)) or 0
+        rfc_pb    = _parse_int(_snmp_get(ip, OID_PAGES_BW,    community, timeout)) or 0
+        rfc_color = _parse_int(_snmp_get(ip, OID_PAGES_COLOR, community, timeout)) or 0
+
+        # ========= PASSO 4.5: RFC 3805 (walk por nome do colorante) =========
+        try:
+            _rfc3805 = _collect_pages_printer_mib_rfc(ip, community, timeout)
+            if _rfc3805 and (_rfc3805[0] > 0 or _rfc3805[1] > 0 or _rfc3805[2] > 0):
+                rfc3805_total, rfc3805_pb, rfc3805_color = _rfc3805
+                rfc3805_ok = True
+        except Exception as exc:
+            logger.debug("collect_printer RFC3805 exc %s: %s", ip, exc)
 
     # ========= PASSO 5: 🟣 Marker Table (preparação — rodaremos no bloco 3C) =========
     marker_pb = 0

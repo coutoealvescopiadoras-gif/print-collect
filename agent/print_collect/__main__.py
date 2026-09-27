@@ -161,7 +161,7 @@ def _pair_and_save(server_url: str, code: str, config_path: Path,
     print(f"[1/4] Contatando servidor: {server_url}")
     pairing = PairingClient(server_url.rstrip("/"))
     hostname = platform.node() or None
-    version = "6.9.14-contadores-reais-20260927"
+    version = "6.9.15-konica-trio-20260927"
     print(f"[2/4] Validando CÓDIGO DO CLIENTE: {code.upper()} (hostname: {hostname})")
     mode, result = pairing.exchange_smart(code=code, hostname=hostname, version=version)
 
@@ -254,14 +254,11 @@ def cmd_scan(args: argparse.Namespace, _return_list: bool = False) -> int | list
 
     from print_collect.collector import setup_logging
     from print_collect.config import default_log_file_path
-    from print_collect.km_color_fix import apply as apply_km_color_fix
     from print_collect.snmp import (
         collect_targets,
         discover_local_subnets,
         scan_subnet,
     )
-
-    apply_km_color_fix()
 
     # SEMPRE grava log em arquivo (mesmo em scan) para diagnosticar se tarefa agendada ou atalho tiver erro
     try:
@@ -278,7 +275,7 @@ def cmd_scan(args: argparse.Namespace, _return_list: bool = False) -> int | list
     # BANNER VERSAO (Validacao tecnico em campo!)
     # Atualizar SEMPRE que mudar logica de coleta / OIDs Konica / etc
     # ========================================================================
-    AGENT_VERSION_BANNER = "v6.9.14-CONTADORES-REAIS-20260927"
+    AGENT_VERSION_BANNER = "v6.9.15-KONICA-TRIO-20260927"
     try:
         W = 68
         print("=" * W)

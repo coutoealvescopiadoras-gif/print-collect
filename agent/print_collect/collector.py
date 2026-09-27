@@ -10,7 +10,6 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from print_collect.config import AgentConfig, load_config
-from print_collect.km_color_fix import apply as apply_km_color_fix
 from print_collect.sender import ApiSender
 from print_collect.snmp import collect_all
 from print_collect.usb import collect_all_usb
@@ -37,7 +36,6 @@ def setup_logging(log_file: str | None = None) -> None:
 
 
 def run_cycle(config: AgentConfig, sender: ApiSender) -> int:
-    apply_km_color_fix()
     snmp = config.snmp
 
     # ==============================================================
