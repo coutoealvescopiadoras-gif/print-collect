@@ -6673,6 +6673,41 @@ async def get_current_user_installer_optional(
     return user
 
 
+def _live_installer_meta(download_url: str) -> tuple[str | None, int | None]:
+    """Versão e tamanho reais do exe publicado.
+
+    O card do site lia só INSTALLER_VERSION / INSTALLER_FILE_SIZE_BYTES no Render.
+    Esses valores não mudam quando o PrintCollectSetup.exe é publicado na Vercel,
+    então a página ficava na versão antiga mesmo com o arquivo novo no ar.
+    """
+    version: str | None = None
+    size: int | None = None
+    try:
+        from urllib.parse import urlparse, urlunparse
+
+        parts = urlparse(download_url)
+        version_url = urlunparse(parts._replace(path="/setup-version.txt", query="", fragment=""))
+        req = urllib.request.Request(version_url, headers={"User-Agent": "print-collect", "Cache-Control": "no-cache"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw = resp.read().decode("utf-8-sig", errors="ignore").strip()
+            version = (raw.split("|")[0].strip() or None)
+    except Exception:
+        version = None
+    try:
+        req = urllib.request.Request(
+            download_url,
+            method="HEAD",
+            headers={"User-Agent": "print-collect", "Cache-Control": "no-cache"},
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            length = resp.headers.get("Content-Length")
+            if length and str(length).isdigit():
+                size = int(length)
+    except Exception:
+        size = None
+    return version, size
+
+
 @router.get("/installer/info")
 async def installer_info(
     current_user: User | None = Depends(get_current_user_installer_optional),
@@ -6689,8 +6724,9 @@ async def installer_info(
     #    FUNCIONA MESMO SEM SETUP.EXE LOCAL E SEM LOGIN!
     # ------------------------------------------------------------------
     if settings.installer_download_url:
-        _ver = settings.installer_version or "6.9.0"
-        _sz = int(settings.installer_file_size_bytes or 0)
+        _live_ver, _live_sz = _live_installer_meta(str(settings.installer_download_url))
+        _ver = _live_ver or settings.installer_version or "6.9.0"
+        _sz = int(_live_sz or settings.installer_file_size_bytes or 0)
         _sz_mb = round(_sz / (1024 * 1024), 2) if _sz > 0 else 0
         return {
             "available": True,
