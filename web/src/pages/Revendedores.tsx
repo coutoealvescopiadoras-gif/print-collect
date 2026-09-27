@@ -151,10 +151,10 @@ export default function Revendedores() {
           throw new Error("Formato de e-mail do administrador inválido.");
         }
         if (!adminPassword) {
-          throw new Error("Informe a senha do administrador (mínimo 6 caracteres).");
+          throw new Error("Informe a senha do administrador (mínimo 8 caracteres).");
         }
-        if (adminPassword.length < 6) {
-          throw new Error("Senha do administrador muito curta (mínimo 6 caracteres).");
+        if (adminPassword.length < 8) {
+          throw new Error("Senha do administrador muito curta (mínimo 8 caracteres).");
         }
         if (adminPassword !== adminConfirm) {
           throw new Error("As senhas do administrador não coincidem (campos Senha e Confirmar Senha).");
@@ -566,7 +566,7 @@ export default function Revendedores() {
                     <label>
                       Senha do administrador *{" "}
                       <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: 13 }}>
-                        (mínimo 6 caracteres)
+                        (mínimo 8 caracteres)
                       </span>
                     </label>
                     <div style={{ display: "flex", gap: "0.5rem", alignItems: "stretch" }}>

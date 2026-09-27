@@ -93,8 +93,8 @@ export default function Layout() {
       setSaving(false);
       return;
     }
-    if (passwordForm.new.length < 6) {
-      setError("Nova senha deve ter pelo menos 6 caracteres");
+    if (passwordForm.new.length < 8) {
+      setError("Nova senha deve ter pelo menos 8 caracteres");
       setSaving(false);
       return;
     }

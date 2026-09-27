@@ -265,8 +265,8 @@ export default function Usuarios() {
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedUser) return;
-    if (resetPassword.length < 6) {
-      setResetError("A nova senha deve ter pelo menos 6 caracteres.");
+    if (resetPassword.length < 8) {
+      setResetError("A nova senha deve ter pelo menos 8 caracteres.");
       return;
     }
     try {
@@ -426,7 +426,7 @@ export default function Usuarios() {
               {editMode === "create" && (
                 <div className="form-group">
                   <label>Senha * (mínimo 6 caracteres)</label>
-                  <input required type="password" minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+                  <input required type="password" minLength={8} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
                 </div>
               )}
               <div className="form-group">
@@ -538,7 +538,7 @@ export default function Usuarios() {
                 <input
                   required
                   type="password"
-                  minLength={6}
+                  minLength={8}
                   value={resetPassword}
                   onChange={(e) => setResetPassword(e.target.value)}
                 />

@@ -214,11 +214,20 @@ def create_app() -> FastAPI:
         version="0.1.0",
     )
 
-    origins = [o.strip() for o in settings.cors_origins.split(",")]
+    origins = []
+    for origin in settings.cors_origins.split(","):
+        item = origin.strip()
+        low = item.lower()
+        if not item or "vercel.app" in low or "onrender.com" in low:
+            continue
+        origins.append(item)
+    origin_regex = settings.cors_origin_regex
+    if any(token in origin_regex for token in ("vercel.app", "onrender.com", "192.168", "10(?:")):
+        origin_regex = r"^https://(www\.)?printcollect\.com\.br$|^http://(localhost|127\.0\.0\.1)(:\d+)?$"
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_origin_regex=settings.cors_origin_regex,
+        allow_origin_regex=origin_regex,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

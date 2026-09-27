@@ -7,6 +7,7 @@ import secrets
 import asyncio
 import io
 import os
+import time
 import csv
 import zipfile
 import json
@@ -76,7 +77,11 @@ router = APIRouter(prefix="/api", tags=["api"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/token")
 SECRET_KEY = settings.secret_key
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 43200
+ACCESS_TOKEN_EXPIRE_MINUTES = 1440
+MIN_PASSWORD_LENGTH = 8
+_LOGIN_WINDOW_SEC = 15 * 60
+_LOGIN_MAX_FAILS = 8
+_LOGIN_FAILS: dict[str, list[float]] = {}
 ROLE_SUPERADMIN = "superadmin"
 ROLE_PARTNER_ADMIN = "partner_admin"
 ROLE_PARTNER_STAFF = "partner_staff"
@@ -505,16 +510,48 @@ def _is_expired(dt: datetime | None) -> bool:
     return val < _now()
 
 
+def _login_client_key(request: Request, email: str) -> str:
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    ip = forwarded or (request.client.host if request.client else "")
+    return f"{ip}|{email}"
+
+
+def _login_is_blocked(key: str) -> bool:
+    now = time.monotonic()
+    recent = [stamp for stamp in _LOGIN_FAILS.get(key, []) if now - stamp < _LOGIN_WINDOW_SEC]
+    _LOGIN_FAILS[key] = recent
+    return len(recent) >= _LOGIN_MAX_FAILS
+
+
+def _login_mark_failure(key: str) -> None:
+    now = time.monotonic()
+    recent = [stamp for stamp in _LOGIN_FAILS.get(key, []) if now - stamp < _LOGIN_WINDOW_SEC]
+    recent.append(now)
+    _LOGIN_FAILS[key] = recent
+
+
 @router.post("/token", response_model=Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+async def login_for_access_token(
+    request: Request,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db),
+):
     login_email = (form_data.username or "").strip().lower()
+    login_key = _login_client_key(request, login_email)
+    if _login_is_blocked(login_key):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Muitas tentativas. Espere 15 minutos e tente de novo.",
+        )
     user = authenticate_user(db, login_email, form_data.password)
     if not user:
+        _login_mark_failure(login_key)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="E-mail ou senha incorretos",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    _LOGIN_FAILS.pop(login_key, None)
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
@@ -540,6 +577,7 @@ def reset_julio_admin(
     🔥 05/09 BONUS: Tambem REATIVA VIA RAW SQL FORCADO todas impressoras cliente_id=2 (Julio)
     que estejam ignored=TRUE (soft-deleted). Resolve bug "exclui impressora, reinstalei, nao aparece".
     """
+    raise HTTPException(status_code=404, detail="Nao encontrado")
     # --------------------
     # SEGURANCA 06/09 Julio: Bloqueia em producao se nao houver permissao explicita
     # --------------------
@@ -637,6 +675,7 @@ def debug_create_julio_printer_temp(
       a MENOS que voce SETE ENV VAR `ALLOW_ADMIN_ENDPOINTS_PROD=true` no Render.
     - NO LOCALHOST (sqlite dev): Sempre LIBERADO (como antes!)
     """
+    raise HTTPException(status_code=404, detail="Nao encontrado")
     # --------------------
     # SEGURANCA 06/09 Julio: Bloqueia em producao se nao houver permissao explicita
     # --------------------
@@ -759,8 +798,8 @@ def change_own_password(
 ):
     if not verify_password(payload.current_password, current_user.hashed_password):
         raise HTTPException(status_code=400, detail="Senha atual incorreta")
-    if len(payload.new_password) < 6:
-        raise HTTPException(status_code=400, detail="A nova senha deve ter pelo menos 6 caracteres")
+    if len(payload.new_password) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(status_code=400, detail="A nova senha deve ter pelo menos 8 caracteres")
 
     current_user.hashed_password = hash_password(payload.new_password)
     db.commit()
@@ -784,6 +823,8 @@ def list_users(db: Session = Depends(get_db), current_user: User = Depends(get_c
 def create_user(payload: UserCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)):
     if not _can_manage_resources(current_user):
         raise HTTPException(status_code=403, detail="Sem permissão para criar usuários")
+    if len(payload.password or "") < MIN_PASSWORD_LENGTH:
+        raise HTTPException(status_code=400, detail="A senha deve ter pelo menos 8 caracteres")
 
     role = (payload.role or ROLE_CLIENT_VIEWER).strip().lower()
     if role not in VALID_ROLES:
@@ -944,7 +985,10 @@ def update_user(
     if "password" in updates:
         if not _is_superadmin(current_user):
             raise HTTPException(status_code=403, detail="Somente superadmin pode redefinir a senha de outro usuário")
-        user.hashed_password = hash_password(str(updates.pop("password")))
+        new_password = str(updates.pop("password"))
+        if len(new_password) < MIN_PASSWORD_LENGTH:
+            raise HTTPException(status_code=400, detail="A senha deve ter pelo menos 8 caracteres")
+        user.hashed_password = hash_password(new_password)
 
     # Julio 05/09: Campo active (ativar/desativar usuário) — SÓ superadmin OU revendedor admin pode mexer
     if "active" in updates:
@@ -1062,8 +1106,8 @@ def create_partner(payload: PartnerCreate, db: Session = Depends(get_db), curren
         raise HTTPException(status_code=400, detail="E-mail do administrador é obrigatório.")
     if not admin_password_raw:
         raise HTTPException(status_code=400, detail="Senha do administrador é obrigatória.")
-    if len(admin_password_raw) < 6:
-        raise HTTPException(status_code=400, detail="Senha do administrador deve ter pelo menos 6 caracteres.")
+    if len(admin_password_raw) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(status_code=400, detail="Senha do administrador deve ter pelo menos 8 caracteres.")
 
     # Monta dados do Partner (ignora os campos admin_* que nao existem na tabela partners)
     partner_data = payload.model_dump(exclude={"admin_email", "admin_password"})
