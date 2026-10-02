@@ -60,6 +60,12 @@ _KM_ALT_C_PRINT_BW   = "1.3.6.1.4.1.18334.1.1.1.5.1.2.1"
 _KM_ALT_C_COPY_CLR   = "1.3.6.1.4.1.18334.1.1.1.5.2.1.1"
 _KM_ALT_C_PRINT_CLR  = "1.3.6.1.4.1.18334.1.1.1.5.2.2.1"
 _KM_ALT_C_TOTAL      = "1.3.6.1.4.1.18334.1.1.1.5.7.2.1.1.1"
+# bizhub C368 (e a familia bizhub C): MIB privada, copia + impressao.
+# preto = copia preto + impressao preto; cor = copia cor + impressao cor.
+_OID_KM_C368_COPY_BW   = "1.3.6.1.4.1.18334.1.1.1.5.7.2.2.1.5.1.1"
+_OID_KM_C368_PRINT_BW  = "1.3.6.1.4.1.18334.1.1.1.5.7.2.2.1.5.1.2"
+_OID_KM_C368_COPY_CLR  = "1.3.6.1.4.1.18334.1.1.1.5.7.2.2.1.5.2.1"
+_OID_KM_C368_PRINT_CLR = "1.3.6.1.4.1.18334.1.1.1.5.7.2.2.1.5.2.2"
 
 # Xerox (PEN 253) - Tier A - escalares diretos
 _OID_XEROX_TOTAL = "1.3.6.1.4.1.253.8.53.13.2.1.6.1.20.1"
@@ -679,6 +685,27 @@ def _collect_pages_vendor_specific(
                     if v > 0:
                         return v
                 return 0
+
+            # C368: cinco OIDs privados. Se preto e cor fecharem o geral, para aqui.
+            c368_bw = (
+                (_parse_int(_snmp_get(ip, _OID_KM_C368_COPY_BW, community, timeout)) or 0)
+                + (_parse_int(_snmp_get(ip, _OID_KM_C368_PRINT_BW, community, timeout)) or 0)
+            )
+            c368_clr = (
+                (_parse_int(_snmp_get(ip, _OID_KM_C368_COPY_CLR, community, timeout)) or 0)
+                + (_parse_int(_snmp_get(ip, _OID_KM_C368_PRINT_CLR, community, timeout)) or 0)
+            )
+            c368_tot = _parse_int(_snmp_get(ip, _OID_KM_TOTAL, community, timeout)) or 0
+            c368_soma = c368_bw + c368_clr
+            c368_base = c368_tot if c368_tot > 0 else c368_soma
+            if c368_bw > 0 and c368_clr > 0 and c368_base > 0 and (
+                c368_soma == c368_base or (c368_base * 0.995 <= c368_soma <= c368_base * 1.005)
+            ):
+                logger.warning(
+                    "[DIAG KONICA C368] IP=%s tot=%s bw=%s clr=%s soma=%s",
+                    ip, c368_tot, c368_bw, c368_clr, c368_soma,
+                )
+                return (c368_base, c368_bw, c368_clr)
 
             # =====================================================================
             # PATCH 7 (21/09 17h): ÁRVORE NOVA PRINTWAYY OFICIAL - EXTRAÍDA DE DLL .NET PAGO

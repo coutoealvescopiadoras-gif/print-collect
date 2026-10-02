@@ -159,7 +159,7 @@ if ($LASTEXITCODE -ne 0) { Write-Warn "  (aviso) Falha no upgrade pip, mas tenta
 Write-Step 2 "Instalando dependencias do agente no .venv-x86"
 Push-Location $AgentDir
 try {
-    & $PipVenv install --disable-pip-version-check --retries 5 --timeout 300 --progress-bar off -r (Join-Path $AgentDir "requirements.txt")
+    & $PythonVenv -m pip install --disable-pip-version-check --retries 5 --timeout 300 --progress-bar off -r (Join-Path $AgentDir "requirements.txt")
     if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar requirements.txt (x86)" }
 } finally {
     Pop-Location
@@ -176,13 +176,13 @@ Write-Host "  (setuptools>=84 removeu pkg_resources que PyInstaller 5.13.2 preci
 Write-Host "  (Se dentro da .venv-x86 tiver versoes erradas, --force-reinstall corrige TUDO...)"
 Push-Location $AgentDir
 try {
-    & $PipVenv install --disable-pip-version-check --retries 5 --timeout 300 --progress-bar off --force-reinstall --no-cache-dir "setuptools==69.5.1" "pyinstaller==5.13.2" "pyinstaller-hooks-contrib==2023.8"
+    & $PythonVenv -m pip install --disable-pip-version-check --retries 5 --timeout 300 --progress-bar off --force-reinstall --no-cache-dir "setuptools==69.5.1" "pyinstaller==5.13.2" "pyinstaller-hooks-contrib==2023.8"
     if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar PyInstaller 5.13.2 + setuptools 69.5.1 (x86)" }
 } finally {
     Pop-Location
 }
 # Verifica pós-instalação
-$postVer = & $PyInstaller --version 2>$null
+$postVer = & $PythonVenv -m PyInstaller --version 2>$null
 if ($LASTEXITCODE -ne 0 -or -not $postVer) { throw "PyInstaller (x86) nao responde apos instalacao" }
 if ($postVer -ne "5.13.2") {
     throw "PyInstaller na .venv-x86 ficou com VERSAO ERRADA: $postVer ! Esperava EXATAMENTE 5.13.2. Abortando build para NAO quebrar SNMP."
@@ -200,7 +200,7 @@ if (-not (Test-Path $SpecFile)) { throw "Spec file nao encontrado: $SpecFile" }
 
 Push-Location $AgentDir
 try {
-    & $PyInstaller --noconfirm --clean --log-level INFO (Resolve-Path $SpecFile)
+    & $PythonVenv -m PyInstaller --noconfirm --clean --log-level INFO (Resolve-Path $SpecFile)
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller (x86) retornou erro $LASTEXITCODE" }
 } finally {
     Pop-Location
@@ -220,7 +220,7 @@ if (-not (Test-Path $WizardPy)) { throw "WizardPareamento.py nao encontrado em: 
 
 Push-Location $AgentDir
 try {
-    & $PyInstaller --noconfirm --clean --onefile --console --name "WizardPareamento" $WizardPy
+    & $PythonVenv -m PyInstaller --noconfirm --clean --onefile --console --name "WizardPareamento" $WizardPy
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller WizardPareamento (x86) retornou erro $LASTEXITCODE" }
 } finally {
     Pop-Location
@@ -239,7 +239,7 @@ if (-not (Test-Path $SearchPy)) { throw "SearchPrinters.py nao encontrado em: $S
 
 Push-Location $AgentDir
 try {
-    & $PyInstaller --noconfirm --clean --onefile --console --name "SearchPrinters" $SearchPy
+    & $PythonVenv -m PyInstaller --noconfirm --clean --onefile --console --name "SearchPrinters" $SearchPy
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller SearchPrinters (x86) retornou erro $LASTEXITCODE" }
 } finally {
     Pop-Location
