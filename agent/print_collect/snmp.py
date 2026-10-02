@@ -687,14 +687,12 @@ def _collect_pages_vendor_specific(
                 return 0
 
             # C368: cinco OIDs privados. Se preto e cor fecharem o geral, para aqui.
-            c368_bw = (
-                (_parse_int(_snmp_get(ip, _OID_KM_C368_COPY_BW, community, timeout)) or 0)
-                + (_parse_int(_snmp_get(ip, _OID_KM_C368_PRINT_BW, community, timeout)) or 0)
-            )
-            c368_clr = (
-                (_parse_int(_snmp_get(ip, _OID_KM_C368_COPY_CLR, community, timeout)) or 0)
-                + (_parse_int(_snmp_get(ip, _OID_KM_C368_PRINT_CLR, community, timeout)) or 0)
-            )
+            c368_copy_bw = _parse_int(_snmp_get(ip, _OID_KM_C368_COPY_BW, community, timeout)) or 0
+            c368_print_bw = _parse_int(_snmp_get(ip, _OID_KM_C368_PRINT_BW, community, timeout)) or 0
+            c368_copy_clr = _parse_int(_snmp_get(ip, _OID_KM_C368_COPY_CLR, community, timeout)) or 0
+            c368_print_clr = _parse_int(_snmp_get(ip, _OID_KM_C368_PRINT_CLR, community, timeout)) or 0
+            c368_bw = c368_copy_bw + c368_print_bw
+            c368_clr = c368_copy_clr + c368_print_clr
             c368_tot = _parse_int(_snmp_get(ip, _OID_KM_TOTAL, community, timeout)) or 0
             c368_soma = c368_bw + c368_clr
             c368_base = c368_tot if c368_tot > 0 else c368_soma
@@ -706,6 +704,14 @@ def _collect_pages_vendor_specific(
                     ip, c368_tot, c368_bw, c368_clr, c368_soma,
                 )
                 return (c368_base, c368_bw, c368_clr)
+            # 364 e outras so preto e branco: cor zero. Geral = copia preto + impressao preto.
+            if c368_clr <= 0 and c368_copy_bw > 0 and c368_print_bw > 0:
+                mono = c368_copy_bw + c368_print_bw
+                logger.warning(
+                    "[DIAG KONICA MONO] IP=%s copia=%s impressao=%s geral=%s",
+                    ip, c368_copy_bw, c368_print_bw, mono,
+                )
+                return (mono, mono, 0)
 
             # =====================================================================
             # PATCH 7 (21/09 17h): ÁRVORE NOVA PRINTWAYY OFICIAL - EXTRAÍDA DE DLL .NET PAGO

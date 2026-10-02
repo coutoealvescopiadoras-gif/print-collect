@@ -161,7 +161,7 @@ def _pair_and_save(server_url: str, code: str, config_path: Path,
     print(f"[1/4] Contatando servidor: {server_url}")
     pairing = PairingClient(server_url.rstrip("/"))
     hostname = platform.node() or None
-    version = "6.9.16-konica-c368-20261001"
+    version = "6.9.17-konica-364-20261001"
     print(f"[2/4] Validando CÓDIGO DO CLIENTE: {code.upper()} (hostname: {hostname})")
     mode, result = pairing.exchange_smart(code=code, hostname=hostname, version=version)
 
@@ -275,7 +275,7 @@ def cmd_scan(args: argparse.Namespace, _return_list: bool = False) -> int | list
     # BANNER VERSAO (Validacao tecnico em campo!)
     # Atualizar SEMPRE que mudar logica de coleta / OIDs Konica / etc
     # ========================================================================
-    AGENT_VERSION_BANNER = "v6.9.16-KONICA-C368-20261001"
+    AGENT_VERSION_BANNER = "v6.9.17-KONICA-364-20261001"
     try:
         W = 68
         print("=" * W)

@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "6.9.16-konica-c368-20261001"
+  #define MyAppVersion "6.9.17-konica-364-20261001"
 #endif
 
 #define MyAppName "Print Collect Agent"

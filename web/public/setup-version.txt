@@ -1,1 +1,1 @@
-6.9.16-konica-c368-20261001 | 2026-10-01 23:21 | C368 geral, preto e cor pelos OIDs privados
+6.9.17-konica-364-20261001 | 2026-10-01 23:47 | 364 geral = copia preto + impressao preto; C368 permanece
