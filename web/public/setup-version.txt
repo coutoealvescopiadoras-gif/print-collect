@@ -1,1 +1,1 @@
-6.9.15-konica-trio-20260927 | 2026-09-27 11:50 | trio Konica encerra em 3 consultas
+6.9.16-konica-c368-20261001 | 2026-10-01 23:21 | C368 geral, preto e cor pelos OIDs privados
