@@ -3000,6 +3000,14 @@ def _get_agent(x_agent_token: str, db: Session) -> Agent:
 #   2) 🟢 SOMENTE SE pages_color >= 1:
 #          → AÍ SIM checamos has_color_toners OR has_color_pages.
 # -----------------------------------------------------------------------------
+def _trio_contador_fecha(total: int, bw: int, color: int) -> bool:
+    """Preto + cor fecham o geral. A folga de 0,5% cobre fax e 2 cores."""
+    if total <= 0 or bw <= 0 or color <= 0:
+        return False
+    soma = bw + color
+    return soma == total or (total * 0.995 <= soma <= total * 1.005)
+
+
 def _is_color_printer_real(printer) -> bool:
     """Retorna True se a impressora é REALMENTE colorida.
 
@@ -5337,6 +5345,13 @@ async def agent_report(
                                 _new_bw = _new_total
                                 _new_color = 0
 
+                        # Colorida: o preto antigo pode ser o geral gravado por engano.
+                        # Se a leitura nova fecha, ela substitui mesmo sendo menor.
+                        if (not _pb_confirmed) and _trio_contador_fecha(_new_total, _new_bw, _new_color):
+                            _saved_total = _new_total
+                            _saved_bw = _new_bw
+                            _saved_color = _new_color
+
                         _mono_total = max(_new_total, _saved_total)
                         _mono_bw    = max(_new_bw,    _saved_bw)
                         _mono_color = max(_new_color, _saved_color)
@@ -5539,7 +5554,8 @@ async def agent_report(
                             # ==============================================
                             _soma_real = cur_bw + cur_color
                             if _soma_real > 0 and cur_total != _soma_real:
-                                printer.pages_total = _soma_real
+                                if cur_total <= 0 or _soma_real > cur_total * 1.005:
+                                    printer.pages_total = _soma_real
                     except Exception:
                         pass
                 # FIM normalizacao protegido
@@ -6216,9 +6232,22 @@ async def agent_report(
                                 _saved_t = int((_row or {}).get("pages_total") or 0)
                                 _saved_b = int((_row or {}).get("pages_bw") or 0)
                                 _saved_c = int((_row or {}).get("pages_color") or 0)
-                                _final_t = max(_rpt, _saved_t)
-                                _final_b = max(_rpb, _saved_b)
-                                _final_c = max(_rpc, _saved_c)
+                                if _trio_contador_fecha(_rpt, _rpb, _rpc):
+                                    _final_t = _rpt
+                                    _final_b = _rpb
+                                    _final_c = _rpc
+                                    _sql_contadores = (
+                                        "pages_total=:pt, pages_bw=:pb, pages_color=:pc"
+                                    )
+                                else:
+                                    _final_t = max(_rpt, _saved_t)
+                                    _final_b = max(_rpb, _saved_b)
+                                    _final_c = max(_rpc, _saved_c)
+                                    _sql_contadores = (
+                                        "pages_total=GREATEST(COALESCE(pages_total,0), :pt), "
+                                        "pages_bw=GREATEST(COALESCE(pages_bw,0), :pb), "
+                                        "pages_color=GREATEST(COALESCE(pages_color,0), :pc)"
+                                    )
                                 if not _rma or _rma == "":
                                     _rma = None
                                 if not _rmo or _rmo == "":
@@ -6248,15 +6277,13 @@ async def agent_report(
                                 else:
                                     _printer_id = int(_row["id"])
                                     _conn.execute(
-                                        _rtxt("""
+                                        _rtxt(f"""
                                             UPDATE printers SET ip_address=:ip,
                                             serial_number=COALESCE(:sn, serial_number),
                                             model=COALESCE(:model, model),
                                             manufacturer=COALESCE(:manu, manufacturer),
                                             status=:st,
-                                            pages_total=GREATEST(COALESCE(pages_total,0), :pt),
-                                            pages_bw=GREATEST(COALESCE(pages_bw,0), :pb),
-                                            pages_color=GREATEST(COALESCE(pages_color,0), :pc),
+                                            {_sql_contadores},
                                             toner_black=:tb, toner_cyan=:tc, toner_magenta=:tm, toner_yellow=:ty,
                                             last_seen=:ls, updated_at=:ua
                                             WHERE id=:pid
@@ -6345,18 +6372,23 @@ async def agent_report(
                             _p2.model = _rmo or _p2.model
                             _p2.manufacturer = _rma or _p2.manufacturer
                             _p2.status = _rst
-                            try:
-                                if _rpt and _rpt > int(_p2.pages_total or 0):
-                                    _p2.pages_total = _rpt
-                            except Exception: pass
-                            try:
-                                if _rpb and _rpb > int(_p2.pages_bw or 0):
-                                    _p2.pages_bw = _rpb
-                            except Exception: pass
-                            try:
-                                if _rpc and _rpc > int(_p2.pages_color or 0):
-                                    _p2.pages_color = _rpc
-                            except Exception: pass
+                            if _trio_contador_fecha(_rpt, _rpb, _rpc):
+                                _p2.pages_total = _rpt
+                                _p2.pages_bw = _rpb
+                                _p2.pages_color = _rpc
+                            else:
+                                try:
+                                    if _rpt and _rpt > int(_p2.pages_total or 0):
+                                        _p2.pages_total = _rpt
+                                except Exception: pass
+                                try:
+                                    if _rpb and _rpb > int(_p2.pages_bw or 0):
+                                        _p2.pages_bw = _rpb
+                                except Exception: pass
+                                try:
+                                    if _rpc and _rpc > int(_p2.pages_color or 0):
+                                        _p2.pages_color = _rpc
+                                except Exception: pass
                             _p2.toner_black = _rtb
                             _p2.toner_cyan = _rtc
                             _p2.toner_magenta = _rtm
