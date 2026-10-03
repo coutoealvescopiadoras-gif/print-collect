@@ -196,10 +196,53 @@ def seed_demo_data() -> None:
         db.close()
 
 
+def _corrigir_contador_papelaria_c308() -> None:
+    """Coleta de 02/10/2026 10:20 ja veio certa. O site segurou o geral no preto."""
+    from app.database import Printer, Reading, SessionLocal
+
+    serial = "A7PY012000472"
+    bw, color, total = 159483, 270558, 430068
+    db = SessionLocal()
+    try:
+        printer = db.query(Printer).filter(Printer.serial_number.ilike(serial)).first()
+        if printer is None:
+            return
+        atual_bw = int(printer.pages_bw or 0)
+        atual_color = int(printer.pages_color or 0)
+        atual_total = int(printer.pages_total or 0)
+        if atual_bw == bw and atual_color == color and atual_total == total:
+            return
+        if atual_color <= 0 or (atual_bw + atual_color) <= int(total * 1.2):
+            return
+        printer.pages_bw = bw
+        printer.pages_color = color
+        printer.pages_total = total
+        ultima = (
+            db.query(Reading)
+            .filter(Reading.printer_id == printer.id)
+            .order_by(Reading.collected_at.desc(), Reading.id.desc())
+            .first()
+        )
+        if ultima is not None:
+            ultima.pages_bw = bw
+            ultima.pages_color = color
+            ultima.pages_total = total
+        db.commit()
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        print("[WARN] correcao papelaria C308:", repr(exc), file=sys.stderr)
+    finally:
+        db.close()
+
+
 def _safe_init_db() -> None:
     try:
         init_db()
         seed_demo_data()
+        _corrigir_contador_papelaria_c308()
     except Exception as e:
         import traceback
         import sys
