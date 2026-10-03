@@ -88,6 +88,7 @@ class Printer(Base):
     pages_total = Column(Integer, default=0)
     pages_bw = Column(Integer, default=0)
     pages_color = Column(Integer, default=0)
+    counter_detail = Column(Text, nullable=True)
     toner_black = Column(Float, nullable=True)
     toner_cyan = Column(Float, nullable=True)
     toner_magenta = Column(Float, nullable=True)
@@ -450,6 +451,10 @@ def _ensure_printer_manual_delete_columns(target_engine) -> None:
     if "mac_address" not in existing_columns:
         statements.append(
             "ALTER TABLE printers ADD COLUMN IF NOT EXISTS mac_address VARCHAR(20) NULL"
+        )
+    if "counter_detail" not in existing_columns:
+        statements.append(
+            "ALTER TABLE printers ADD COLUMN IF NOT EXISTS counter_detail TEXT NULL"
         )
     if not statements:
         # Apenas garantir o indice da coluna ignored

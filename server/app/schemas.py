@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from typing import Optional, Any
 
@@ -226,6 +227,7 @@ class PrinterOut(PrinterBase):
     toner_cyan: Optional[float] = None
     toner_magenta: Optional[float] = None
     toner_yellow: Optional[float] = None
+    counter_detail: Optional[dict] = None
     last_seen: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
@@ -238,6 +240,21 @@ class PrinterOut(PrinterBase):
     location_sector: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+    @field_validator("counter_detail", mode="before")
+    @classmethod
+    def _v_counter_detail(cls, value: Any) -> Optional[dict]:
+        if value is None or value == "":
+            return None
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            try:
+                data = json.loads(value)
+            except Exception:
+                return None
+            return data if isinstance(data, dict) else None
+        return None
 
 
 class ReadingOut(BaseModel):
@@ -359,6 +376,7 @@ class PrinterReading(BaseModel):
     toner_magenta: Optional[float] = None
     toner_yellow: Optional[float] = None
     alerts: list[str] = Field(default_factory=list)
+    counter_detail: Optional[dict] = None
 
     @field_validator("ip_address", mode="before")
     @classmethod

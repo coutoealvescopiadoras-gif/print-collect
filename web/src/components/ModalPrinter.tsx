@@ -400,6 +400,7 @@ function ContadoresPrinter({ printer }: { printer: Printer }) {
 
   if (!isColor) {
     return (
+      <div>
       <div
         style={{
           display: "grid",
@@ -423,10 +424,13 @@ function ContadoresPrinter({ printer }: { printer: Printer }) {
           <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginTop: 6 }}>Páginas</div>
         </div>
       </div>
+      <DetalheContadores printer={printer} />
+      </div>
     );
   }
 
   return (
+    <div>
     <div
       style={{
         display: "grid",
@@ -446,6 +450,63 @@ function ContadoresPrinter({ printer }: { printer: Printer }) {
         }
       />
       <CardCounter label="Total Geral" value={formatNumberBrasil(total)} accent="#0f172a" sub={"PEB + Coloridas"} />
+    </div>
+    <DetalheContadores printer={printer} />
+    </div>
+  );
+}
+
+function DetalheContadores({ printer }: { printer: Printer }) {
+  const [aberto, setAberto] = useState(false);
+  const detalhe = printer.counter_detail;
+  if (!detalhe) return null;
+  const copiaPb = Number(detalhe.copia_pb || 0);
+  const impressaoPb = Number(detalhe.impressao_pb || 0);
+  const copiaCor = Number(detalhe.copia_cor || 0);
+  const impressaoCor = Number(detalhe.impressao_cor || 0);
+  const geral = Number(detalhe.geral || 0);
+  const outras = geral - (copiaPb + impressaoPb + copiaCor + impressaoCor);
+  const linhas: Array<[string, number]> = [
+    ["Geral", geral],
+    ["Cópia P&B", copiaPb],
+    ["Impressão P&B", impressaoPb],
+  ];
+  if (copiaCor > 0 || impressaoCor > 0) {
+    linhas.push(["Cópia cor", copiaCor], ["Impressão cor", impressaoCor]);
+  }
+  if (outras > 0) {
+    linhas.push(["Fax e 2 cores", outras]);
+  }
+  return (
+    <div style={{ marginTop: 12 }}>
+      <button
+        type="button"
+        onClick={() => setAberto((valor) => !valor)}
+        style={{
+          border: "1px solid var(--border)",
+          background: "var(--surface)",
+          borderRadius: 8,
+          padding: "0.45rem 0.75rem",
+          cursor: "pointer",
+          fontWeight: 600,
+        }}
+      >
+        {aberto ? "Fechar detalhe" : "Abrir detalhe"}
+      </button>
+      {aberto && (
+        <table style={{ width: "100%", marginTop: 10, borderCollapse: "collapse" }}>
+          <tbody>
+            {linhas.map(([nome, valor]) => (
+              <tr key={nome} style={{ borderTop: "1px solid var(--border)" }}>
+                <td style={{ padding: "0.45rem 0", color: "var(--text-muted)" }}>{nome}</td>
+                <td style={{ padding: "0.45rem 0", textAlign: "right", fontWeight: 700 }}>
+                  {formatNumberBrasil(valor)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

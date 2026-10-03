@@ -3008,6 +3008,40 @@ def _trio_contador_fecha(total: int, bw: int, color: int) -> bool:
     return soma == total or (total * 0.995 <= soma <= total * 1.005)
 
 
+def _detalhe_contador_json(raw, bw: int, color: int) -> Optional[str]:
+    """Guarda copia e impressao so quando a soma bate com os 3 cards."""
+    if not isinstance(raw, dict):
+        return None
+
+    def _n(key: str) -> int:
+        try:
+            value = int(raw.get(key) or 0)
+            return value if value >= 0 else 0
+        except Exception:
+            return 0
+
+    copia_pb = _n("copia_pb")
+    impressao_pb = _n("impressao_pb")
+    copia_cor = _n("copia_cor")
+    impressao_cor = _n("impressao_cor")
+    if copia_pb + impressao_pb != int(bw):
+        return None
+    if copia_cor + impressao_cor != int(color):
+        return None
+    if copia_pb <= 0 and impressao_pb <= 0:
+        return None
+    return json.dumps(
+        {
+            "geral": _n("geral"),
+            "copia_pb": copia_pb,
+            "impressao_pb": impressao_pb,
+            "copia_cor": copia_cor,
+            "impressao_cor": impressao_cor,
+        },
+        separators=(",", ":"),
+    )
+
+
 def _is_color_printer_real(printer) -> bool:
     """Retorna True se a impressora é REALMENTE colorida.
 
@@ -5376,6 +5410,13 @@ async def agent_report(
                             reading.pages_total = _mono_total
                             reading.pages_bw    = _mono_bw
                             reading.pages_color = _mono_color
+                        _detalhe_json = _detalhe_contador_json(
+                            getattr(reading, "counter_detail", None),
+                            _mono_bw,
+                            _mono_color,
+                        )
+                        if _detalhe_json:
+                            printer.counter_detail = _detalhe_json
                     except Exception:
                         # Qualquer falha = NÃO MEXE EM NADA (evita piorar a situação)
                         pass

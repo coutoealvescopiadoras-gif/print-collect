@@ -25,6 +25,13 @@ export interface Printer {
   pages_total: number;
   pages_bw: number;
   pages_color: number;
+  counter_detail?: {
+    geral?: number;
+    copia_pb?: number;
+    impressao_pb?: number;
+    copia_cor?: number;
+    impressao_cor?: number;
+  } | null;
   toner_black: number | null;
   toner_cyan: number | null;
   toner_magenta: number | null;

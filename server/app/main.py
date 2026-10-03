@@ -198,10 +198,22 @@ def seed_demo_data() -> None:
 
 def _corrigir_contador_papelaria_c308() -> None:
     """Coleta de 02/10/2026 10:20 ja veio certa. O site segurou o geral no preto."""
+    import json
     from app.database import Printer, Reading, SessionLocal
 
     serial = "A7PY012000472"
     bw, color, total = 159483, 270558, 430068
+    # Divisao do painel do mesmo dia. A soma fecha os 3 cards.
+    detalhe = json.dumps(
+        {
+            "geral": total,
+            "copia_pb": 59039,
+            "impressao_pb": 100444,
+            "copia_cor": 66035,
+            "impressao_cor": 204523,
+        },
+        separators=(",", ":"),
+    )
     db = SessionLocal()
     try:
         printer = db.query(Printer).filter(Printer.serial_number.ilike(serial)).first()
@@ -210,24 +222,29 @@ def _corrigir_contador_papelaria_c308() -> None:
         atual_bw = int(printer.pages_bw or 0)
         atual_color = int(printer.pages_color or 0)
         atual_total = int(printer.pages_total or 0)
-        if atual_bw == bw and atual_color == color and atual_total == total:
-            return
-        if atual_color <= 0 or (atual_bw + atual_color) <= int(total * 1.2):
-            return
-        printer.pages_bw = bw
-        printer.pages_color = color
-        printer.pages_total = total
-        ultima = (
-            db.query(Reading)
-            .filter(Reading.printer_id == printer.id)
-            .order_by(Reading.collected_at.desc(), Reading.id.desc())
-            .first()
-        )
-        if ultima is not None:
-            ultima.pages_bw = bw
-            ultima.pages_color = color
-            ultima.pages_total = total
-        db.commit()
+        mudou = False
+        if not (atual_bw == bw and atual_color == color and atual_total == total):
+            if atual_color > 0 and (atual_bw + atual_color) > int(total * 1.2):
+                printer.pages_bw = bw
+                printer.pages_color = color
+                printer.pages_total = total
+                ultima = (
+                    db.query(Reading)
+                    .filter(Reading.printer_id == printer.id)
+                    .order_by(Reading.collected_at.desc(), Reading.id.desc())
+                    .first()
+                )
+                if ultima is not None:
+                    ultima.pages_bw = bw
+                    ultima.pages_color = color
+                    ultima.pages_total = total
+                mudou = True
+        if int(printer.pages_bw or 0) == bw and int(printer.pages_color or 0) == color:
+            if (getattr(printer, "counter_detail", None) or "") != detalhe:
+                printer.counter_detail = detalhe
+                mudou = True
+        if mudou:
+            db.commit()
     except Exception as exc:
         try:
             db.rollback()
@@ -256,6 +273,10 @@ def create_app() -> FastAPI:
         description="API para coleta e gestão de impressoras alugadas",
         version="0.1.0",
     )
+
+    @app.on_event("startup")
+    def _startup_contadores() -> None:
+        _safe_init_db()
 
     origins = []
     for origin in settings.cors_origins.split(","):

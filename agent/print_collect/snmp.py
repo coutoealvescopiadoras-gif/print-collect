@@ -167,6 +167,28 @@ class PrinterData:
     toner_magenta: Optional[float] = None
     toner_yellow: Optional[float] = None
     alerts: list[str] = field(default_factory=list)
+    counter_detail: Optional[dict] = None
+
+
+# Detalhe Konica da coleta atual. Os 3 cards continuam sendo a soma.
+_KM_DETALHE: dict[str, dict] = {}
+
+
+def _km_guardar_detalhe(
+    ip: str,
+    geral: int,
+    copia_pb: int,
+    impressao_pb: int,
+    copia_cor: int,
+    impressao_cor: int,
+) -> None:
+    _KM_DETALHE[ip] = {
+        "geral": int(geral),
+        "copia_pb": int(copia_pb),
+        "impressao_pb": int(impressao_pb),
+        "copia_cor": int(copia_cor),
+        "impressao_cor": int(impressao_cor),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -703,6 +725,9 @@ def _collect_pages_vendor_specific(
                     "[DIAG KONICA C368] IP=%s tot=%s bw=%s clr=%s soma=%s",
                     ip, c368_tot, c368_bw, c368_clr, c368_soma,
                 )
+                _km_guardar_detalhe(
+                    ip, c368_base, c368_copy_bw, c368_print_bw, c368_copy_clr, c368_print_clr,
+                )
                 return (c368_base, c368_bw, c368_clr)
             # 364 e outras so preto e branco: cor zero. Geral = copia preto + impressao preto.
             if c368_clr <= 0 and c368_copy_bw > 0 and c368_print_bw > 0:
@@ -711,6 +736,7 @@ def _collect_pages_vendor_specific(
                     "[DIAG KONICA MONO] IP=%s copia=%s impressao=%s geral=%s",
                     ip, c368_copy_bw, c368_print_bw, mono,
                 )
+                _km_guardar_detalhe(ip, mono, c368_copy_bw, c368_print_bw, 0, 0)
                 return (mono, mono, 0)
 
             # =====================================================================
@@ -1375,6 +1401,7 @@ def discover_local_subnets() -> list[str]:
 # ---------------------------------------------------------------------------
 
 def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Optional[PrinterData]:
+    _KM_DETALHE.pop(ip, None)
     # ==========================================================================
     # 🏆 NOVO FLUXO DE COLETA SEGURA — NUNCA MAIS INVENTA PÁGINAS COLORIDAS!
     #    Ordem de prioridade (do MAIS SEGURO → fallback):
@@ -1664,6 +1691,12 @@ def collect_printer(ip: str, community: str = "public", timeout: int = 5) -> Opt
     data.pages_total = max(0, pages_total)
     data.pages_bw    = max(0, pages_bw)
     data.pages_color = max(0, pages_color)
+    detalhe = _KM_DETALHE.pop(ip, None)
+    if detalhe:
+        soma_pb = int(detalhe.get("copia_pb") or 0) + int(detalhe.get("impressao_pb") or 0)
+        soma_cor = int(detalhe.get("copia_cor") or 0) + int(detalhe.get("impressao_cor") or 0)
+        if soma_pb == data.pages_bw and soma_cor == data.pages_color:
+            data.counter_detail = detalhe
 
     logger.info(
         "%s %s %s | total=%d bw=%d color=%d | fonte=%s | is_color=%s",

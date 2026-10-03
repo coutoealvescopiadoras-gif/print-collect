@@ -131,6 +131,7 @@ class ApiSender:
                     "toner_magenta": r.toner_magenta,
                     "toner_yellow": r.toner_yellow,
                     "alerts": r.alerts,
+                    "counter_detail": r.counter_detail,
                 }
                 for r in readings
             ],
