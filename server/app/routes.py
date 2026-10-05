@@ -1226,9 +1226,14 @@ def list_partner_stats(db: Session = Depends(get_db), current_user: User = Depen
 
         printers: list[Printer] = []
         if client_ids:
+            # Mesmo recorte do dashboard: ignorada ou excluida oficial nao entra na cobranca.
             printers = (
                 db.query(Printer)
-                .filter(Printer.client_id.in_(client_ids), Printer.ignored == False)
+                .filter(
+                    Printer.client_id.in_(client_ids),
+                    Printer.ignored == False,
+                    Printer.deleted_at.is_(None),
+                )
                 .all()
             )
 

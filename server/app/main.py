@@ -4,7 +4,7 @@ from fastapi.routing import APIRoute as _APIRoute
 from sqlalchemy import text
 
 from app.config import settings
-from app.database import Agent, Client, Location, Printer, User, init_db, SessionLocal, engine
+from app.database import Agent, Client, Location, Partner, Printer, User, init_db, SessionLocal, engine
 from app.routes import router, hash_password
 from app.routes import __name__ as _routes_mod_name  # garantia import deu certo
 import app.schemas as _schemas_mod  # garantia que ReadingOut existe agora (para nao crashar runtime)
@@ -108,42 +108,85 @@ def _robust_include_router(app: FastAPI, r) -> int:
     return added
 
 
+def _parceiro_cea(db, partner_id_atual: int | None) -> Partner | None:
+    if partner_id_atual:
+        atual = db.query(Partner).filter(Partner.id == partner_id_atual).first()
+        if atual is not None:
+            return atual
+
+    def _nome_cea(nome: str) -> bool:
+        texto = (nome or "").lower()
+        return "copiadora" in texto or "c&a" in texto or "cea" in texto
+
+    candidatos = [p for p in db.query(Partner).all() if _nome_cea(p.name)]
+    if not candidatos:
+        return None
+    return max(
+        candidatos,
+        key=lambda p: db.query(Client).filter(Client.partner_id == p.id).count(),
+    )
+
+
 def seed_demo_data() -> None:
     db = SessionLocal()
     try:
-        # ---- PASSO 1: SUPERADMINS Julio + Financeiro (UPSERT SEMPRE, email lower) ----
+        # Julio continua superadmin. Financeiro e o revendedor da CEA.
         reset_pwd = (os.environ.get("RESET_JULIO_PASSWORD") or "").strip()
         default_pwd_julio = "CeaJulio2026!"
-        default_pwd_fin = "CeaFinancas2026!"
 
-        users_to_ensure = [
-            ("julio",      "Julio@ceacopiadoras.com.br",      reset_pwd or default_pwd_julio),
-            ("financeiro", "financeiro@ceacopiadoras.com.br", reset_pwd or default_pwd_fin),
-        ]
-        for username, email_orig, pwd in users_to_ensure:
-            email_norm = email_orig.strip().lower()
-            new_hash = hash_password(pwd)
-            user = (
-                db.query(User)
-                .filter((User.username == username) | (User.email == email_norm))
-                .first()
+        email_julio = "julio@ceacopiadoras.com.br"
+        julio = (
+            db.query(User)
+            .filter((User.username == "julio") | (User.email == email_julio))
+            .first()
+        )
+        hash_julio = hash_password(reset_pwd or default_pwd_julio)
+        if julio is None:
+            julio = User(
+                username="julio",
+                email=email_julio,
+                hashed_password=hash_julio,
+                role="superadmin",
+                active=True,
             )
-            if user is None:
-                user = User(
-                    username=username,
-                    email=email_norm,
-                    hashed_password=new_hash,
-                    role="superadmin",
-                    active=True,
-                )
-                db.add(user)
-            else:
-                user.username = username
-                user.email = email_norm
-                user.hashed_password = new_hash
-                user.role = "superadmin"
-                user.active = True
-            db.flush()
+            db.add(julio)
+        else:
+            julio.username = "julio"
+            julio.email = email_julio
+            julio.hashed_password = hash_julio
+            julio.role = "superadmin"
+            julio.active = True
+        db.flush()
+
+        email_fin = "financeiro@ceacopiadoras.com.br"
+        financeiro = (
+            db.query(User)
+            .filter((User.username == "financeiro") | (User.email == email_fin))
+            .first()
+        )
+        parceiro = _parceiro_cea(db, financeiro.partner_id if financeiro else None)
+        hash_fin = hash_password("financeiro")
+        if financeiro is None:
+            financeiro = User(
+                username="financeiro",
+                email=email_fin,
+                hashed_password=hash_fin,
+                role="partner_admin" if parceiro is not None else "superadmin",
+                partner_id=parceiro.id if parceiro is not None else None,
+                client_id=None,
+                active=True,
+            )
+            db.add(financeiro)
+        else:
+            financeiro.username = "financeiro"
+            financeiro.email = email_fin
+            financeiro.hashed_password = hash_fin
+            financeiro.client_id = None
+            financeiro.active = True
+            if parceiro is not None:
+                financeiro.role = "partner_admin"
+                financeiro.partner_id = parceiro.id
+        db.flush()
 
         # ---- PASSO 2: Dados exemplo (APENAS se nao tem NENHUM cliente ainda) ----
         if db.query(Client).count() == 0:
