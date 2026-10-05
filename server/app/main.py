@@ -298,11 +298,47 @@ def _corrigir_contador_papelaria_c308() -> None:
         db.close()
 
 
+def _vincular_prefeitura_santa_rita_cea() -> None:
+    """Liga o cliente na revenda CEA. Nao apaga impressora, leitura nem usuario."""
+    db = SessionLocal()
+    try:
+        clientes = (
+            db.query(Client)
+            .filter(Client.name.ilike("%santa rita%itueta%"))
+            .all()
+        )
+        if len(clientes) != 1:
+            return
+        cliente = clientes[0]
+        parceiros = db.query(Partner).filter(Partner.name.ilike("%copiadora%")).all()
+        escolhido = None
+        for parceiro in parceiros:
+            nome = (parceiro.name or "").lower()
+            if "c&a" in nome or "cea" in nome:
+                escolhido = parceiro
+                break
+        if escolhido is None and len(parceiros) == 1:
+            escolhido = parceiros[0]
+        if escolhido is None or cliente.partner_id == escolhido.id:
+            return
+        cliente.partner_id = escolhido.id
+        db.commit()
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        print("[WARN] vinculo prefeitura santa rita:", repr(exc), file=sys.stderr)
+    finally:
+        db.close()
+
+
 def _safe_init_db() -> None:
     try:
         init_db()
         seed_demo_data()
         _corrigir_contador_papelaria_c308()
+        _vincular_prefeitura_santa_rita_cea()
     except Exception as e:
         import traceback
         import sys
