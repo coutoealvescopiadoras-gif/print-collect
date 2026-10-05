@@ -298,15 +298,22 @@ def _corrigir_contador_papelaria_c308() -> None:
         db.close()
 
 
+def _nome_sem_acento(nome: str) -> str:
+    import unicodedata
+
+    base = unicodedata.normalize("NFD", nome or "")
+    return "".join(c for c in base if unicodedata.category(c) != "Mn").lower()
+
+
 def _vincular_prefeitura_santa_rita_cea() -> None:
     """Liga o cliente na revenda CEA. Nao apaga impressora, leitura nem usuario."""
     db = SessionLocal()
     try:
-        clientes = (
-            db.query(Client)
-            .filter(Client.name.ilike("%santa rita%itueta%"))
-            .all()
-        )
+        clientes = [
+            cliente
+            for cliente in db.query(Client).all()
+            if "santa rita" in _nome_sem_acento(cliente.name) and "ituet" in _nome_sem_acento(cliente.name)
+        ]
         if len(clientes) != 1:
             return
         cliente = clientes[0]
